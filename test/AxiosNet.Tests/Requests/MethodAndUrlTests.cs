@@ -32,9 +32,7 @@ public sealed class MethodAndUrlTests
         Assert.Equal(first.Message, second.Message);
     }
 
-    // ------------------------------------------------------------------
-    // 1) 快捷方法 url 的 fail-fast
-    // ------------------------------------------------------------------
+// 1) 快捷方法 url 的 fail-fast
 
     [Fact]
     public async Task GetAsync_NullUrl_ReportsInvalidUrlBeforeSending()

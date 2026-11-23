@@ -67,8 +67,7 @@ internal static class SpecSourceLoader
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         foreach (var header in options.Headers)
         {
-            // Content-* 之类的头只能挂在内容上，挂到请求头集合会被静默丢弃；
-            // 返回值必须检查，否则用户以为自定义头生效了、实际下载悄悄少一个头。
+            // Content-* 之类的头只能挂在内容上；返回值必须检查。
             if (!request.Headers.TryAddWithoutValidation(header.Key, header.Value))
             {
                 throw new CliUsageException(

@@ -4,13 +4,9 @@ using AxiosNet.Retry;
 
 namespace AxiosNet.Telemetry;
 
-/// <summary>
-/// 观测派发的护栏：把当前实现包一层，任何成员抛出的异常都在这里结束，不会外溢到请求路径。
-/// </summary>
+/// <summary>观测派发的护栏：把当前实现包一层，任何成员抛出的异常都在这里结束，不会外溢到请求路径。</summary>
 /// <remarks>
-/// 实现抛异常只毁掉自己的观测，不会改写请求结果、也不会盖掉真正的失败原因。
-/// <see cref="OutOfMemoryException"/> 不吞，按常规失败处理（吞掉后没有二次上报渠道）。
-/// 每个成员内联 try/catch，不共用吃 <see cref="Action"/> 的辅助方法：热路径每次派发会多分配一个闭包。
+/// 实现抛异常只毁掉自己的观测，不改写请求结果；<see cref="OutOfMemoryException"/> 不吞。每个成员内联 try/catch，不共用吃委托的辅助方法。
 /// </remarks>
 internal sealed class GuardedTelemetrySink : IAxiosTelemetrySink
 {
@@ -21,10 +17,7 @@ internal sealed class GuardedTelemetrySink : IAxiosTelemetrySink
     /// <param name="inner">真正的观测实现。</param>
     public GuardedTelemetrySink(IAxiosTelemetrySink inner) => _inner = inner;
 
-    /// <summary>
-    /// 是否要观测。违约实现抛异常时按「不观测」处理：观测坏掉不该挡住请求，
-    /// 而返回 <c>true</c> 会让后续每一步都再撞一次同一个异常。
-    /// </summary>
+    /// <summary>是否要观测；违约实现抛异常时按「不观测」处理。</summary>
     /// <param name="config">本次请求的生效配置。</param>
     /// <returns>实现声明的开关；抛异常时为 <c>false</c>。</returns>
     public bool IsEnabled(AxiosConfig? config)
@@ -79,15 +72,8 @@ internal sealed class GuardedTelemetrySink : IAxiosTelemetrySink
         }
     }
 
-    /// <summary>
-    /// 开观测并自己吞掉违约异常，返回「收尾要不要配对一次 <see cref="ExitRequest"/>」。
-    /// </summary>
-    /// <remarks>
-    /// 库代码用它而不是 <see cref="EnterRequest"/>：收尾要不要补一次「出」，取决于「进」有没有真的成功。
-    /// 这个判定放在护栏里做，才能保证「进」和「出」都落在<b>同一份派发快照</b>上——若调用方先取
-    /// <see cref="AxiosTelemetry.Dispatch"/> 判开关、再去读 <see cref="AxiosTelemetry.Sink"/> 记「进」，
-    /// 两次读之间换掉实现就会「进记在新实现、出记在旧实现」，新实现的在途数永久多一条。
-    /// </remarks>
+    /// <summary>开观测并吞掉违约异常，返回「收尾要不要配对一次 <see cref="ExitRequest"/>」。</summary>
+    /// <remarks>库代码用它而不是 <see cref="EnterRequest"/>：进出须在同一份派发快照上判定。</remarks>
     /// <returns><c>true</c> = 已计入水位，收尾必须配一次 <see cref="ExitRequest"/>；<c>false</c> = 本次不观测。</returns>
     public bool TryEnterRequest()
     {

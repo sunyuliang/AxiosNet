@@ -64,9 +64,7 @@ internal static class BenchmarkDigest
         Console.WriteLine();
     }
 
-    // ------------------------------------------------------------------
-    // 取数
-    // ------------------------------------------------------------------
+// 取数
 
     private sealed class Row
     {
@@ -155,9 +153,7 @@ internal static class BenchmarkDigest
     private static double? ErrorOf(double margin)
         => double.IsNaN(margin) || double.IsInfinity(margin) ? null : margin;
 
-    // ------------------------------------------------------------------
-    // 渲染
-    // ------------------------------------------------------------------
+// 渲染
     private static void PrintTable(List<Row> rows, string unit)
     {
         var showParameters = rows.Exists(row => row.Parameters.Length > 0);
@@ -301,9 +297,7 @@ internal static class BenchmarkDigest
         Console.WriteLine($"      完整报告：{Path.Combine(Directory.GetCurrentDirectory(), "BenchmarkDotNet.Artifacts", "results")}");
     }
 
-    // ------------------------------------------------------------------
-    // 显示宽度
-    // ------------------------------------------------------------------
+// 显示宽度
 
     /// <summary>控制台显示宽度：CJK / 全角按 2 列算，其余 1 列。</summary>
     private static int DisplayWidth(string text)

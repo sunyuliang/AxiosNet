@@ -71,9 +71,7 @@ public sealed class ConfigMergeTests
         Assert.Equal(ResponseType.Text, r2.Config!.ResponseType);
     }
 
-    // ------------------------------------------------------------------
-    // 4) 回放生效配置：BaseAddress 属于实例来源
-    // ------------------------------------------------------------------
+// 4) 回放生效配置：BaseAddress 属于实例来源
 
     [Fact]
     public async Task ReplayingResponseConfig_UsesTargetInstanceBaseAddress()
@@ -154,9 +152,7 @@ public sealed class ConfigMergeTests
         Assert.Equal(2, source.RemoveHeaders.Count);
     }
 
-    // ---------------------------------------------------------------
-    // 9：回放不带上一次的按请求 Auth
-    // ---------------------------------------------------------------
+// 9：回放不带上一次的按请求 Auth
 
     [Fact]
     public async Task ReplayedEffectiveConfig_DoesNotCarryPerRequestAuth()
@@ -196,9 +192,7 @@ public sealed class ConfigMergeTests
         Assert.Equal(TestJson.BasicAuth("target", "tpw"), server.Received[1].Headers["Authorization"]);
     }
 
-    // ------------------------------------------------------------------
-    // 回放语义：CancellationToken 与 Auth
-    // ------------------------------------------------------------------
+// 回放语义：CancellationToken 与 Auth
 
     [Fact]
     public async Task Replay_ResponseConfig_DoesNotCarrySourceCancellationToken()
@@ -331,9 +325,7 @@ public sealed class ConfigMergeTests
         Assert.Same(One, list[0]);
     }
 
-    // ---------------------------------------------------------------
-    // *Set 语义：显式 null 覆盖实例默认上限
-    // ---------------------------------------------------------------
+// *Set 语义：显式 null 覆盖实例默认上限
 
     [Fact]
     public async Task PerRequestMaxResponseBytesNull_ClearsInstanceDefault()
@@ -658,9 +650,7 @@ public sealed class ConfigMergeTests
     // IReadOnlyDictionary 按键值对展平。
 
 
-    // ------------------------------------------------------------------
-    // 测试辅助
-    // ------------------------------------------------------------------
+// 测试辅助
 
     private static HttpResponseMessage JsonResponse()
         => new(HttpStatusCode.OK)

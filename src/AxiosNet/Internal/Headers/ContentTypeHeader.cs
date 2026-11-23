@@ -2,13 +2,8 @@ using System.Net.Http.Headers;
 
 namespace AxiosNet.Internal.Headers;
 
-/// <summary>
-/// 响应 <c>Content-Type</c> 的原始值读取与拆分：媒体类型与字符集按需解析，不构造 <see cref="MediaTypeHeaderValue"/>。
-/// </summary>
-/// <remarks>
-/// 拆分结果必须与 <see cref="MediaTypeHeaderValue.TryParse"/> 逐字一致（主值、字符集，以及解析不了时两者皆为 <c>null</c>）。
-/// 只有简单形态（ASCII、无引号 / 转义 / 逗号、每段 <c>name=value</c>）走快路径，其余一律回落 BCL 解析。
-/// </remarks>
+/// <summary>响应 <c>Content-Type</c> 的原始值读取与拆分：媒体类型与字符集按需解析，不构造 <see cref="MediaTypeHeaderValue"/>。</summary>
+/// <remarks>拆分结果与 <see cref="MediaTypeHeaderValue.TryParse"/> 逐字一致；只有简单形态走快路径，其余回落 BCL。</remarks>
 internal static class ContentTypeHeader
 {
     /// <summary>响应内容头上 <c>Content-Type</c> 的头名。</summary>
@@ -17,12 +12,7 @@ internal static class ContentTypeHeader
     /// <summary>字符集参数名（比较不区分大小写）。</summary>
     private const string CharSetParameter = "charset";
 
-    /// <summary>
-    /// 取 <c>Content-Type</c> 的原始值：不触发 BCL 的类型化解析，也不复制字符串（返回头里已有的实例）。
-    /// 没有该头时返回 <c>null</c>。
-    /// </summary>
-    /// <param name="headers">响应内容头；调用方保证在响应对象存活期间不释放底层消息。</param>
-    /// <returns>原始头值，或 <c>null</c>。</returns>
+    /// <summary>取 <c>Content-Type</c> 的原始值（不类型化解析、不复制字符串）；没有该头时返回 <c>null</c>。</summary>
     public static string? ReadRaw(HttpContentHeaders? headers)
     {
         if (headers is null)
@@ -31,11 +21,10 @@ internal static class ContentTypeHeader
         }
 
 #if NETSTANDARD2_0
-        // 兼容资产没有 NonValidated：只能走 TryGetValues（BCL 内部会为单值装箱成一个 string[]），
-        // 比类型化解析便宜，但不是零分配。
+        // netstandard2.0 没有 NonValidated，只能走 TryGetValues。
         return headers.TryGetValues(HeaderName, out var values) ? values.FirstOrDefault() : null;
 #else
-        // NonValidated 直接枚举头里存的原始字符串：既不解析也不分配（HeaderStringValues 是 ref struct，没有索引器）。
+        // NonValidated 直接枚举头里的原始字符串，不解析也不分配。
         if (!headers.NonValidated.TryGetValues(HeaderName, out var values))
         {
             return null;
@@ -50,11 +39,7 @@ internal static class ContentTypeHeader
 #endif
     }
 
-    /// <summary>
-    /// 把原始头值拆成媒体类型主值与字符集：两个取值都可能是 <c>null</c>（无该头 / 无法解析 / 未声明字符集）。
-    /// </summary>
-    /// <param name="raw">原始头值，可为 <c>null</c>。</param>
-    /// <returns>媒体类型主值与字符集，口径与 <see cref="MediaTypeHeaderValue"/> 一致。</returns>
+    /// <summary>把原始头值拆成媒体类型主值与字符集，两者都可能是 <c>null</c>。</summary>
     public static (string? MediaType, string? CharSet) Split(string? raw)
         => string.IsNullOrEmpty(raw)
             ? (null, null)
@@ -62,12 +47,7 @@ internal static class ContentTypeHeader
                 ? (mediaType, charSet)
                 : ParseWithBcl(raw);
 
-    /// <summary>
-    /// 只取媒体类型主值：省掉字符集那次子串分配（文本性判定只需要主值）。要解码正文时仍会再取一次字符集，
-    /// 所以这条不是「JSON 主路径」——正文转换那一层对主值与字符集都要。
-    /// </summary>
-    /// <param name="raw">原始头值，可为 <c>null</c>。</param>
-    /// <returns>媒体类型主值，或 <c>null</c>。</returns>
+    /// <summary>只取媒体类型主值。</summary>
     public static string? MediaTypeOf(string? raw)
         => string.IsNullOrEmpty(raw)
             ? null
@@ -75,9 +55,7 @@ internal static class ContentTypeHeader
                 ? mediaType
                 : ParseWithBcl(raw).MediaType;
 
-    /// <summary>只取字符集：省掉媒体类型那次子串分配（纯文本解码只用得到字符集）。</summary>
-    /// <param name="raw">原始头值，可为 <c>null</c>。</param>
-    /// <returns>字符集，或 <c>null</c>。</returns>
+    /// <summary>只取字符集。</summary>
     public static string? CharSetOf(string? raw)
         => string.IsNullOrEmpty(raw)
             ? null
@@ -85,21 +63,11 @@ internal static class ContentTypeHeader
                 ? charSet
                 : ParseWithBcl(raw).CharSet;
 
-    /// <summary>权威解析：快路径不认识的形态一律交回 BCL，保证结果与旧实现逐字一致。</summary>
+    /// <summary>权威解析：快路径不认识的形态交给 BCL。</summary>
     private static (string? MediaType, string? CharSet) ParseWithBcl(string raw)
         => MediaTypeHeaderValue.TryParse(raw, out var parsed) ? (parsed.MediaType, parsed.CharSet) : (null, null);
 
-    /// <summary>
-    /// 简单形态的快路径：<c>type/subtype *( OWS ";" OWS name OWS "=" OWS value )</c>，名字与取值都是 token。
-    /// 单趟扫描：任何一处不像 token（引号、转义、逗号、空段、多余等号、非 ASCII）都返回 <c>false</c>，
-    /// 由调用方回落 BCL。
-    /// </summary>
-    /// <param name="raw">原始头值（非空）。</param>
-    /// <param name="wantMediaType">是否要切出媒体类型子串（只要字符集的调用方不必为它付费）。</param>
-    /// <param name="wantCharSet">是否要切出字符集子串。</param>
-    /// <param name="mediaType">拆出的媒体类型主值；未要求或快路径失败时为 <c>null</c>。</param>
-    /// <param name="charSet">拆出的字符集（取第一个 <c>charset</c> 参数）；未声明或快路径失败时为 <c>null</c>。</param>
-    /// <returns>是否走通了快路径。</returns>
+    /// <summary>简单形态的快路径：单趟扫描，任何不像 token 的形态返回 <c>false</c> 交给 BCL。</summary>
     private static bool TrySplitSimple(
         ReadOnlySpan<char> raw,
         bool wantMediaType,
@@ -144,7 +112,7 @@ internal static class ContentTypeHeader
         var mainEnd = i;
         if (slash <= 0 || slash >= mainEnd - 1)
         {
-            // 没有 '/'、或某一半为空：交给 BCL 判（它同样判为解析失败）。
+            // 没有 '/'、或某一半为空，交给 BCL 判。
             return false;
         }
 
@@ -180,7 +148,7 @@ internal static class ContentTypeHeader
 
             if (i == nameStart)
             {
-                // 空段 / 尾随 ';'：BCL 判为解析失败，快路径不能当成「没有参数」。
+                // 空段 / 尾随 ';'：不能当成「没有参数」。
                 return false;
             }
 
@@ -202,14 +170,14 @@ internal static class ContentTypeHeader
 
             if (i == valueStart)
             {
-                // 空取值（"charset="）：BCL 那边同样解析失败 / 取不到值，交给它定。
+                // 空取值（"charset="）交给 BCL 定。
                 return false;
             }
 
             var valueEnd = i;
             SkipWhitespace(raw, ref i);
 
-            // 同名参数取第一个：与 BCL 的 NameValueHeaderValue.Find 一致。
+            // 同名参数取第一个。
             if (wantCharSet
                 && charSet is null
                 && SpanComparisons.EqualsIgnoreCase(raw[nameStart..nameEnd], CharSetParameter))
@@ -224,7 +192,7 @@ internal static class ContentTypeHeader
 
             if (raw[i] != ';')
             {
-                // 引号、转义、逗号、非 token 的尾巴：不猜，交给 BCL。
+                // 引号、转义、逗号等尾巴：不猜，交给 BCL。
                 return false;
             }
         }

@@ -5,8 +5,8 @@ namespace AxiosNet.WebAPI.Internal.Metadata;
 
 /// <summary>
 /// 请求模型的「声明数据」：由源生成器烘焙特性值，或由 JIT 反射读取器产出。
-/// 它只是事实（路由 / 成员 / 特性），校验与 <see cref="BindingPlan"/> 构建统一交给 <see cref="RequestModelMetadata"/>。
-/// 不可变：注册后不再修改；构建期的错误以 <see cref="Error"/> 形式携带，首次使用时才抛出。
+/// 只承载事实（路由 / 成员 / 特性），校验与 <see cref="BindingPlan"/> 构建交给 <see cref="RequestModelMetadata"/>。
+/// 不可变；构建期错误以 <see cref="Error"/> 携带，首次使用时才抛出。
 /// </summary>
 internal sealed class RequestModelDeclaration
 {
@@ -172,7 +172,7 @@ internal sealed class InterfaceMethodDeclaration
     /// <summary>正文类型；<see cref="InterfaceReturnShape.Void"/> 与非泛型响应为 null。</summary>
     public Type? ResponseType { get; set; }
 
-    /// <summary>返回类型的展示文本（如 <c>Task&lt;AxiosResponse&lt;User&gt;&gt;</c>），只用于错误消息；反射路径填，生成路径留空。</summary>
+    /// <summary>返回类型的展示文本（如 <c>Task&lt;AxiosResponse&lt;User&gt;&gt;</c>），仅用于错误消息。</summary>
     public string? ReturnTypeText { get; set; }
 
     /// <summary>[Stream] 是否出现；出现时 <see cref="StreamFormat"/> 为声明值。</summary>

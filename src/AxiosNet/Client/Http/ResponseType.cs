@@ -1,9 +1,6 @@
 namespace AxiosNet;
 
-/// <summary>
-/// 对应 axios config.responseType：json 反序列化（默认）、text 转 string、arraybuffer 转 byte[]、
-/// stream 转 Stream、dynamic 展开为 <see cref="AxiosDynamic"/> 图。
-/// </summary>
+/// <summary>对应 axios config.responseType：json 反序列化（默认）、text 转 string、arraybuffer 转 byte[]、stream 转 Stream、dynamic 展开为 <see cref="AxiosDynamic"/> 图。</summary>
 public enum ResponseType
 {
     /// <summary>JSON 反序列化（默认）：非泛型调用得到 <c>JsonElement</c>，泛型调用按 T 反序列化。</summary>

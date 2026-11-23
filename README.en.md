@@ -1037,8 +1037,8 @@ HttpConnectionPool.Release("orders");   // remove and shut down gracefully; the 
 - How fast DNS changes converge is governed by `PooledConnectionLifetime`; for custom connects (UDS / in-process transport / custom DNS) set `ConnectionPoolOptions.ConnectCallback` directly.
 - `ConnectCallback` and `MaxResponseHeadersLength` apply to the library's default handler only: building the inner handler with `ctx.CreateDefaultHandler()` inside a `HandlerFactory` carries them over; a fully hand-built handler must map them itself.
 - **h2 keep-alive is off by default** (same as `SocketsHttpHandler`, so wire behaviour never changes behind your back): set `KeepAlivePingDelay` to a positive value (30s is common) to turn it on; pings are only sent while requests are in flight.
-- It targets *silent* connection reaping: AWS ALB drops idle connections after 60s, NAT tables after 30–120s, and the client still believes the connection is pooled — the next request hits a closed one, costing either a fresh TLS handshake or a `GOAWAY` / stream reset on h2 (seen as sporadic `ERR_NETWORK`). The cost is a 17-byte frame, far cheaper than a reconnect.
-- Low-frequency, high-value calls (webhooks, scheduled jobs) can use `Always` to keep the connection alive even when idle. Conversely, behind a proxy or middlebox that does not answer `PING`, enabling it gets connections torn down and re-established (more `ERR_NETWORK`) — which is why it is off by default.
+- Once enabled, a ping is sent every `KeepAlivePingDelay`; a connection without a `PING ACK` within `KeepAlivePingTimeout` is closed and re-established.
+- Low-frequency, high-value calls (webhooks, scheduled jobs) can use `Always` to keep the connection alive even when idle. Behind a proxy or middlebox that does not answer `PING`, enabling it gets connections torn down and re-established (more `ERR_NETWORK`).
 - **`UseCookies` is scoped by domain / path only, not by identity**: the default profile has one container and each named transport profile has its own (see [Transport profiles](#transport-profiles)). Multi-tenant processes, crawlers or anything switching identities should give each identity a profile, otherwise they leak cookies across each other.
 - The container is directly accessible via `pool.Cookies` / `pool.GetCookies("profile")` (thread-safe) for seeding cookies at startup or diagnosing why a cookie was not sent.
 - Log out with `pool.ClearCookies()`: `CookieContainer` has no delete API, so this swaps in empty containers for **all profiles** and retires existing origin endpoints, which rebuilds connections on the next request; in-flight requests are not interrupted and may still carry the old cookie.
@@ -1480,7 +1480,7 @@ var client = Axios.Create(c => c.Resilience.Failover.Endpoints = new[]
 await client.GetAsync("health", c => c.Resilience.Failover.Endpoints = null);
 ```
 
-An endpoint supplies the **origin and path prefix**; the request's own path and query are appended as-is. Requesting `https://primary/v1/users?page=2` with endpoint `https://mirror/api` gives `https://mirror/api/v1/users?page=2` (the prefix is **prepended** to the request path, not substituted — do not repeat a prefix the request already carries).
+An endpoint supplies the **origin and path prefix**; the request's own path and query are appended as-is. Requesting `https://primary/v1/users?page=2` with endpoint `https://mirror/api` gives `https://mirror/api/v1/users?page=2` (the prefix is prepended to the request path; do not repeat a prefix the request already carries).
 
 | Situation | Fail over? |
 | --- | --- |
@@ -1522,7 +1522,7 @@ await client.PostAsync("orders", order);                             // Idempote
 await client.PostAsync("orders", order, c => c.Resilience.Idempotency.Key = "upstream-7f3a");  // pass an upstream key through
 ```
 
-- **Off by default**: attaching a key to non-idempotent methods turns "duplicate write" into "silent dedupe", so enabling it is a decision about your endpoint.
+- **Off by default**: attaching a key to non-idempotent methods turns "duplicate write" into "silent dedupe".
 - **Retries must opt in to non-idempotent methods first**: `RetryPolicy` only retries idempotent methods by default, so a key alone will not make a POST resend — set `Resilience.AllowUnsafeRetry` as well (see [Retries](#retries)).
 - **The key is written once onto the request template**, and copies of the template carry the header along — retries never change it. `OnSendingRequest` fires **per attempt**, so writing the key there is wrong (every retry gets a new one).
 - **One key per logical request**: every `RequestAsync` call builds a new effective config and therefore a new key; a replay after an auth failure must reuse the original key, so put it into `Idempotency.Key` and send again.
@@ -1558,11 +1558,11 @@ using var client = Axios.Create(c => c.Resilience.Retry.Policy = new RetryPolicy
 
 - **`AxiosAttemptContext` is a read-only struct**; its fields are `Config` / `Uri` / `AttemptNumber` / `EndpointIndex` / `AttemptToken` / `ExternalToken` / `DataType` / `Target` / `StreamResponse` / `Retry` / `Circuit` / `Hedging` / `Failover` / `Lease`, derivable only through `WithXxx`.
 - **Two independent counters**: retries advance `AttemptNumber`, failover advances `EndpointIndex` (`0` = the request's own URL). Failover does not advance the attempt number, so one attempt number can carry several attempt events.
-- **Built-ins are always on the chain and decide for themselves** by reading `ctx.Config`: with no retry policy the retry middleware is a straight pass-through. That is what lets the chain be frozen at construction instead of rebuilt per request.
+- **Built-ins are always on the chain and decide for themselves** by reading `ctx.Config`: with no retry policy the retry middleware is a straight pass-through; the chain is compiled once at construction.
 - **Auditing is on by default**: `Attempt.Audit` is the sixth link (after the gate, before the terminal), so subscribing to `AxiosNet.Attempt` gives you every attempt's duration / status / error code; with no subscriber it only evaluates the switch and builds no state machine. It is already on the chain — `Append(Attempt.Audit)` is rejected as a duplicate built-in. Links added with `Append` sit inside it (closer to the terminal), so their execution time is counted in the audit event.
 - **Order is the contract**: retry sits outermost, so failover, the breaker, hedging and the gate run again on every attempt; failover sits outside the breaker, so each endpoint gets its own breaker accounting; the breaker sits outside hedging, so a whole branch group records once; the breaker sits before the gate, so a rejected request never occupies a slot.
 - **Reorder and remove**: `AxiosAttemptPipeline.Create(...)` lists the whole chain explicitly (first = outermost); `Remove(Attempt.Gate)` drops one. The pipeline is immutable — every edit returns a new instance. Duplicating a built-in throws.
-- **There is no "put it outermost" API**: that position runs once per request and is exactly what response interceptors already do. `InsertBefore(Attempt.Retry, ...)` refuses explicitly and points at `client.Interceptors.Response`, which additionally offers `OnRejected`, runtime add/remove, and short-circuit coverage.
+- **There is no "put it outermost" API**: that position runs once per request and is exactly what response interceptors already do. `InsertBefore(Attempt.Retry, ...)` refuses explicitly and points at `client.Interceptors.Response`.
 - **You do not manage the concurrency slot**: the gate releases it itself — a middleware that skips `next` (returning its own response) or throws cannot leak it. The only case where the gate does not release it is a **library-produced** streamed response: the slot travels with the body into `StreamOwner` and is released when the stream is disposed, so the request keeps occupying its quota while the body downloads. A `StreamOwner` built by a middleware is not that case: the gate still releases its own slot, and a self-built owner gets no concurrency quota.
 - **Middleware can register cross-terminal resources of its own**: `ctx.WithLease(lease)` appends an `IDisposable` to the context (an audit session, a batch handle, an external lease…) without overwriting one that is already registered. Once registered, **do not dispose it yourself**: the terminal disposes everything on the failure path, and on a streamed success it hands the whole set to `StreamOwner`; disposal runs in **reverse** registration order (a later resource may depend on an earlier one). If you throw halfway through, you still own the cleanup — nobody else runs when the terminal never executes.
 - **Whoever creates it, disposes it**: a request message cloned by a middleware is that middleware's to dispose (the template still belongs to the pipeline). When replacing a response you must dispose the previous `AxiosAttemptResult.StreamOwner`, or carry it into the new result (`new AxiosAttemptResult(newResponse, old.StreamOwner)`) — it holds the pool lease and the concurrency slot, and dropping it leaks both.
@@ -2248,7 +2248,7 @@ api.CredentialProvider = CredentialProviders.Create(async (ctx, ct) =>
 });
 ```
 
-The cost is three things you now own:
+Three things to watch:
 
 - **`transformRequest` runs after you**: the transform chain works on `config.Body`, so you sign the pre-transform body and send the post-transform one. Skip this path when the project registers a `transformRequest` (unwrapping / wrapping envelopes) and use the hook form above.
 - **No replay on 401**: the library treats `Custom` as non-refreshable, so `invalidate:` only affects the next token fetch and this 401 still surfaces; to replay, catch it at the call site and resend.
@@ -2305,7 +2305,7 @@ The entry keeps its own copy when `Data` *is* the raw bytes (`byte[]` / `ArrayBu
 
 An entry is only stored when all of these hold: status is 2xx, the raw bytes were captured (not streaming), and `ShouldCache` passes. An empty body counts as raw bytes too (HEAD / 204 have no body — the headers are what gets cached). Streaming responses, a response interceptor that swapped the response object, and a failing store all just mean "not cached this time" — the request itself is unaffected. Range requests (a `Range` header) do not take part by default, and 206 / `Content-Range` responses are never stored — the key is only method + URL, so a partial body would be delivered as the whole document to a later plain GET.
 
-**Streaming requests stay out of the cache**: a request with `ResponseType = Stream` skips even the lookup by default (the caller asked for a stream; a hit would buffer the whole body into memory). Entries already stored remain reachable from plain calls. Let `ShouldCache` admit streaming requests if that is really the ownership model you want.
+**Streaming requests stay out of the cache**: a request with `ResponseType = Stream` skips even the lookup by default (the caller asked for a stream; a hit would buffer the whole body into memory). Entries already stored remain reachable from plain calls. Let `ShouldCache` admit streaming requests if you need that.
 
 **Three ways to pick the lifetime** (`FreshnessMode`):
 
@@ -2366,7 +2366,7 @@ The library interprets responses as a **private cache**: `private` / `public` do
 **Storage and operations**
 
 - **Force clearing**: `cache.ClearAsync()` drops every entry and `cache.RemoveAsync(key)` drops one (compute the key with `cache.KeyFor(config, uri)`); requests already in flight are unaffected and still store on completion.
-- **Custom stores receive the full policy**: `IAxiosCacheStore` has a new `SetAsync` overload that takes an `AxiosCacheEntryPolicy` (effective / configured TTL, HTTP freshness, age, parsed `Cache-Control`, `Date` / `Expires` / `Vary`).
+- **Custom stores receive the full policy**: `IAxiosCacheStore` has a `SetAsync` overload that takes an `AxiosCacheEntryPolicy` (effective / configured TTL, HTTP freshness, age, parsed `Cache-Control`, `Date` / `Expires` / `Vary`).
   - Its default implementation forwards to the old signature, so existing stores need no change; override it to reject `private` responses from a shared cache, partition by `Vary`, or extend the servable window with `stale-while-revalidate`.
   - In `Configured` mode nothing is parsed before storing: those HTTP fields are parsed on demand the first time the store reads them, so a store that only uses the TTL pays nothing.
 - **Storage is pluggable**: `AxiosCache` stores nothing itself — every read and write goes through `IAxiosCacheStore` (`GetAsync` / `SetAsync` ×2 / `RemoveAsync` / `ClearAsync`; an `AxiosShortCircuit` is just status + headers + raw bytes, so it serializes to any backend).

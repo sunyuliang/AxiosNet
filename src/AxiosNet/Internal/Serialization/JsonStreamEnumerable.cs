@@ -4,27 +4,22 @@ using AxiosNet.Serialization;
 
 namespace AxiosNet.Internal.Serialization;
 
-/// <summary>
-/// 把响应流切成帧、逐帧反序列化成 <typeparamref name="T"/>（NDJSON / SSE / JSON 数组）。
-/// </summary>
-/// <remarks>
-/// NDJSON / SSE 在字节层按 CR / LF 分帧，JSON 数组由 <see cref="Utf8JsonReader"/> 增量定位顶层元素的字节区间。
-/// 单帧上限默认 8 MB，可由 <see cref="AxiosConfig.LimitsSettings.MaxStreamFrameBytes"/> 调整；响应流只能读一次，重复枚举直接报错。
-/// </remarks>
+/// <summary>把响应流切成帧、逐帧反序列化成 <typeparamref name="T"/>（NDJSON / SSE / JSON 数组）。</summary>
+/// <remarks>NDJSON / SSE 在字节层按 CR / LF 分帧，JSON 数组由 <see cref="Utf8JsonReader"/> 增量定位顶层元素区间。单帧上限默认 8 MB（<see cref="AxiosConfig.LimitsSettings.MaxStreamFrameBytes"/>）；响应流只能读一次，重复枚举报错。</remarks>
 internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnumerator<T>
 {
-    // 每次从流里读的块大小：8 KB 足够摊薄 syscall，又不至于让单帧缓冲过大。
+    // 每次从流里读的块大小。
     private const int ReadChunk = 8 * 1024;
     private const string DoneSentinel = "[DONE]";
     private const string ArrayFormatName = "JSON array";
 
-    /// <summary>元素收尾后允许继续留用的溢写缓冲上限（8 块）。</summary>
+    /// <summary>元素收尾后可留用的溢写缓冲上限（8 块）。</summary>
     private const int MaxRetainedSpill = 8 * ReadChunk;
 
-    /// <summary>一帧收尾后允许继续留用的帧缓冲容量（字节）。</summary>
+    /// <summary>一帧收尾后可留用的帧缓冲容量（字节）。</summary>
     private const int MaxRetainedFrameBytes = 8 * ReadChunk;
 
-    /// <summary>单帧 / 单元素上限（字节），构造时从配置解析一次（未设置时用 8 MB）；只用于比较与扩容封顶，不按它预分配。</summary>
+    /// <summary>单帧 / 单元素上限（字节），构造时解析一次；未设置时为 8 MB。</summary>
     private readonly int _maxFrameBytes;
 
     private readonly Stream _stream;
@@ -32,26 +27,26 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
     private readonly HttpRequestMessage? _request;
     private readonly AxiosStreamFormat _format;
 
-    /// <summary>整个响应流固定的生效编码（取流时解析一次）：null = 未声明 charset 也未强制，按行 BOM 探测；JSON 数组模式恒为 UTF-8。</summary>
+    /// <summary>整个响应流固定的生效编码（取流时解析一次）：<c>null</c> = 未声明也未强制。JSON 数组模式恒为 UTF-8。</summary>
     private readonly Encoding? _encoding;
 
-    /// <summary>帧是否以原始字节交给序列化器：SSE / NDJSON 一律是；JSON 数组在声明非 UTF-8 时退回文本（数组分帧固定按 UTF-8 解释，两者不一致）。</summary>
+    /// <summary>帧是否以原始字节交给序列化器：SSE / NDJSON 为 true，JSON 数组仅在 UTF-8 时为 true。</summary>
     private readonly bool _byteFrames;
 
     /// <summary>整个响应流固定的序列化器（取流时解析一次）。</summary>
     private readonly IContentSerializer _serializer;
 
-    /// <summary>SSE 帧正文的累积缓冲（原始字节，不逐行解码）；按帧峰值扩容，收尾时超过基础容量就换新实例（见 <see cref="TakeFrame"/>）。</summary>
+    /// <summary>SSE 帧正文的累积缓冲（原始字节）。</summary>
     private byte[] _frameBuffer = Array.Empty<byte>();
 
     private int _frameLength;
 
-    // —— JSON 数组模式的分帧状态（其余格式不用） ——
+    // JSON 数组模式的分帧状态。
 
-    /// <summary>跨多次读取时 <see cref="Utf8JsonReader"/> 的续读状态：缓冲区会压缩 / 换新，解析位置只能记在这里。</summary>
+    /// <summary><see cref="Utf8JsonReader"/> 的跨块续读状态。</summary>
     private JsonReaderState _readerState;
 
-    /// <summary>已处理过前导 BOM（只做一次；空正文也算处理过）。</summary>
+    /// <summary>已处理过前导 BOM（只做一次）。</summary>
     private bool _arrayHeaderChecked;
 
     /// <summary>已见到顶层 <c>[</c>。</summary>
@@ -63,16 +58,16 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
     /// <summary>当前元素已开始、尚未收尾。</summary>
     private bool _inElement;
 
-    /// <summary>当前元素在本缓冲区里的起点；<c>-1</c> 表示前缀已经搬进 <see cref="_elementSpill"/>。</summary>
+    /// <summary>当前元素在本缓冲区里的起点；<c>-1</c> 表示前缀已搬进 <see cref="_elementSpill"/>。</summary>
     private int _elementStart = -1;
 
-    /// <summary>跨块元素的已消费前缀（懒分配：元素不超过一次读大小时永远为 null）。</summary>
+    /// <summary>跨块元素已消费的前缀（懒分配）。</summary>
     private byte[]? _elementSpill;
 
     /// <summary><see cref="_elementSpill"/> 中的有效字节数。</summary>
     private int _elementSpilled;
 
-    /// <summary>当前 SSE 帧已累积的<b>原始字节数</b>（分帧上限按字节判定）。</summary>
+    /// <summary>当前 SSE 帧已累积的原始字节数（分帧上限按字节判定）。</summary>
     private int _frameBytes;
 
     // 读缓冲与游标：_start/_end 是未消费区间，_eof = 流已读完，_finished = 不再产出。
@@ -94,11 +89,11 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         string? charSet,
         string? mediaType)
     {
-        // 强制 ResponseEncoding 优先于 charset，按最终生效的编码判断。
+        // 强制 ResponseEncoding 优先于 charset。
         var framingEncoding = config.SerializationOrNull?.TextEncoding ?? ResponseTextDecoder.ResolveFromCharset(charSet);
         if (!ResponseTextDecoder.IsAsciiCompatible(framingEncoding))
         {
-            // 非 ASCII 兼容编码无法按字节分帧：先释放响应流再报错。
+            // 非 ASCII 兼容编码无法按字节分帧。
             stream.Dispose();
             throw AxiosException.BadResponse(config, request, $"stream frames in charset '{framingEncoding!.WebName}' (only ASCII-compatible encodings can be byte-framed)", new NotSupportedException("stream framing requires an ASCII-compatible charset"));
         }
@@ -108,7 +103,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
             && framingEncoding.CodePage != Encoding.UTF8.CodePage
             && framingEncoding.CodePage != Encoding.ASCII.CodePage)
         {
-            // JSON 数组分帧只认 UTF-8 字节：编码声明不匹配时在取流这一步报错。
+            // JSON 数组分帧只认 UTF-8 字节。
             stream.Dispose();
             throw AxiosException.StreamMalformed(config, request, $"JSON array frames in charset '{framingEncoding.WebName}' are not supported (only UTF-8 JSON can be token-framed)", new NotSupportedException("JSON array framing requires UTF-8"));
         }
@@ -118,21 +113,19 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         _request = request;
         _format = format;
 
-        // 单帧上限随配置（按请求可覆盖实例默认）：null = 默认 8 MB；合法范围已在发送前拦下。
+        // 单帧上限随配置；null = 默认 8 MB。
         _maxFrameBytes = config.LimitsOrNull?.MaxStreamFrameBytes ?? AxiosConfig.DefaultStreamFrameBytes;
 
-        // 复用 framing 校验解析出的生效编码；数组模式固定 UTF-8，与 Utf8JsonReader 的解释一致。
         _encoding = format == AxiosStreamFormat.JsonArray ? Encoding.UTF8 : framingEncoding;
 
-        // 字节入口的生效编码与序列化器自己按 charset 解析的结果必须一致：数组模式声明了非 UTF-8 时退回文本。
+        // 声明非 UTF-8 的数组退回文本帧。
         _byteFrames = format != AxiosStreamFormat.JsonArray
             || framingEncoding is null
             || framingEncoding.CodePage == Encoding.UTF8.CodePage;
 
-        // 序列化器对整个响应流固定：取流时解析一次。
         _serializer = AxiosContent.Get(config, mediaType);
 
-        // 外层数组的方言必须与元素最终被反序列化时的选项一致。
+        // 外层数组的方言必须与元素反序列化的选项一致。
         if (format == AxiosStreamFormat.JsonArray)
         {
             var jsonOptions = AxiosJson.GetOptions(config);
@@ -141,18 +134,17 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
                 AllowTrailingCommas = jsonOptions.AllowTrailingCommas,
                 CommentHandling = jsonOptions.ReadCommentHandling,
 
-                // 外层数组本身占掉一层，MaxDepth 要 +1（0 = 用默认值，不能加）。
+                // 外层数组占掉一层，MaxDepth 要 +1（0 = 默认值，不能加）。
                 MaxDepth = jsonOptions.MaxDepth == 0 ? 0 : jsonOptions.MaxDepth + 1
             };
 
-            // 解析选项随 reader 状态一起携带：首块与后续块必须用同一套方言。
             _readerState = new JsonReaderState(readerOptions);
         }
     }
 
     public T Current => _current;
 
-    // 只允许枚举一次：返回 this 并记下取消令牌，第二次枚举必须重新发请求。
+    // 只允许枚举一次。
     public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
     {
         if (_enumeratorTaken)
@@ -165,7 +157,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         return this;
     }
 
-    // 推进一帧：切出下一个完整值并反序列化，流结束或已释放时返回 false。
+    // 推进一帧；流结束或已释放时返回 false。
     public async ValueTask<bool> MoveNextAsync()
     {
         if (_disposed)
@@ -192,7 +184,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
             }
             catch (OperationCanceledException ex) when (_token.IsCancellationRequested)
             {
-                // 挂起的 ReadAsync 被枚举令牌取消：流式 API 层一律映射成 ERR_CANCELED。
+                // 挂起的 ReadAsync 被枚举令牌取消：统一映射成 ERR_CANCELED。
                 throw AxiosException.Canceled(_config, _request, ex);
             }
 
@@ -212,7 +204,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         }
     }
 
-    // 释放包装流（连带归还连接池租约、释放响应消息）；重复调用无副作用。
+    // 释放包装流（连带归还连接池租约）；重复调用无副作用。
     public ValueTask DisposeAsync()
     {
         if (_disposed)
@@ -223,7 +215,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         _disposed = true;
         _finished = true;
 
-        // 释放包装流 = 归还连接池租约 + 释放 HttpResponseMessage（ResponseStreamOwner 负责）
+        // 释放包装流即归还连接池租约并释放 HttpResponseMessage。
         return _stream.DisposeAsync();
     }
 
@@ -239,7 +231,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         {
             if (await TryReadLineAsync().ConfigureAwait(false) is not { } line)
             {
-                // EOF：SSE 可能没写最后的空行，残留的 data 也要交付一次
+                // EOF：SSE 可能没写最后的空行，残留的 data 也要交付一次。
                 if (_format == AxiosStreamFormat.ServerSentEvents && _frameLength > 0)
                 {
                     return TakeFrame();
@@ -256,15 +248,11 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         }
     }
 
-    /// <summary>按行格式解析一行原始字节。</summary>
-    /// <param name="line">本次读到的行在当前缓冲区的区间。</param>
-    /// <param name="done">该行是否终结了当前帧；为 <c>false</c> 时本行不产生帧，应继续读下一行。</param>
-    /// <returns>该行产生的帧；<paramref name="done"/> 为 <c>true</c> 时可能是 <c>null</c>（读到 <c>[DONE]</c>，流结束）。</returns>
+    /// <summary>按行格式解析一行原始字节；<paramref name="done"/> 为 <c>false</c> 时本行不产生帧，继续读下一行。</summary>
     private FramePayload? HandlePayloadLine(Line line, out bool done)
     {
         done = false;
 
-        // 整行先看原始字节：字段名比较与 data 行切片都不经过 UTF-16。
         var span = _buffer.AsSpan(line.Offset, line.Length);
 
         if (_format == AxiosStreamFormat.NewlineDelimitedJson)
@@ -283,7 +271,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         {
             if (_frameLength == 0)
             {
-                // 心跳（`:` 注释）帧没有 data，跳过
+                // 心跳帧没有 data，跳过。
                 return null;
             }
 
@@ -293,7 +281,6 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
 
         if (span[0] == (byte)':')
         {
-            // 注释 / 心跳
             return null;
         }
 
@@ -301,7 +288,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         var field = colon < 0 ? span : span[..colon];
         if (!IsAscii(field, "data"))
         {
-            // event: / id: / retry: 等字段不进入数据流
+            // event: / id: / retry: 等字段不进入数据流。
             return null;
         }
 
@@ -313,7 +300,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
 
         AppendFrame(value);
 
-        // 上限按字节数，与 NDJSON 的缓冲区口径一致。
+        // 上限按字节数。
         _frameBytes += line.ByteLength;
         if (_frameBytes > _maxFrameBytes)
         {
@@ -323,10 +310,10 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         return null;
     }
 
-    // 这一帧是不是结束哨兵（SSE 的 [DONE]）。
+    // 是否为结束哨兵（SSE 的 [DONE]）。
     private static bool IsDone(ReadOnlySpan<byte> frame) => IsAscii(frame, DoneSentinel);
 
-    /// <summary>取走当前累积的 SSE 帧并重置帧状态；<c>[DONE]</c> 返回 <c>null</c>（流结束）。超过基础容量的帧缓冲换成新实例。</summary>
+    /// <summary>取走当前累积的 SSE 帧并重置帧状态；<c>[DONE]</c> 返回 <c>null</c>（流结束）。</summary>
     private FramePayload? TakeFrame()
     {
         var frame = new ReadOnlyMemory<byte>(_frameBuffer, 0, _frameLength);
@@ -359,7 +346,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         _frameLength += value.Length;
     }
 
-    // 帧缓冲不够就扩：取「需要的量」与「当前两倍」的较大者，单帧超长时少拷几次。
+    // 帧缓冲不够就扩：取「需要的量」与「当前两倍」的较大者。
     private void EnsureFrameCapacity(int required)
     {
         if (required <= _frameBuffer.Length)
@@ -372,7 +359,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         _frameBuffer = grown;
     }
 
-    /// <summary>一帧的载荷：通常是原始字节（直接交给序列化器的字节入口），JSON 数组声明非 UTF-8 时是文本。</summary>
+    /// <summary>一帧的载荷：通常是原始字节，JSON 数组声明非 UTF-8 时是文本。</summary>
     private readonly struct FramePayload
     {
         private readonly string? _text;
@@ -384,10 +371,10 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
             _bytes = bytes;
         }
 
-        // 文本入口：只在 JSON 数组声明了非 UTF-8 编码时使用。
+        // 文本入口：仅用于声明非 UTF-8 的 JSON 数组。
         public static FramePayload FromText(string text) => new(text, default);
 
-        // 字节入口：默认路径，省掉每帧一次的 UTF-16 往返。
+        // 字节入口：默认路径。
         public static FramePayload FromBytes(ReadOnlyMemory<byte> bytes) => new(null, bytes);
 
         public string? Text => _text;
@@ -416,10 +403,9 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         return true;
     }
 
-    // JSON 数组：Utf8JsonReader 增量定位顶层元素
+    // JSON 数组模式。
 
-    /// <summary>读到数组里的下一个顶层元素；<c>null</c> 表示读到收尾的 <c>]</c>（或空正文）。
-    /// 每轮用当前缓冲区与上次留下的 <see cref="JsonReaderState"/> 新建 reader，它只负责找边界，元素文本仍交给 <see cref="Deserialize"/>。</summary>
+    /// <summary>读到数组里的下一个顶层元素；<c>null</c> 表示读到收尾的 <c>]</c>（或空正文）。</summary>
     private async ValueTask<FramePayload?> ReadArrayElementAsync()
     {
         while (true)
@@ -431,7 +417,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
 
             if (!_arrayHeaderChecked)
             {
-                // BOM 判定最多需要 3 个字节：首块可能只到一半（单个 0xEF 会被 Utf8JsonReader 当成非法起始）。
+                // BOM 判定最多需要 3 个字节。
                 while (_end - _start < 3 && !_eof)
                 {
                     await FillAsync().ConfigureAwait(false);
@@ -443,10 +429,9 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
 
             if (_eof && IsWhitespace(_start, _end))
             {
-                // 数据在元素边界 / 空白上耗尽：空正文不当作错误，数组被截断才报错。
+                // 数据在元素边界 / 空白上耗尽：空正文不当作错误。
                 if (!_arrayStarted)
                 {
-                    // 正文为空 / 只有空白：没有数组可交付，与 NDJSON 空流同口径。
                     _arrayEnded = true;
                     return null;
                 }
@@ -467,7 +452,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
 
             if (_eof)
             {
-                // 兜底闸口：_eof 之后绝不能再 FillAsync，否则会对着已结束的流反复读 0 字节。
+                // 兜底：_eof 之后绝不能再 FillAsync。
                 throw AxiosException.StreamMalformed(_config, _request, _arrayStarted ? "JSON array stream ended before its closing ']'" : "JSON array stream ended before its opening '['", new JsonException("unexpected end of the JSON array stream"));
             }
 
@@ -476,7 +461,6 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
     }
 
     /// <summary>在当前字节窗口里定位下一个顶层元素；窗口读完仍未定位到时把消费进度写回字段。</summary>
-    /// <returns>找到的元素；窗口耗尽或数组收尾时为 <c>null</c>，后者会把 <c>_arrayEnded</c> 置位。</returns>
     private FramePayload? ScanArrayWindow()
     {
         var reader = new Utf8JsonReader(_buffer.AsSpan(_start, _end - _start), _eof, _readerState);
@@ -488,7 +472,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
                 var token = reader.TokenType;
                 if (token == JsonTokenType.Comment)
                 {
-                    // CommentHandling.Allow 时注释会作为 token 出现：它既不是元素，也不改变深度
+                    // 注释 token 既不是元素，也不改变深度。
                     continue;
                 }
 
@@ -498,7 +482,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
                 {
                     if (token != JsonTokenType.StartArray || depth != 0)
                     {
-                        // 顶层不是数组：直接点名期望什么
+                        // 顶层不是数组。
                         throw AxiosException.StreamMalformed(_config, _request, $"JSON array stream must start with a top-level '[' but found {token}", new JsonException($"expected StartArray, got {token}"));
                     }
 
@@ -508,7 +492,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
 
                 if (token == JsonTokenType.EndArray && depth == 0)
                 {
-                    // 顶层数组收尾：立即结束，不等连接关闭，也不校验尾部空白 / 垃圾
+                    // 顶层数组收尾：立即结束，不校验尾部空白。
                     _readerState = reader.CurrentState;
                     _start += (int)reader.BytesConsumed;
                     _arrayEnded = true;
@@ -517,13 +501,13 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
 
                 if (!_inElement)
                 {
-                    // 顶层数组的直接子项深度必为 1；TokenStartIndex 是相对窗口起点 _start 的偏移。
+                    // 顶层数组的直接子项深度必为 1。
                     _inElement = true;
                     _elementStart = _start + (int)reader.TokenStartIndex;
 
                     if (token != JsonTokenType.StartObject && token != JsonTokenType.StartArray)
                     {
-                        // 标量元素（数字 / 字符串 / true / false / null）：一个 token 就是一帧
+                        // 标量元素：一个 token 就是一帧。
                         return CompleteElement(reader);
                     }
 
@@ -532,7 +516,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
 
                 if (depth == 1 && (token == JsonTokenType.EndObject || token == JsonTokenType.EndArray))
                 {
-                    // 容器的收尾 token 与它的开括号同深度：回到 1 就说明元素本身结束了
+                    // 收尾 token 与开括号同深度。
                     return CompleteElement(reader);
                 }
             }
@@ -542,7 +526,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
             throw AxiosException.StreamMalformed(_config, _request, "JSON array stream is not valid JSON", ex);
         }
 
-        // 缓冲区读完：先结算已消费字节再补读（spill 复制依赖压缩前的偏移）。
+        // 缓冲区读完：先结算已消费字节再补读。
         _readerState = reader.CurrentState;
         var consumed = (int)reader.BytesConsumed;
         SpillConsumed(consumed);
@@ -550,10 +534,10 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         return null;
     }
 
-    /// <summary>元素收尾：切出它在字节流里的区间（通常直接把字节交给序列化器），重置元素状态。元素跨多次读取时把尾巴拼到 spill 上再交付。</summary>
+    /// <summary>元素收尾：切出它的字节区间并重置元素状态；跨块元素先拼上 spill。</summary>
     private FramePayload CompleteElement(Utf8JsonReader reader)
     {
-        // BytesConsumed 是相对本次窗口起点 _start 的偏移
+        // BytesConsumed 相对本次窗口起点。
         var end = _start + (int)reader.BytesConsumed;
         var element = _elementStart >= 0
             ? ElementInBuffer(end)
@@ -566,7 +550,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         return element;
     }
 
-    /// <summary>元素完全落在当前缓冲区：按原始字节交付，不需要解码。</summary>
+    /// <summary>元素完全落在当前缓冲区：按原始字节交付。</summary>
     private FramePayload ElementInBuffer(int end)
         => _byteFrames
             ? FramePayload.FromBytes(_buffer.AsMemory(_elementStart, end - _elementStart))
@@ -584,7 +568,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         var to = _start + consumed;
         if (to <= from)
         {
-            // 元素起点还没被消费（例如超大字符串 token 尚未闭合）：起点留在缓冲区里，等下一轮
+            // 元素起点还没被消费：起点留在缓冲区里。
             return;
         }
 
@@ -600,7 +584,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         var length = _elementSpilled;
         _elementSpilled = 0;
 
-        // 元素收尾后超过基础容量的溢写缓冲直接还掉，小元素复用原缓冲。
+        // 超过基础容量的溢写缓冲直接还掉。
         var buffer = _elementSpill;
         if (buffer is not null && buffer.Length > MaxRetainedSpill)
         {
@@ -686,7 +670,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
             var terminator = IndexOfLineTerminator();
             if (terminator >= 0)
             {
-                // CRLF 的 CR 落在缓冲区末尾：再读一块确认随后的 LF。
+                // CRLF 的 CR 落在缓冲区末尾：再读一块确认 LF。
                 if (_buffer[terminator] == (byte)'\r' && terminator == _end - 1 && !_eof)
                 {
                     await FillAsync().ConfigureAwait(false);
@@ -739,10 +723,10 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         }
     }
 
-    /// <summary>一行在缓冲区里的字节区间（不含行尾 CR / LF）+ 它在原始字节流里的长度（SSE 分帧上限按字节判定）。</summary>
+    /// <summary>一行在缓冲区里的字节区间 + 原始字节流中的长度（SSE 分帧上限按字节判定）。</summary>
     /// <param name="Offset">行首在缓冲区里的下标。</param>
     /// <param name="Length">行内容的字节数，不含行尾。</param>
-    /// <param name="ByteLength">该行连同行尾在原始字节流里占用的字节数，用于累计单帧上限。</param>
+    /// <param name="ByteLength">连同行尾的字节数。</param>
     private readonly record struct Line(int Offset, int Length, int ByteLength);
 
     /// <summary>行尾判定：LF / CR / CRLF 都是合法行分隔符，返回最早出现的 CR 或 LF 的下标，没有则返回 -1。</summary>
@@ -758,7 +742,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         return index < 0 ? -1 : _start + index;
     }
 
-    // 按已解析的编码把字节区间解成字符串；零长度直接给空串。
+    // 按已解析编码解码字节区间。
     private string Decode(int offset, int length)
         => length <= 0 ? string.Empty : ResponseTextDecoder.DecodeResolved(_buffer.AsSpan(offset, length), _encoding);
 
@@ -773,7 +757,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
                 Buffer.BlockCopy(_buffer, _start, _buffer, 0, remaining);
             }
 
-            // 数组模式下 _elementStart 是缓冲区绝对偏移，压缩时跟着前移。
+            // 压缩时 _elementStart 跟着前移。
             if (_elementStart >= 0)
             {
                 _elementStart -= _start;
@@ -787,7 +771,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         {
             if (_buffer.Length >= _maxFrameBytes)
             {
-                // 数组模式撑满缓冲只可能是单个 token 太大，统一按「元素超限」报错。
+                // 单个 token 太大，按元素超限报错。
                 throw _format == AxiosStreamFormat.JsonArray
                     ? AxiosException.StreamElementTooLarge(_config, _request, ArrayFormatName, _maxFrameBytes)
                     : AxiosException.StreamFrameTooLarge(_config, _request, _format.ToString(), _maxFrameBytes);
@@ -809,13 +793,12 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         }
     }
 
-    // 一帧 → T：优先按字节反序列化，非 UTF-8 或字节非法时回退文本入口。
+    // 一帧 → T：优先字节入口，非 UTF-8 或字节非法时回退文本入口。
     private T Deserialize(in FramePayload payload)
     {
         try
         {
-            // 字节入口省掉逐帧的 UTF-16 往返；只有 JSON 数组声明非 UTF-8 时才回退文本入口。
-            // 非法 UTF-8 也回退文本入口：按字节解析的 JSON 不校验字符串内容，坏字节会留到调用方取值时才炸。
+            // 字节入口省掉 UTF-16 往返；非法 UTF-8 也回退文本入口（坏字节会留到取值时才炸）。
             var text = payload.Text;
             if (text is null && !ResponseTextDecoder.IsValidUtf8(payload.Bytes.Span))
             {
@@ -826,7 +809,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
                 ? _serializer.Deserialize(payload.Bytes, typeof(T), _config)
                 : _serializer.Deserialize(text, typeof(T), _config);
 
-            // null 是合法帧；非 null 却不是 T 说明序列化器与目标类型不匹配。
+            // 非 null 却不是 T 说明序列化器与目标类型不匹配。
             if (value is null)
             {
                 return default!;

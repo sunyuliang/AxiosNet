@@ -10,7 +10,7 @@ internal enum ApiStyle
     Interface
 }
 
-/// <summary>命令行参数（手写解析：不接受未知选项，避免拼写错误被静默忽略）。</summary>
+/// <summary>命令行参数（手写解析：不接受未知选项）。</summary>
 internal sealed class CliOptions
 {
     /// <summary>文档来源：本地路径、http(s) URL，或 <c>-</c> 表示 stdin。</summary>
@@ -141,7 +141,7 @@ internal sealed class CliOptions
                 case "-i":
                 case "--interface-name":
                     var interfaceName = TakeValue(name, inlineValue, args, ref i);
-                    // 接口名同时是单文件模式下的输出文件名：必须是合法标识符，否则会写出目录外的路径。
+                    // 接口名同时是单文件模式下的输出文件名：必须是合法标识符。
                     if (!Generation.Naming.IsIdentifier(interfaceName))
                     {
                         throw new CliUsageException($"--interface-name 不是合法的 C# 标识符：{interfaceName}。");
@@ -201,8 +201,7 @@ internal sealed class CliOptions
 
                 case "--timeout":
                     var timeoutText = TakeValue(name, inlineValue, args, ref i);
-                    // IsFinite 拦住 NaN / Infinity：TimeSpan.FromSeconds 对它们直接抛异常，会绕过用法错误的统一处理；
-                    // 上限 86400 秒（一天）既覆盖实际需求，也避免溢出 TimeSpan 表示范围。
+                    // IsFinite 拦住 NaN / Infinity；上限 86400 秒（一天）。
                     if (!double.TryParse(timeoutText, System.Globalization.NumberStyles.Float,
                             System.Globalization.CultureInfo.InvariantCulture, out var seconds)
                         || !double.IsFinite(seconds)
@@ -339,10 +338,7 @@ internal sealed class CliOptions
         return equals < 0 ? (arg, null) : (arg[..equals], arg[(equals + 1)..]);
     }
 
-    /// <summary>
-    /// 取选项的取值：优先内联值，否则吃掉下一个参数；到末尾或以另一个选项（<c>-x</c> / <c>--x</c>）开头时
-    /// 报用法错误——否则 <c>--output --check</c> 会把 <c>--check</c> 当成目录名，校验被悄悄取消。
-    /// </summary>
+    /// <summary>取选项的取值：优先内联值，否则吃掉下一个参数；到末尾或遇到另一个选项时报用法错误。</summary>
     private static string TakeValue(string name, string? inlineValue, string[] args, ref int index)
     {
         if (inlineValue is not null)
@@ -376,7 +372,7 @@ internal sealed class CliOptions
         return next;
     }
 
-    /// <summary>登记文档来源；显式只允许一份，重复出现直接报用法错误（避免误把选项值当成第二份文档）。</summary>
+    /// <summary>登记文档来源；只允许一份，重复出现报用法错误。</summary>
     private void SetSource(string value)
     {
         if (Source is not null)

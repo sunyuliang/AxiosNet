@@ -7,10 +7,9 @@ namespace AxiosNet;
 /// 短路响应：本次请求不发出去，直接把这份结果当作响应返回；挂在 <see cref="AxiosConfig.ShortCircuit"/> 上。
 /// </summary>
 /// <remarks>
-/// 闸门、编码、连接租约、发送、重试、熔断与遥测 span 都不参与；响应方向照常处理——按本次 responseType 重新解析、
-/// 跑 transformResponse、过 <see cref="AxiosConfig.ValidateStatus"/>、执行响应拦截器。<see cref="AxiosResponse.Request"/> 为 <c>null</c>。
-/// <see cref="Body"/> 是原始字节（按每次调用的类型重新解析），<see cref="Data"/> 是已成型的结果（原样交付）。
-/// 只描述这一次请求：<see cref="AxiosConfig.Clone"/> 会清空它，放在 Defaults 上不生效。
+/// 闸门、编码、连接租约、发送、重试、熔断与遥测 span 都不参与；响应方向照常处理（按本次 responseType 重新解析、
+/// 跑 transformResponse、过 <see cref="AxiosConfig.ValidateStatus"/>、执行响应拦截器），<see cref="AxiosResponse.Request"/> 为 <c>null</c>。
+/// <see cref="Body"/> 与 <see cref="Data"/> 互斥，只描述这一次请求（<see cref="AxiosConfig.Clone"/> 会清空它）。
 /// </remarks>
 /// <example>
 /// <code>
@@ -40,28 +39,18 @@ public sealed class AxiosShortCircuit
     /// <summary>其余响应头（大小写不敏感，单值）：调用方的 transformResponse 与 <c>response.GetHeader</c> 都能读到。</summary>
     public IDictionary<string, string>? Headers { get; set; }
 
-    /// <summary>
-    /// 内部：多值响应头（304 合并用，优先于 <see cref="Headers"/>）。<c>Set-Cookie</c> 不能按逗号折叠，
-    /// 单值字典装不下，走这里原样交给响应。
-    /// </summary>
+    /// <summary>内部：多值响应头（304 合并用，优先于 <see cref="Headers"/>）；<c>Set-Cookie</c> 不能按逗号折叠，走这里。</summary>
     internal IReadOnlyDictionary<string, IEnumerable<string>>? MultiValueHeaders { get; set; }
 
-    /// <summary>
-    /// 内部：缓存条目的落库时刻。命中时用它与 <see cref="StoredAge"/> 把 <c>Age</c> 头推进到「当前龄期」。
-    /// </summary>
+    /// <summary>内部：缓存条目的落库时刻，命中时用来推进 <c>Age</c> 头。</summary>
     internal DateTimeOffset? ReceivedAt { get; set; }
 
     /// <summary>内部：落库那一刻的龄期（RFC 9111 的 current_age），命中时叠加在缓存里停留的时间。</summary>
     internal TimeSpan? StoredAge { get; set; }
 
-    /// <summary>
-    /// 响应头的全部值（每个头的每一条）：给 <see cref="Cache.IAxiosCacheStore"/> 保存条目用的只读出口。
-    /// </summary>
+    /// <summary>响应头的全部值（每个头的每一条），给 <see cref="Cache.IAxiosCacheStore"/> 保存条目用。</summary>
     /// <remarks>
-    /// 只读，写入请走 <see cref="Restore"/>；没有多值头时为 <c>null</c>。
-    /// 只保存 <see cref="Headers"/>（单值）会丢掉多条 <c>Set-Cookie</c> / <c>Vary</c> 的全部值、<c>ETag</c> / <c>Last-Modified</c>
-    /// 的优先来源，以及同名多值头除首值以外的部分。
-    /// 返回独立快照（深拷贝 + 只读包装，键大小写不敏感），每次读取都新建一份，适合落库时读一次、不要放进循环。
+    /// 只读，写入请走 <see cref="Restore"/>；没有多值头时为 <c>null</c>。返回独立快照（深拷贝 + 只读包装，键大小写不敏感）。
     /// </remarks>
     public IReadOnlyDictionary<string, IEnumerable<string>>? MultiValueHeaderValues
     {
@@ -73,9 +62,7 @@ public sealed class AxiosShortCircuit
                 return null;
             }
 
-            // 深拷贝：内部存的是 Dictionary<string, List<string>>，只包一层 ReadOnlyDictionary 的话，
-            // 调用方仍可强转回 Dictionary / List 改到库内状态；值因此也一并换成 ReadOnlyCollection。
-            // 分配只发生在本属性被读取时（自定义存储落库那一刻），不在任何库内热路径上。
+            // 深拷贝 + 只读包装，调用方改不到库内状态。
             var snapshot = new Dictionary<string, IEnumerable<string>>(source.Count, StringComparer.OrdinalIgnoreCase);
             foreach (var header in source)
             {
@@ -86,23 +73,13 @@ public sealed class AxiosShortCircuit
         }
     }
 
-    /// <summary>
-    /// 这条缓存的<b>落库时刻</b>：给自定义 <see cref="Cache.IAxiosCacheStore"/> 保存条目用的只读出口，
-    /// 与 <see cref="CachedAge"/> 一起决定命中时的 <c>Age</c>。
-    /// </summary>
-    /// <remarks>
-    /// 只有 get，写入请走 <see cref="Restore"/>；缺失时为 <c>null</c>，此时命中响应的 <c>Age</c> 会停在
-    /// 存进去的那个数值、不再随在缓存里停留的时间推进。
-    /// </remarks>
+    /// <summary>这条缓存的落库时刻，与 <see cref="CachedAge"/> 一起决定命中时的 <c>Age</c>。</summary>
+    /// <remarks>只有 get，写入请走 <see cref="Restore"/>；缺失时为 <c>null</c>，此时命中响应的 <c>Age</c> 不再推进。</remarks>
     public DateTimeOffset? CachedAt => ReceivedAt;
 
-    /// <summary>
-    /// 这条缓存<b>落库那一刻的龄期</b>（RFC 9111 的 <c>current_age</c>）：给自定义
-    /// <see cref="Cache.IAxiosCacheStore"/> 保存条目用的只读出口。
-    /// </summary>
+    /// <summary>这条缓存落库那一刻的龄期（RFC 9111 的 <c>current_age</c>）。</summary>
     /// <remarks>
-    /// 命中时的 <c>Age</c> = 本值 + 在缓存里停留的时间（<c>now - <see cref="CachedAt"/></c>）。
-    /// <b>前提是条目头里本来就有 <c>Age</c></b>：原响应没带这个头时库不会凭空造一个，此时本值只作记录、不影响交付。
+    /// 命中时的 <c>Age</c> = 本值 + 在缓存里停留的时间；条目头里没有 <c>Age</c> 时本值只作记录。
     /// 只有 get，写入请走 <see cref="Restore"/>；缺失时为 <c>null</c>。
     /// </remarks>
     public TimeSpan? CachedAge => StoredAge;
@@ -135,13 +112,9 @@ public sealed class AxiosShortCircuit
     public static AxiosShortCircuit From(object? data, int status = 200)
         => new() { Status = status, Data = data };
 
-    /// <summary>
-    /// 从存储记录重建一条缓存条目：自定义 <see cref="Cache.IAxiosCacheStore"/> 取回记录后交给库当作命中结果。
-    /// </summary>
+    /// <summary>从存储记录重建一条缓存条目：自定义 <see cref="Cache.IAxiosCacheStore"/> 取回记录后交给库当作命中结果。</summary>
     /// <remarks>
-    /// 参数与同名属性一一对应，默认值即「记录里没有这一项」；<paramref name="body"/> 与 <see cref="Data"/> 互斥。
-    /// <paramref name="multiValueHeaders"/> 非空时库只用它建响应头，<paramref name="headers"/> 被整份忽略；
-    /// 值整份为 <c>null</c> 的条目视为「没有这个头」。
+    /// 参数与同名属性一一对应；<paramref name="multiValueHeaders"/> 非空时库只用它建响应头，<paramref name="headers"/> 被整份忽略。
     /// 字典按引用收下、不复制：交出所有权后不要再改，也不要跨条目复用同一个可变字典。
     /// </remarks>
     /// <param name="body">响应原始字节；没有正文时传 <c>null</c>。</param>
@@ -173,20 +146,16 @@ public sealed class AxiosShortCircuit
             StatusText = statusText,
             ProtocolVersion = protocolVersion,
 
-            // 三项是包内字段：只有类内（这里）能赋值，包外只能经由本工厂填进来。
-            // 多值字典先归一：值为 null 的条目在这里剔掉，下游（交付装配 / 校验器 / 304 合并）都按
-            // 「每个值非 null」读，不必逐点判空。
+            // 三项是包内字段：包外只能经由本工厂填进来；多值字典先归一（剔掉值为 null 的条目）。
             MultiValueHeaders = NormalizeMultiValueHeaders(multiValueHeaders),
             ReceivedAt = receivedAt,
             StoredAge = storedAge
         };
 
-    /// <summary>
-    /// 归一多值头：剔掉「值整份为 <c>null</c>」的条目（等同「没有这个头」）。
-    /// </summary>
+    /// <summary>归一多值头：剔掉「值整份为 <c>null</c>」的条目（等同「没有这个头」）。</summary>
     /// <remarks>
-    /// 下游有按 <c>foreach (header.Value)</c> 不判空的读取点（条件请求校验器、导出视图），<c>null</c> 值会直接抛异常，故在入口归一。
-    /// 没有 <c>null</c> 值时原样返回传入的字典（不复制），确实存在时才复制一份干净的。
+    /// 下游有按 <c>foreach (header.Value)</c> 不判空的读取点，<c>null</c> 值会直接抛异常，故在入口归一。
+    /// 没有 <c>null</c> 值时原样返回传入的字典（不复制）。
     /// </remarks>
     /// <param name="multiValueHeaders">调用方给的字典，可能为 <c>null</c>。</param>
     /// <returns>值全部非 null 的字典（可能是同一个实例）。</returns>

@@ -144,7 +144,7 @@ public sealed class ModelEncodingDeclarationTests
         Assert.Empty(server.Received);
     }
 
-    // ---- 模型 ------------------------------------------------------------------
+    // 模型
 
     [Post("class-body")]
     [BodyContentType("text/plain")]

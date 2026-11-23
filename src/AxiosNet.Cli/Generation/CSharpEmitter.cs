@@ -657,7 +657,7 @@ internal sealed class CSharpEmitter
         builder.Append(indent).Append("/// <summary>").Append(doc).Append("</summary>\n");
     }
 
-    /// <summary>把任意文档文本压成单行并做 XML 转义；全空白返回 null，避免生成空注释。</summary>
+    /// <summary>把任意文档文本压成单行并做 XML 转义；全空白返回 null。</summary>
     private static string? DocText(string? text)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -706,10 +706,7 @@ internal sealed class CSharpEmitter
         return builder.Length == 0 ? null : builder.ToString();
     }
 
-    /// <summary>
-    /// 转义 C# 字符串字面量里的特殊字符：反斜杠、双引号、常见换行 / 制表符，以及 C# 视为行终止符的控制字符。
-    /// U+0085 / U+2028 / U+2029 与其它控制字符必须写成 <c>\uXXXX</c>，否则生成的源码本身无法编译。
-    /// </summary>
+    /// <summary>转义 C# 字符串字面量里的特殊字符；U+0085 / U+2028 / U+2029 与其它控制字符写成 <c>\uXXXX</c>。</summary>
     private static string EscapeString(string value)
     {
         var builder = new StringBuilder(value.Length);

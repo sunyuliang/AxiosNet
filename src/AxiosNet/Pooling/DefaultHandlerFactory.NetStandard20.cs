@@ -5,10 +5,7 @@ namespace AxiosNet.Pooling;
 
 internal static partial class DefaultHandlerFactory
 {
-    /// <summary>
-    /// 兼容资产的默认档 Handler：<see cref="HttpClientHandler"/>。连接级生命周期、h2 ping、建连超时等
-    /// 由 <see cref="ConnectionPoolOptionsValidator.Validate"/> 在兼容资产上拒绝非默认值，这里只映射两边都有的项。
-    /// </summary>
+    /// <summary>兼容资产的默认档 Handler（<see cref="HttpClientHandler"/>）：只映射两边都有的项，连接级选项由构造期校验拒绝非默认值。</summary>
     /// <param name="o">池选项（连接数上限、重定向、解压、头长度上限）。</param>
     /// <param name="transport">出口设置（Cookie、代理、客户端证书）。</param>
     /// <param name="cookieContainer">共享 Cookie 容器；<c>null</c> 且启用 Cookie 时新建一个。</param>
@@ -18,19 +15,14 @@ internal static partial class DefaultHandlerFactory
         ConnectionTransportOptions transport,
         CookieContainer? cookieContainer)
     {
-        // 兼容资产：HttpClientHandler 没有连接级生命周期、h2 ping、ConnectTimeout / ConnectCallback / SslOptions。
-        // 这些池选项在该资产上由 ConnectionPoolOptionsValidator 拒绝非默认值（不静默忽略）；
-        // 连接数上限与 TLS 协议版本两边都有，必须映射（否则是静默失效）。
-        // 节点级能力（origin 隔离、节点数上限、空闲驱逐、租约、统计）仍由 HttpConnectionPool 自己保证。
+        // 兼容资产：HttpClientHandler 没有连接级生命周期、h2 ping、ConnectTimeout 等，非默认值已在构造期拒绝。
         var handler = new HttpClientHandler
         {
             MaxConnectionsPerServer = o.MaxConnectionsPerServer,
             AllowAutoRedirect = o.AllowAutoRedirect,
             MaxAutomaticRedirections = o.MaxAutomaticRedirections,
 
-            // Framework 的 DecompressionMethods 没有 Brotli：只放行 gzip / deflate。
-            // ConnectionPoolOptionsValidator 已经拒绝越界位（含 Brotli），这里再掩一次只是防御：
-            // 万一有人绕过建池校验直接调本方法，也不会把平台不认识的枚举值交给 HttpClientHandler。
+            // Framework 的 DecompressionMethods 无 Brotli，这里再掩一次作防御。
             AutomaticDecompression = o.AutomaticDecompression
                 ? o.Decompression & (DecompressionMethods.GZip | DecompressionMethods.Deflate)
                 : DecompressionMethods.None,
@@ -41,7 +33,6 @@ internal static partial class DefaultHandlerFactory
             Proxy = transport.Proxy,
             Credentials = transport.Credentials,
 
-            // SslProtocols.None = 交给操作系统选择；配置了具体版本时与 net6+ 的 SslOptions.EnabledSslProtocols 同义。
             SslProtocols = transport.EnabledSslProtocols ?? SslProtocols.None
         };
 

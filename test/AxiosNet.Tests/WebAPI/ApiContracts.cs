@@ -90,7 +90,7 @@ public interface IStatusApi
     Task<AxiosResponse<Person>> GetAsync();
 }
 
-// ---- 非法声明：校验 API 必须逐条报告 ----
+// 非法声明：校验 API 必须逐条报告
 
 public interface IMissingRouteApi
 {
@@ -130,7 +130,7 @@ public interface IStreamingApi
     Task<AxiosResponse<IAsyncEnumerable<StreamFrame>>> GetAsync();
 }
 
-// ---- 阶段 2：接口级 multipart / 流式 ----
+// 阶段 2：接口级 multipart / 流式
 
 public interface IUploadApi
 {
@@ -167,7 +167,7 @@ public interface IStreamApi
 
 public sealed record StreamFrame(int N, string? Text);
 
-// ---- 阶段 2 非法声明 ----
+// 阶段 2 非法声明
 
 public interface IStreamWithoutMultipartApi
 {

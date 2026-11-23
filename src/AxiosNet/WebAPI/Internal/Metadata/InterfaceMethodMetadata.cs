@@ -4,7 +4,6 @@ namespace AxiosNet.WebAPI.Internal.Metadata;
 
 /// <summary>
 /// 接口方法的绑定元数据：路由、参数绑定计划、授权、返回类型特化后的调用器；缓存键包含被代理的接口。
-/// 契约构建与被代理的两条路径分别在 <c>InterfaceMethodMetadata.Contract.cs</c> 与 <c>WebAPI/Reflection/</c> 下。
 /// </summary>
 internal sealed partial class InterfaceMethodMetadata
 {
@@ -91,7 +90,6 @@ internal sealed partial class InterfaceMethodMetadata
         config.Method = _method!;
 
         // 声明式装配失败统一归 ERR_BAD_REQUEST（路径 / 查询 / 头 / 正文同口径）。
-        // 各步骤以状态元组传参，静态 lambda 无捕获。
         config.Url = BindingErrors.Run(
             config,
             _target,
@@ -262,8 +260,7 @@ internal sealed partial class InterfaceMethodMetadata
         return await client.SendStreamAsync<TItem>(invocation, _authorization, config, cancellationToken, format).ConfigureAwait(false);
     }
 
-    // 下面两个成员只由 JIT 反射路径调用（DispatchProxy 入口 / 挂泛型调用器）：
-    // 反射实现本身在 <c>WebAPI/Reflection/InterfaceMethodMetadataJit.cs</c>，这里只保留需要访问私有状态的薄壳。
+    // 下面两个成员只由 JIT 反射路径调用（DispatchProxy 入口 / 挂泛型调用器）。
 
     /// <summary>DispatchProxy 的调用入口：绑定 / 发送阶段的异常一律包装成 faulted Task，保持异步方法的异常时序。</summary>
     internal object Invoke(ApiClient client, object?[]? args)

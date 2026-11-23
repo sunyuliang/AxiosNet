@@ -16,9 +16,8 @@ public sealed partial class AxiosConfig
         public JsonSerializerOptions? JsonOptions { get; set; }
 
         /// <summary>
-        /// 按媒体类型登记的序列化器表（每个 <see cref="AxiosClient"/> 构造时保证有一份）。
-        /// 查找顺序：本表精确登记 → 表内默认项 → 进程注册表 → 内置 JSON。
-        /// 属实例级：库产出的配置合并时不带走来源实例的登记；按请求拿到的是同一张表，直接 <c>Register</c> 会改到实例。
+        /// 按媒体类型登记的序列化器表（每个 <see cref="AxiosClient"/> 构造时保证有一份）：本表精确登记 → 表内默认项 → 进程注册表 → 内置 JSON。
+        /// 属实例级：库产出的配置合并时不带走来源实例的登记。
         /// </summary>
         public ContentSerializerRegistry BodySerializers
         {
@@ -36,8 +35,7 @@ public sealed partial class AxiosConfig
         private bool _textEncodingSet;
 
         /// <summary>
-        /// 请求与响应共用的文本编码；设置后两个方向都按它解码/编码，<c>null</c> 表示回到自动识别。
-        /// 只影响字符串与表单文本，不影响 byte[] / Stream 透传。
+        /// 请求与响应共用的文本编码；<c>null</c> 表示回到自动识别。只影响字符串与表单文本，不影响 byte[] / Stream 透传。
         /// </summary>
         public Encoding? TextEncoding
         {
@@ -130,8 +128,7 @@ public sealed partial class AxiosConfig
             }
         }
 
-        // 值格式化 / 查询串 / 表单命名的按需状态：默认请求三项都不碰，收进一个懒 holder 后
-        // 每次克隆（每请求一次）只付一个指针，而不是三个指针加一个标记位。
+        // 值格式化 / 查询串 / 表单命名的按需状态，收在一个懒 holder 里。
         private ValueTextState? _valueTextState;
 
         private sealed class ValueTextState
@@ -148,7 +145,7 @@ public sealed partial class AxiosConfig
             /// <summary>表单字段名改写钩子（入参：前缀 / 字段名）；不设置时沿用原字段名。</summary>
             internal Func<string?, string, string>? FormFieldName;
 
-            /// <summary>按指针浅拷贝：三项委托都不可变，克隆出的状态可独立改写自身标记位。</summary>
+            /// <summary>按指针浅拷贝。</summary>
             internal ValueTextState Clone() => (ValueTextState)MemberwiseClone();
         }
 
@@ -162,7 +159,7 @@ public sealed partial class AxiosConfig
             set
             {
                 ArgumentNullException.ThrowIfNull(value);
-                // 已是包装类型时不重复包装（保留同一实例语义）。
+                // 已是包装类型时不重复包装。
                 _transformRequest = value as SynchronizedList<Func<object?, AxiosConfig, object?>>
                     ?? new SynchronizedList<Func<object?, AxiosConfig, object?>>(value);
             }
@@ -177,7 +174,7 @@ public sealed partial class AxiosConfig
             set
             {
                 ArgumentNullException.ThrowIfNull(value);
-                // 已是包装类型时不重复包装（保留同一实例语义）。
+                // 已是包装类型时不重复包装。
                 _transformResponse = value as SynchronizedList<Func<object?, AxiosConfig, object?>>
                     ?? new SynchronizedList<Func<object?, AxiosConfig, object?>>(value);
             }
@@ -188,7 +185,7 @@ public sealed partial class AxiosConfig
         /// <summary>是否注册过请求变换（<see cref="TransformRequest"/> 非空且有项），管线据此跳过整段遍历。</summary>
         internal bool HasTransformRequest => _transformRequest is { Count: > 0 };
 
-        /// <summary>请求变换的读快照：每轮管线只取一次，遍历期间不持有列表锁；没有变换时为 <c>null</c>。</summary>
+        /// <summary>请求变换的读快照：每轮管线只取一次；没有变换时为 <c>null</c>。</summary>
         internal Func<object?, AxiosConfig, object?>[]? TransformRequestSnapshot
             => _transformRequest is { Count: > 0 } ? _transformRequest.Snapshot() : null;
 

@@ -17,14 +17,13 @@ public sealed class AllocationSweepTests
 
         using var pool = new HttpConnectionPool(new ConnectionPoolOptions
         {
-            // 关闭后台定时器：本用例自己驱动清扫，避免周期回调污染进程级计数。
+            // 关闭后台定时器，本用例自己驱动清扫。
             IdleHandlerLifetime = TimeSpan.FromMinutes(10),
             EvictionInterval = TimeSpan.Zero,
             MaxEndpointCount = 64
         });
 
-        // 全部持租约 = 全部不可驱逐：扫描会走完整条链路，但一个都不会被移走。
-        // 这么做是为了让「扫描」本身的成本暴露出来（能驱逐时反而提前退出，测不出快照开销）。
+        // 全部持租约 = 全部不可驱逐；扫描走完整条链路。
         var leases = new List<PoolLease>(Endpoints);
         try
         {
@@ -33,8 +32,7 @@ public sealed class AllocationSweepTests
                 leases.Add(pool.Lease(new Uri($"http://127.0.0.1:{60000 + i}/")));
             }
 
-            // 修复前实测 810 B/次（24 个节点 × KeyValuePair 快照数组）：这些数组纯粹是
-            // 「为了排序 / 遍历而复制」，节点一个也没被驱逐时更是白付。护栏 256 B，现测地板 80 B。
+            // 空闲清扫的单次分配（护栏 256 B）。
             var floor = MinimumBytes(200, () => pool.EvictIdleEndpoints());
 
             Assert.True(
@@ -92,9 +90,7 @@ public sealed class AllocationSweepTests
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri("http://127.0.0.1:59999/"));
         var config = new AxiosConfig();
 
-        // 同步取 / 还：被测代码同步完成，测量本身就不能再引入异步机制——
-        // 写成 async 本地函数的话，每个 Task 也是 70 B 上下，量到的是测试自己。
-        // 用 GetAwaiter().GetResult() 走同步等待（ValueTask 已成功，不会阻塞）。
+        // 同步取 / 还；用 GetAwaiter().GetResult() 同步等待。
         void AcquireOnce()
         {
             gate.AcquireAsync(config, request, CancellationToken.None, TimeSpan.Zero, budgetRemaining: null, attempt: 1)
@@ -105,8 +101,7 @@ public sealed class AllocationSweepTests
 
         await Task.Yield(); // 让测试方法自己不占测量窗口
 
-        // 槽位总是空的：走的是「Wait(0) 成功」的快路径。修复前实测 247 B/次
-        //（SlotLease 对象 24 B + 两层 async 状态机），护栏 64 B，现测地板 24 B（只剩 SlotLease）。
+        // 槽位空：走「Wait(0) 成功」快路径（护栏 64 B）。
         var floor = MinimumBytes(500, AcquireOnce);
 
         Assert.True(
@@ -124,8 +119,7 @@ public sealed class AllocationSweepTests
         var config = new AxiosConfig();
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri("http://127.0.0.1:59999/"));
 
-        // 进度 / 限速包装：没有回调也没有限速时，每次读只是「读 + 记账 + 判上限」，
-        // 修复前实测 212 B/chunk（两层 async 状态机），护栏每 64 KB 合计 64 B，现测地板 0 B。
+        // 进度 / 限速包装：无回调无限速时每次读只做读 + 记账 + 判上限（护栏每 64 KB 合计 64 B）。
         using var stream = new ProgressReadStream(inner, payload.Length, null, null, null, config, request);
 
         void ReadWholeBody()
@@ -154,7 +148,7 @@ public sealed class AllocationSweepTests
         var config = new AxiosConfig();
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri("http://127.0.0.1:59999/"));
 
-        // 超时窗口包装：修复前实测 177 B/chunk，护栏每 64 KB 合计 64 B，现测地板 0 B。
+        // 超时窗口包装（护栏每 64 KB 合计 64 B）。
         using var stream = new TimeoutStream(inner, TimeSpan.FromSeconds(30), CancellationToken.None, config, request);
 
         void ReadWholeBody()
@@ -174,15 +168,8 @@ public sealed class AllocationSweepTests
             + "整条读链路不该有任何分配。");
     }
 
-    /// <summary>
-    /// 多次取<b>最小值</b>：被测路径是同步的，真实值是个定值（通常为 0），而噪声只会往上加
-    /// （分层编译在窗口内升级、GC 在别的线程分配）。最小值因此是「这条路径的地板成本」的无偏估计，
-    /// 平均值则会把别人的分配算进来。
-    /// </summary>
-    /// <remarks>
-    /// 计数器用<b>当前线程</b>而不是进程总量：进程级计数会把其它线程（线程池续延、定时器、终结器）的分配
-    /// 一并算进护栏，全量跑时那才是抖动的主因。
-    /// </remarks>
+    /// <summary>多次取最小值：被测路径同步，噪声只会往上加。</summary>
+    /// <remarks>计数器用当前线程而非进程总量。</remarks>
     private static long MinimumBytes(int iterations, Action action, int windows = 3)
     {
         action(); // 预热：JIT、静态缓存、首次反射

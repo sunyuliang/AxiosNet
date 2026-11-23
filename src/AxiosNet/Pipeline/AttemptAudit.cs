@@ -4,14 +4,10 @@ namespace AxiosNet.Pipeline;
 
 public static partial class Attempt
 {
-    /// <summary>
-    /// 每次尝试的审计：在终端前后计时，按尝试发出 <see cref="AxiosTelemetry.AttemptStopEventName"/> /
-    /// <see cref="AxiosTelemetry.AttemptFailedEventName"/>（载荷 <see cref="AxiosAttemptEvent"/>）。
-    /// </summary>
+    /// <summary>每次尝试的审计：在终端前后计时，按尝试发出 <see cref="AxiosTelemetry.AttemptStopEventName"/> / <see cref="AxiosTelemetry.AttemptFailedEventName"/>（载荷 <see cref="AxiosAttemptEvent"/>）。</summary>
     /// <remarks>
-    /// 已在默认链上（闸门之后、终端之前），未订阅时只做一次开关判定。只覆盖真正到达终端的尝试：熔断拒绝、
-    /// 闸门排队超时与短路响应不产生事件。对冲每条分支、备用端点每个端点各一条事件，被胜出者取消的败者不发失败事件。
-    /// 计时不含闸门排队与退避等待，流式响应只到响应头。重复 <c>Append</c> 会被当作重复内置项拒绝。
+    /// 已在默认链上（闸门之后、终端之前），未订阅时只做一次开关判定。只覆盖真正到达终端的尝试：熔断拒绝、闸门排队超时与短路响应不产生事件；
+    /// 对冲每条分支、备用端点每个端点各一条事件，被胜出者取消的败者不发失败事件。计时不含闸门排队与退避等待，流式响应只到响应头。
     /// </remarks>
     public static AxiosAttemptMiddleware Audit { get; } = next =>
     {
@@ -35,7 +31,7 @@ public static partial class Attempt
         {
             var result = await next(request, ctx).ConfigureAwait(false);
 
-            // is { } 防止中间件返回 default 结果时变成空引用。
+            // 防止中间件返回 default 结果时空引用。
             AxiosTelemetry.Dispatch.AttemptSucceeded(ctx, result.Response is { } response ? response.Status : null, startTimestamp);
 
             return result;

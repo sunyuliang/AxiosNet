@@ -462,9 +462,7 @@ public sealed class MultipartBindingTests
         Assert.Contains("不能为空白", ex.Message);
     }
 
-    // ------------------------------------------------------------------
-    // 测试模型
-    // ------------------------------------------------------------------
+// 测试模型
 
     [Post("upload")]
     [Multipart]
@@ -707,9 +705,7 @@ public sealed class MultipartBindingTests
         public string? A { get; set; }
     }
 
-    // ------------------------------------------------------------------
-    // 辅助
-    // ------------------------------------------------------------------
+// 辅助
 
     private static string Body(TestRequest request) => Encoding.UTF8.GetString(request.Body);
 

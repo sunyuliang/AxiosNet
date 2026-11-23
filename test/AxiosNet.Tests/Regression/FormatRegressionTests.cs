@@ -16,9 +16,7 @@ namespace AxiosNet.Tests.Regression;
 /// </summary>
 public sealed class FormatRegressionTests
 {
-    // ------------------------------------------------------------------
-    // 查询通道：绑定层格式化过的文本不能被实例钩子再套一遍
-    // ------------------------------------------------------------------
+// 查询通道：绑定层格式化过的文本不能被实例钩子再套一遍
 
     [Fact]
     public async Task Query_ScalarBinding_IsNotHookedTwice()
@@ -53,9 +51,7 @@ public sealed class FormatRegressionTests
         Assert.Equal("Codes=1,2&a=2024-03-04T00:00:00.000Z", query);
     }
 
-    // ------------------------------------------------------------------
-    // 查询通道：设置钩子不能把对象集合压成 ToString
-    // ------------------------------------------------------------------
+// 查询通道：设置钩子不能把对象集合压成 ToString
 
     [Fact]
     public async Task Query_ListOfObjects_KeepsStructure_WithHook()
@@ -76,9 +72,7 @@ public sealed class FormatRegressionTests
         Assert.Equal(server.Received[0].Query, server.Received[1].Query);
     }
 
-    // ------------------------------------------------------------------
-    // 表单 / multipart：同一份声明在两条装配路径上口径一致
-    // ------------------------------------------------------------------
+// 表单 / multipart：同一份声明在两条装配路径上口径一致
 
     [Fact]
     public async Task Multipart_StringPart_AppliesMemberFormat()
@@ -107,9 +101,7 @@ public sealed class FormatRegressionTests
         Assert.Contains("Code=Fabc", body);
     }
 
-    // ------------------------------------------------------------------
-    // multipart：Memory 形态的二进制同样是文件部件，不能「接受后静默忽略」
-    // ------------------------------------------------------------------
+// multipart：Memory 形态的二进制同样是文件部件，不能「接受后静默忽略」
 
     [Fact]
     public void MemoryBytePart_IsRejectedLikeByteArray()
@@ -127,9 +119,7 @@ public sealed class FormatRegressionTests
         Assert.Contains("文件部件", ex.Message);
     }
 
-    // ------------------------------------------------------------------
-    // 查询通道：只有成员声明、没有实例钩子时同样只能格式化一次
-    // ------------------------------------------------------------------
+// 查询通道：只有成员声明、没有实例钩子时同样只能格式化一次
 
     [Fact]
     public async Task Query_StringDelegateFormat_AppliesOnce_WithoutHook()
@@ -155,9 +145,7 @@ public sealed class FormatRegressionTests
         Assert.Equal("Tags[]=Fa&Tags[]=Fb", query);
     }
 
-    // ------------------------------------------------------------------
-    // 裸标量正文：钩子「本次不处理」（返回 null）不能改变二进制正文的默认形态
-    // ------------------------------------------------------------------
+// 裸标量正文：钩子「本次不处理」（返回 null）不能改变二进制正文的默认形态
 
     [Fact]
     public async Task BinaryBody_WithDecliningHook_KeepsRawBytes()
@@ -183,9 +171,7 @@ public sealed class FormatRegressionTests
         Assert.Equal(payload, server.Received[1].Body);
     }
 
-    // ------------------------------------------------------------------
-    // 反射与源生成：基类声明 + override 的 [Format] 必须同口径
-    // ------------------------------------------------------------------
+// 反射与源生成：基类声明 + override 的 [Format] 必须同口径
 
     [Fact]
     public void Reflection_InheritsFormatFromBaseOverride()
@@ -214,9 +200,7 @@ public sealed class FormatRegressionTests
         Assert.Equal(generatedQuery, reflectionQuery);
     }
 
-    // ------------------------------------------------------------------
-    // 定值通道：Path / Header 在绑定期定型，钩子必须只作用一次
-    // ------------------------------------------------------------------
+// 定值通道：Path / Header 在绑定期定型，钩子必须只作用一次
 
     [Fact]
     public async Task PathAndHeader_ApplyHookOnceAtBindTime()
@@ -233,9 +217,7 @@ public sealed class FormatRegressionTests
         Assert.Equal("2024-03", received.Headers["X-When"]);
     }
 
-    // ------------------------------------------------------------------
-    // 请求头集合：字典值与单值头同一口径，逐项经过钩子且只经过一次
-    // ------------------------------------------------------------------
+// 请求头集合：字典值与单值头同一口径，逐项经过钩子且只经过一次
 
     [Fact]
     public async Task HeaderCollection_ValuesGoThroughHookOnce()
@@ -264,9 +246,7 @@ public sealed class FormatRegressionTests
         Assert.Equal(new object?[] { "v", "raw" }, seen);
     }
 
-    // ------------------------------------------------------------------
-    // 裸标量正文：直接调用与声明式同一口径，钩子看到原值一次
-    // ------------------------------------------------------------------
+// 裸标量正文：直接调用与声明式同一口径，钩子看到原值一次
 
     [Fact]
     public async Task DirectScalarBody_GoesThroughHook()
@@ -302,9 +282,7 @@ public sealed class FormatRegressionTests
         Assert.Single(seen);
     }
 
-    // ------------------------------------------------------------------
-    // 钩子只有一处（AxiosConfig.ValueFormatter）：两条入口共用，按请求可覆盖
-    // ------------------------------------------------------------------
+// 钩子只有一处（AxiosConfig.ValueFormatter）：两条入口共用，按请求可覆盖
 
     /// <summary>接口式代理读的也是实例默认值上的钩子（与请求模型走同一个来源）。</summary>
     [Fact]
@@ -404,9 +382,7 @@ public sealed class FormatRegressionTests
         Assert.Empty(server.Received);
     }
 
-    // ------------------------------------------------------------------
-    // 直接调用（AxiosClient）的钩子覆盖面：查询 / 表单 / 裸标量正文；路径与头没有这一步
-    // ------------------------------------------------------------------
+// 直接调用（AxiosClient）的钩子覆盖面：查询 / 表单 / 裸标量正文；路径与头没有这一步
 
     [Fact]
     public async Task DirectCall_HookCoversQueryFormAndScalarBody()
@@ -468,9 +444,7 @@ public sealed class FormatRegressionTests
         Assert.Equal(1, calls);
     }
 
-    // ------------------------------------------------------------------
-    // 可空标量：拆包后走同一条格式化链
-    // ------------------------------------------------------------------
+// 可空标量：拆包后走同一条格式化链
 
     [Fact]
     public async Task NullableDateOnly_AppliesMemberFormat()
@@ -483,9 +457,7 @@ public sealed class FormatRegressionTests
         Assert.Equal("Day=2024-03-04", query);
     }
 
-    // ------------------------------------------------------------------
-    // DateOnly 线上形态：ISO 日期；且与旧规则（不变文化的短日期）不同
-    // ------------------------------------------------------------------
+// DateOnly 线上形态：ISO 日期；且与旧规则（不变文化的短日期）不同
 
     [Fact]
     public async Task DateOnly_Query_UseIsoDate()
@@ -503,9 +475,7 @@ public sealed class FormatRegressionTests
         Assert.NotEqual("2024-01-02", oldRule);
     }
 
-    // ------------------------------------------------------------------
-    // 测试模型
-    // ------------------------------------------------------------------
+// 测试模型
 
     [Get("probe/hook")]
     private sealed class HookQuery : IApiRequest<Person>

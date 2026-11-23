@@ -15,7 +15,7 @@ public static class AxiosContentType
     /// <summary><c>application/octet-stream</c>：二进制载荷（<c>byte[]</c> / <c>Stream</c>）的常规选择。</summary>
     public const string OctetStream = "application/octet-stream";
 
-    /// <summary><c>application/xml</c>：需配合 XML 序列化器，否则会发出「头部 XML、正文 JSON」的请求。</summary>
+    /// <summary><c>application/xml</c>：需配合 XML 序列化器。</summary>
     public const string Xml = "application/xml";
 
     /// <summary><c>application/json-patch+json</c>：JSON Patch 文档（PATCH 常用）。</summary>

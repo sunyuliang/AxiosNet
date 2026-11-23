@@ -53,9 +53,7 @@ public sealed class ParamsTests
         Assert.Contains("Right[Value]=v", server.Received[0].RawUrl);
     }
 
-    // ------------------------------------------------------------------
-    // 5) 自定义 paramsSerializer 的错误模型
-    // ------------------------------------------------------------------
+// 5) 自定义 paramsSerializer 的错误模型
 
     [Fact]
     public async Task CustomQueryEncoderThrows_ReportsOptionError()
@@ -71,9 +69,7 @@ public sealed class ParamsTests
         Assert.Empty(server.Received);
     }
 
-    // ---------------------------------------------------------------
-    // 1/2：params 收尾与嵌套键转义
-    // ---------------------------------------------------------------
+// 1/2：params 收尾与嵌套键转义
 
     [Fact]
     public async Task Params_NestedAndSpecialKeys_StayStableAcrossRequests()
@@ -95,9 +91,7 @@ public sealed class ParamsTests
         Assert.All(server.Received, r => Assert.Equal("Filter[a%20b]=1&Filter[c[d]]=2&Page=3", r.Query));
     }
 
-    // ------------------------------------------------------------------
-    // 标量文本形态：TimeOnly 秒 / DateTime(Unspecified) UTC
-    // ------------------------------------------------------------------
+// 标量文本形态：TimeOnly 秒 / DateTime(Unspecified) UTC
 
     [Fact]
     public async Task Query_TimeOnly_KeepsSeconds_AndUnspecifiedDateTimeIsUtc()
@@ -130,9 +124,7 @@ public sealed class ParamsTests
         Assert.Equal("q=a%20b&tags[]=x&tags[]=y", received.Query);
     }
 
-    // ------------------------------------------------------------------
-    // params 的根类型
-    // ------------------------------------------------------------------
+// params 的根类型
 
     [Fact]
     public async Task Params_String_IsTreatedAsAlreadySerializedQuery()
@@ -238,9 +230,7 @@ public sealed class ParamsTests
         }));
     }
 
-    // ------------------------------------------------------------------
-    // url 结尾的 ? / &
-    // ------------------------------------------------------------------
+// url 结尾的 ? / &
 
     [Fact]
     public void Params_UrlEndingWithSeparator_DoesNotIntroduceEmptySegment()
@@ -324,9 +314,7 @@ public sealed class ParamsTests
         Assert.Equal("http://a.com/p?a=1&b[]=x&b[]=y&c[d]=true", uri);
     }
 
-    // ------------------------------------------------------------------
-    // L3：byte[] 查询参数 → base64。
-    // ------------------------------------------------------------------
+// L3：byte[] 查询参数 → base64。
 
     [Fact]
     public void ByteArrayParams_SerializeAsReversibleBase64()
@@ -391,9 +379,7 @@ public sealed class ParamsTests
         Assert.Equal("x=1&y=2", server.Received[0].Query);
     }
 
-    // ---------------------------------------------------------------
-    // P1：配置合并与序列化细节
-    // ---------------------------------------------------------------
+// P1：配置合并与序列化细节
 
     [Fact]
     public void ParamsObjectWithIndexer_IsSkippedInsteadOfThrowing()
@@ -483,9 +469,7 @@ public sealed class ParamsTests
     // IReadOnlyDictionary 按键值对展平。
 
 
-    // ---------------------------------------------------------------
-    // 测试模型与序列化器夹具
-    // ---------------------------------------------------------------
+// 测试模型与序列化器夹具
 
     private sealed class NestedParams
     {
@@ -495,9 +479,7 @@ public sealed class ParamsTests
     }
 
 
-    // ------------------------------------------------------------------
-    // 测试辅助
-    // ------------------------------------------------------------------
+// 测试辅助
 
 
     /// <summary>固定应答的离线 Handler（回放语义用例只需要一条稳定的响应）。</summary>
@@ -535,9 +517,7 @@ public sealed class ParamsTests
         }
     }
 
-    // ---------------------------------------------------------------
-    // 辅助
-    // ---------------------------------------------------------------
+// 辅助
 
     /// <summary>
     /// 正文读取阶段的超时预算。必须同时满足两头：

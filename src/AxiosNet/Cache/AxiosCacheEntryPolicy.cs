@@ -1,17 +1,9 @@
 namespace AxiosNet.Cache;
 
-/// <summary>
-/// 一条缓存条目的写入策略：最终存活时长，以及算它时用到的 HTTP 缓存信息（解析模式下落库前就已解析，其余情况在读取时才解析）。
-/// 随 <see cref="IAxiosCacheStore.SetAsync(string, AxiosShortCircuit, AxiosCacheEntryPolicy, CancellationToken)"/> 交给存储。
-/// </summary>
+/// <summary>一条缓存条目的写入策略：最终存活时长，以及算它时用到的 HTTP 缓存信息。</summary>
 /// <remarks>
-/// <see cref="TimeToLive"/> 是库的结论，存储照做即可；其余字段是依据 —— 自建存储（共享 / 持久化）可以据此换一套自己的策略，
-/// 例如按 <see cref="CacheControl"/> 的 <c>private</c> 拒绝写入共享缓存、或按 <see cref="Vary"/> 自己分区。
-/// 响应完全没有缓存头时，除 <see cref="TimeToLive"/> / <see cref="ConfiguredTimeToLive"/> 外各项都取中性值（<c>null</c> / 零 / 空）。
-/// <para>
-/// <see cref="CacheFreshnessMode.Configured"/> 下落库前不解析响应头，HTTP 相关字段在第一次被读取时才解析 ——
-/// 只关心 TTL 的存储（含内置 <see cref="MemoryCacheStore"/>）完全不会付出解析成本。
-/// </para>
+/// <see cref="TimeToLive"/> 是库的结论，存储照做即可；其余字段是依据，自建存储可据此换策略（如按 <c>private</c> 拒绝共享、按 <see cref="Vary"/> 分区）。
+/// Configured 模式下 HTTP 相关字段在首次读取时才解析。
 /// </remarks>
 public sealed class AxiosCacheEntryPolicy
 {
@@ -37,23 +29,16 @@ public sealed class AxiosCacheEntryPolicy
         _http = http;
     }
 
-    /// <summary>最终生效的存活时长（库的结论）：<see cref="CacheFreshnessMode.Configured"/> 取配置值，
-    /// <see cref="CacheFreshnessMode.Server"/> 取剩余新鲜期，<see cref="CacheFreshnessMode.Intersection"/> 取两者较小值；
-    /// 请求带 <c>max-age</c> 时再以它为上限。</summary>
+    /// <summary>最终生效的存活时长：Configured 取配置值，Server 取剩余新鲜期，Intersection 取两者较小值；请求带 <c>max-age</c> 时再以它为上限。</summary>
     public TimeSpan TimeToLive { get; }
 
     /// <summary><see cref="AxiosCacheOptions.TimeToLive"/> 的配置值（未经 HTTP 语义调整）。</summary>
     public TimeSpan ConfiguredTimeToLive { get; }
 
-    /// <summary>
-    /// 响应声明的 HTTP 新鲜期：<c>max-age</c>，没有则 <c>Expires - Date</c>（<c>Date</c> 缺失时用收到响应的时刻）；
-    /// 两者都没有时为 <c>null</c>。已过期的 <c>Expires</c> 与非法 <c>Expires</c> 都算零。
-    /// </summary>
+    /// <summary>响应声明的 HTTP 新鲜期：<c>max-age</c>，否则 <c>Expires - Date</c>；都没有时为 <c>null</c>，非法 <c>Expires</c> 算零。</summary>
     public TimeSpan? HttpFreshnessLifetime => Http.FreshnessLifetime;
 
-    /// <summary>
-    /// 落库时的当前龄期：取 <c>Age</c> 头与「收到响应时刻 - Date」的较大值（RFC 9111 的 apparent age），无缓存头时为零。
-    /// </summary>
+    /// <summary>落库时龄期：<c>Age</c> 与「收到时刻 - Date」取较大值，无缓存头时为零。</summary>
     public TimeSpan Age => Http.Age;
 
     /// <summary>这次写入采用的取值方式（取自 <see cref="AxiosCacheOptions.FreshnessMode"/>）。</summary>
@@ -77,7 +62,7 @@ public sealed class AxiosCacheEntryPolicy
     /// <summary>首次访问时解析 HTTP 缓存信息，并按「只发布一份」写回（并发各解析一次也不会互相覆盖）。</summary>
     private HttpCacheInfo ResolveHttp()
     {
-        // _headers 只在 http 为 null 时才有值（Configured 模式），两者互为反证。
+        // _headers 只在 http 为 null（Configured 模式）时才有值。
         var parsed = AxiosCache.ReadHttpCacheInfo(_headers!, _receivedAt);
         return Interlocked.CompareExchange(ref _http, parsed, null) ?? parsed;
     }

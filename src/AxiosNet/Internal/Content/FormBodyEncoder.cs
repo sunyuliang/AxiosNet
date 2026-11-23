@@ -6,10 +6,8 @@ using AxiosNet.Metadata;
 
 namespace AxiosNet.Internal.Content;
 
-/// <summary>
-/// <c>application/x-www-form-urlencoded</c> 通道：把结构化数据展平为键值对并编码成正文
-/// （嵌套对象 <c>a[b]=v</c>、数组 <c>a[]=v</c>、根数组 <c>[i]</c>、null 跳过、标量取原始文本，不经过序列化器）。
-/// </summary>
+/// <summary><c>application/x-www-form-urlencoded</c> 通道：把结构化数据展平为键值对并编码成正文。</summary>
+/// <remarks>嵌套对象 <c>a[b]=v</c>、数组 <c>a[]=v</c>、根数组 <c>[i]</c>、null 跳过、标量取原始文本。</remarks>
 internal static class FormBodyEncoder
 {
     /// <summary>展平数据、百分号编码成正文，并按需压缩 / 写 Content-Type。</summary>
@@ -20,9 +18,7 @@ internal static class FormBodyEncoder
         Encoding encoding,
         bool appendCharset)
     {
-        // 单个结构化数据＝一个铺到根级的成员：与聚合正文同一条展平路径。
-        // 不做键名去重：对象属性天然唯一，重复只能来自展平后的同名字段（<c>[JsonPropertyName]</c> 冲突），
-        // 那是调用方数据本身的问题，不归「合并正文」这条规则管。
+        // 单个结构化数据＝一个铺到根级的成员。
         AggregateBodyMember[] members =
             [new AggregateBodyMember(string.Empty, data, data.GetType(), nameFromAttribute: false, format: null, spread: true)];
 
@@ -50,7 +46,7 @@ internal static class FormBodyEncoder
         var pairs = new List<KeyValuePair<string, string>>(Math.Max(4, members.Length));
         var options = new FormFlattenOptions(encoding, config.SerializationOrNull?.FormFieldName, config.SerializationOrNull?.ValueText);
         var path = new ObjectPath();
-        // 键名一律按线上形态（已百分号编码）登记：铺开的成员产出的是编码后的键，两侧必须同形态才比得出来。
+        // 键名按线上形态（已百分号编码）登记。
         List<string>? topNames = guardDuplicateKeys ? new List<string>(members.Length) : null;
         try
         {
@@ -58,7 +54,7 @@ internal static class FormBodyEncoder
             {
                 if (member.Spread)
                 {
-                    // 多个 [RootBody] / 单个结构化正文：结构化值的字段直接铺到根级。
+                    // 多个 [RootBody] / 单个结构化正文：字段直接铺到根级。
                     var start = pairs.Count;
                     CollectFormPairs(null, member.Value, pairs, options, ref path, member.Format);
                     if (topNames is not null)
@@ -72,7 +68,7 @@ internal static class FormBodyEncoder
                     continue;
                 }
 
-                // 聚合正文的键即成员键名，直接作为根级前缀；成员级 [Format] 照常生效。
+                // 聚合正文的键即成员键名，直接作为根级前缀。
                 var name = BodyFields.CombineName(options.NameSelector, null, member.Name);
                 topNames?.Add(EncodeKey(name, encoding));
                 CollectFormPairs(name, member.Value, pairs, options, ref path, member.Format);
@@ -80,13 +76,13 @@ internal static class FormBodyEncoder
         }
         catch (DataCycleException ex)
         {
-            // 正文不再产出：数据里的流 / FormFile 按 FormFile 契约（异常时 Dispose）一并回收。
+            // 正文不再产出：成员里的流 / FormFile 一并回收。
             DisposeMembers(members);
             throw AxiosException.InvalidOption(ex.Message, config, ex);
         }
         catch (UnsupportedFormValueException ex)
         {
-            // 表单装不下文件部件：归 ERR_BAD_OPTION_VALUE，流同样不能留到 GC。
+            // 表单装不下文件部件，流同样要回收。
             DisposeMembers(members);
             throw AxiosException.InvalidOption(ex.Message, config, ex);
         }
@@ -107,7 +103,7 @@ internal static class FormBodyEncoder
             }
             catch (AxiosException)
             {
-                // 重复键同样不产出正文：成员里的流要在这里回收。
+                // 重复键同样不产出正文，流要回收。
                 DisposeMembers(members);
                 throw;
             }
@@ -123,7 +119,7 @@ internal static class FormBodyEncoder
         return bracket <= 0 ? key : key[..bracket];
     }
 
-    /// <summary>正文不再产出时回收成员里的流 / FormFile（与普通正文的异常路径同一契约）。</summary>
+    /// <summary>正文不再产出时回收成员里的流 / FormFile。</summary>
     private static void DisposeMembers(AggregateBodyMember[] members)
     {
         foreach (var member in members)
@@ -140,7 +136,7 @@ internal static class FormBodyEncoder
         Encoding encoding,
         bool appendCharset)
     {
-        // 正文是已转义的 ASCII 串，编码只影响转义映射。
+        // 正文是已转义的 ASCII 串。
         var body = BuildBody(pairs);
 
         var content = Compression.WrapBytes(Encoding.ASCII.GetBytes(body), config);
@@ -201,7 +197,7 @@ internal static class FormBodyEncoder
                 AddPair(prefix, ValueText.Format(text, ValueTextChannel.Form, memberFormat, options.Formatter)!, pairs, options.Encoding);
                 return;
 
-            // urlencoded 没有二进制表示：用 base64（与查询串同一条规则，见 ValueText）。
+            // urlencoded 没有二进制表示：用 base64。
             case byte[] bytes:
                 AddPair(prefix, ValueText.Format(bytes, ValueTextChannel.Form, memberFormat, options.Formatter)!, pairs, options.Encoding);
                 return;
@@ -226,7 +222,7 @@ internal static class FormBodyEncoder
 
             case IDictionary<string, object?> genericDictionary:
             {
-                // 含 ExpandoObject（dynamic）
+                // 含 ExpandoObject（dynamic）。
                 path.Enter(genericDictionary);
                 try
                 {
@@ -249,7 +245,7 @@ internal static class FormBodyEncoder
                 return;
             }
 
-            // 只实现 IReadOnlyDictionary 的字典：按键值对展开，不走 POCO 反射。
+            // 只实现 IReadOnlyDictionary 的字典。
             case IReadOnlyDictionary<string, object?> readOnlyDictionary:
             {
                 path.Enter(readOnlyDictionary);
@@ -303,7 +299,7 @@ internal static class FormBodyEncoder
                 return;
             }
 
-            // 只实现 IDictionary<string,T> 的自定义字典（T 不是 object）或值类型字典：按键值对展开。
+            // 只实现 IDictionary<string,T> 的自定义字典。
             case IEnumerable map when QueryMap.CanEnumerate(map):
             {
                 path.Enter(map);
@@ -344,7 +340,7 @@ internal static class FormBodyEncoder
                 var index = 0;
                 foreach (var item in enumerable)
                 {
-                    // 根数组没有键名，用下标保证可还原；嵌套数组沿用 a[] 形式。
+                    // 根数组没有键名，用下标；嵌套数组沿用 a[]。
                     var name = prefix is null ? "[" + index + "]" : prefix + "[]";
                     CollectFormPairs(name, item, pairs, options, ref path, memberFormat);
                     index++;
@@ -407,16 +403,11 @@ internal static class FormBodyEncoder
             _options = options;
         }
 
-        /// <summary>数组元素的名字：根数组用 <c>[i]</c>，嵌套数组沿用父名加 <c>[]</c>（表单规则，见 <see cref="IJsonFlattenSink"/>）。</summary>
-        /// <param name="prefix">父级名字；根数组为 <c>null</c>。</param>
-        /// <param name="index">元素下标。</param>
-        /// <returns>该元素在表单里的键名。</returns>
+        /// <summary>数组元素的名字：根数组用 <c>[i]</c>，嵌套数组加 <c>[]</c>。</summary>
         public string? ArrayItemName(string? prefix, int index)
             => prefix is null ? "[" + index + "]" : prefix + "[]";
 
-        /// <summary>标量叶子按表单规则转义后写入键值对；没有键名的根标量直接丢弃（表单表达不了无名值）。</summary>
-        /// <param name="name">字段名；<c>null</c> 表示根标量，跳过。</param>
-        /// <param name="value">叶子值。</param>
+        /// <summary>标量叶子按表单规则转义后写入；没有键名的根标量丢弃。</summary>
         public void Leaf(string? name, JsonElement value)
         {
             if (name is null)
@@ -437,9 +428,7 @@ internal static class FormBodyEncoder
     /// <summary>字段值编码：方括号也转义（值上没有数组语义）。</summary>
     private static string EncodeValue(string value, Encoding encoding) => PercentEncode(value, encoding, keepBrackets: false);
 
-    /// <summary>
-    /// 单趟百分号编码：按字节流直出可保留的 ASCII，其余转义（空格转 <c>+</c>），不在 EscapeDataString 之后再串 Replace。
-    /// </summary>
+    /// <summary>单趟百分号编码：可保留的 ASCII 直出，其余转义，空格转 <c>+</c>。</summary>
     private static string PercentEncode(string value, Encoding encoding, bool keepBrackets)
     {
         if (value.Length == 0)
@@ -451,11 +440,11 @@ internal static class FormBodyEncoder
         var rented = ArrayPool<byte>.Shared.Rent(byteCount);
         try
         {
-            // 切片只覆盖 GetBytes 真正写进去的字节数。
+            // 切片只覆盖真正写入的字节数。
             var written = encoding.GetBytes(value.AsSpan(), rented);
             var bytes = rented.AsSpan(0, written);
 
-            // 容量一次算准：先数一遍需要转义的字节。
+            // 先数一遍需要转义的字节，容量一次算准。
             var escaped = 0;
             foreach (var b in bytes)
             {
@@ -470,7 +459,7 @@ internal static class FormBodyEncoder
             {
                 if (b == (byte)' ')
                 {
-                    // 与 FormUrlEncodedContent 完全一致：空格转义为 '+'。
+                    // 与 FormUrlEncodedContent 一致：空格转 +。
                     builder.Append('+');
                 }
                 else if (IsLiteral(b, keepBrackets))
@@ -526,9 +515,7 @@ internal readonly struct FormFlattenOptions
     public Func<object?, ValueTextChannel, string?>? Formatter { get; }
 }
 
-/// <summary>
-/// 表单通道装不下某个值（文件部件），由 <see cref="FormBodyEncoder"/> 转成 <see cref="AxiosException"/>（<c>ERR_BAD_OPTION_VALUE</c>）。
-/// </summary>
+/// <summary>表单通道装不下某个值（文件部件），由 <see cref="FormBodyEncoder"/> 转成 <c>ERR_BAD_OPTION_VALUE</c>。</summary>
 internal sealed class UnsupportedFormValueException : Exception
 {
     public UnsupportedFormValueException(string message)

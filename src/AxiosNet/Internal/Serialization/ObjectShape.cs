@@ -80,6 +80,6 @@ internal sealed class MapAccessor
     /// <summary>该访问器对应的自定义字典类型：运行时按实际类型查表，不靠形状猜测。</summary>
     public Type Type { get; }
 
-    /// <summary>把字典实例摊平成键值对：生成期烘焙成静态方法，避免枚举走接口调用。</summary>
+    /// <summary>把字典实例摊平成键值对：生成期烘焙成静态方法。</summary>
     public Func<object, IEnumerable<KeyValuePair<string, object?>>> Enumerate { get; }
 }

@@ -4,16 +4,13 @@ namespace AxiosNet.WebAPI.Attributes;
 /// 标记请求模型 / 接口 / 接口方法需要授权：按 <see cref="Scheme"/> 与令牌拼出 <c>Authorization: {scheme} {token}</c>。
 /// </summary>
 /// <remarks>
-/// 客户端配了 <see cref="ApiClient.CredentialProvider"/> 且返回托管凭据时按 <see cref="Scheme"/> 写头。
-/// 静态凭据槽位 <see cref="AxiosConfig.TransportSettings.Auth"/> 的 scheme 与本声明的 <see cref="Scheme"/> 不一致时发出前报
-/// <c>ERR_BAD_OPTION_VALUE</c>，不静默以槽位为准。
-/// 未标注授权特性的声明只要客户端配了凭据提供方也会取凭据；方法级声明压过接口 / 类上的声明；与 <see cref="AllowAnonymousAttribute"/> 同标一层属二义性。
+/// 静态凭据槽位 <see cref="AxiosConfig.TransportSettings.Auth"/> 的 scheme 与 <see cref="Scheme"/> 不一致时发出前报 <c>ERR_BAD_OPTION_VALUE</c>。
+/// 方法级声明压过接口 / 类上的声明；与 <see cref="AllowAnonymousAttribute"/> 同标一层属二义性。
 /// </remarks>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Interface | AttributeTargets.Method, Inherited = true, AllowMultiple = false)]
 public sealed class AuthorizeAttribute : Attribute
 {
-    /// <summary>声明需要授权，使用指定认证方案（默认 <c>Bearer</c>）。</summary>
-    /// <param name="scheme">认证方案名，拼在令牌前（如 <c>Bearer</c> / <c>Basic</c>）；不能为空白、不能含内部空白。</param>
+    /// <summary>声明需要授权，使用指定认证方案（默认 <c>Bearer</c>）；方案名不能为空白、不能含内部空白。</summary>
     public AuthorizeAttribute(string scheme = "Bearer")
     {
         if (string.IsNullOrWhiteSpace(scheme))
@@ -40,9 +37,7 @@ public sealed class AuthorizeAttribute : Attribute
 }
 
 /// <summary>
-/// 标记请求模型 / 接口 / 接口方法不做授权：清空内核凭据槽位 <see cref="AxiosConfig.TransportSettings.Auth"/>，
-/// 因此实例默认的静态凭据与 <see cref="ApiClient.CredentialProvider"/> 都不会在本次请求生效。
-/// 声明里显式写的 <c>Authorization</c> 头照常发送；方法级声明压过接口 / 类上的声明；与 <see cref="AuthorizeAttribute"/> 同标一层属二义性。
+/// 标记请求模型 / 接口 / 接口方法不做授权：清空内核凭据槽位 <see cref="AxiosConfig.TransportSettings.Auth"/>，实例默认静态凭据与 <see cref="ApiClient.CredentialProvider"/> 都不生效；声明里显式写的 <c>Authorization</c> 头照常发送。
 /// </summary>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Interface | AttributeTargets.Method, Inherited = true, AllowMultiple = false)]
 public sealed class AllowAnonymousAttribute : Attribute

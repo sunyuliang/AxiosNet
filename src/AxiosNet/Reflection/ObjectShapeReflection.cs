@@ -4,10 +4,7 @@ using AxiosNet.Metadata;
 
 namespace AxiosNet.Reflection;
 
-/// <summary>
-/// 反射版对象形状：按公共可读属性构建（缓存归 <see cref="AxiosNet.Internal.Serialization.ShapeCache"/>，本类只负责构建）。
-/// 与生成形状的口径必须逐项一致：只收 public 读访问器、跳过索引器与无法装箱的类型。
-/// </summary>
+/// <summary>反射版对象形状：按公共可读属性构建（缓存归 <see cref="AxiosNet.Internal.Serialization.ShapeCache"/>）；口径与生成形状逐项一致：只收 public 读访问器、跳过索引器与无法装箱的类型。</summary>
 internal static class ObjectShapeReflection
 {
     /// <summary>按公共可读属性构造形状（<c>AxiosMetadata.RegisterShape&lt;T&gt;()</c> 的兜底实现）。</summary>
@@ -25,13 +22,13 @@ internal static class ObjectShapeReflection
         var members = new List<ShapeMember>();
         foreach (var property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
-            // 与生成的形状口径一致：只收录 public 读访问器（非 public getter 两边都跳过）。
+            // 只收录 public 读访问器。
             if (property.GetMethod is not { IsPublic: true } || property.GetIndexParameters().Length > 0)
             {
                 continue;
             }
 
-            // ref struct / 指针无法装箱成 object：生成器同样跳过，两边保持一致。
+            // ref struct / 指针无法装箱成 object。
             if (IsUnboxable(property.PropertyType))
             {
                 continue;

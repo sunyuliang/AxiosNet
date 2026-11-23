@@ -2,7 +2,6 @@ namespace AxiosNet.Internal.Headers;
 
 /// <summary>
 /// 内容外壳的公共装配：把内层内容的头复制到外壳，并回传内层声明的长度。
-/// 两处外壳（<see cref="ProgressHttpContent"/> / <see cref="HeaderIsolatedContent"/>）语义不同的部分各自保留，只共用这一段。
 /// </summary>
 internal static class ContentHeaderCopy
 {

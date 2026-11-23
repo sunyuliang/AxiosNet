@@ -106,9 +106,7 @@ public sealed class SerializerTests
         Assert.IsType<OperationCanceledException>(ex.Cause);
     }
 
-    // ------------------------------------------------------------------
-    // 7) 标量请求体的头必须跟着生效序列化器。
-    // ------------------------------------------------------------------
+// 7) 标量请求体的头必须跟着生效序列化器。
 
     [Fact]
     public async Task ScalarBody_TakesMediaTypeFromInjectedSerializer()
@@ -148,9 +146,7 @@ public sealed class SerializerTests
         Assert.Equal(3, response.Data.Age);
     }
 
-    // ------------------------------------------------------------------
-    // Bug 1：非文本 Content-Type + 声明 charset
-    // ------------------------------------------------------------------
+// Bug 1：非文本 Content-Type + 声明 charset
 
     [Fact]
     public async Task TypedJson_BinaryResponseWithDeclaredCharset_DecodesWithThatCharset()
@@ -177,9 +173,7 @@ public sealed class SerializerTests
         Assert.Equal("强编码", response.Data!.Name);
     }
 
-    // ---------------------------------------------------------------
-    // 16：charset 收口（序列化器自报 / 写头都覆盖）
-    // ---------------------------------------------------------------
+// 16：charset 收口（序列化器自报 / 写头都覆盖）
 
     [Fact]
     public async Task SerializerDeclaredCharset_ContradictingBodyEncoding_ReportsOptionError()
@@ -187,7 +181,7 @@ public sealed class SerializerTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
 
         // 自报的 MediaType 带 charset=iso-8859-1，而正文按 UTF-8 编码：入口预校验看不到
-        // 序列化器的自报值（它发生在正文产出阶段），曾静默发出「头 latin1、正文 utf-8」。
+        // 序列化器在正文产出阶段自报编码。
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
@@ -1120,9 +1114,7 @@ public sealed class SerializerTests
     }
 
 
-    // ------------------------------------------------------------------
-    // 辅助
-    // ------------------------------------------------------------------
+// 辅助
 
 
     private static async Task DrainAsync<T>(IAsyncEnumerable<T>? source)
@@ -1160,9 +1152,7 @@ public sealed class SerializerTests
         }
     }
 
-    // ------------------------------------------------------------------
-    // 辅助
-    // ------------------------------------------------------------------
+// 辅助
 
     private static AxiosClient CreateClient(byte[] body, string contentType)
         => new(
@@ -1262,9 +1252,7 @@ public sealed class SerializerTests
     }
 
 
-    // ---------------------------------------------------------------
-    // 测试模型与序列化器夹具
-    // ---------------------------------------------------------------
+// 测试模型与序列化器夹具
 
 
     /// <summary>自报带 charset 的媒体类型（与正文实际编码矛盾）。</summary>

@@ -6,10 +6,7 @@ namespace AxiosNet.Pooling;
 
 internal static partial class DefaultHandlerFactory
 {
-    /// <summary>
-    /// net6+ 资产的默认档 Handler：<see cref="SocketsHttpHandler"/>。池选项逐项映射，
-    /// 连接寿命额外加抖动；SSL 只在与默认值不同时才构造 <see cref="SslClientAuthenticationOptions"/>。
-    /// </summary>
+    /// <summary>net6+ 资产的默认档 Handler（<see cref="SocketsHttpHandler"/>）：池选项逐项映射，连接寿命加抖动；SSL 仅在非默认时构造选项。</summary>
     /// <param name="o">池选项（连接数、寿命、空闲、建连超时、h2 并发与 keep-alive ping、解压）。</param>
     /// <param name="transport">出口设置（Cookie、代理、证书校验回调、SSL 协议版本与扩展钩子）。</param>
     /// <param name="cookieContainer">共享 Cookie 容器；<c>null</c> 且启用 Cookie 时新建一个。</param>
@@ -33,10 +30,8 @@ internal static partial class DefaultHandlerFactory
                 ? o.Decompression
                 : DecompressionMethods.None,
 
-            // h2 并发度受服务端 MAX_CONCURRENT_STREAMS 限制，打开后按 MaxConnectionsPerServer 继续加连接。
             EnableMultipleHttp2Connections = o.EnableMultipleHttp2Connections,
 
-            // h2 keep-alive：三项只对 h2 生效，h1 没有 ping 帧。
             KeepAlivePingDelay = o.KeepAlivePingDelay,
             KeepAlivePingTimeout = o.KeepAlivePingTimeout,
             KeepAlivePingPolicy = o.KeepAlivePingPolicy,
@@ -61,17 +56,14 @@ internal static partial class DefaultHandlerFactory
                 EnabledSslProtocols = transport.EnabledSslProtocols ?? SslProtocols.None
             };
 
-            // 扩展入口放最后：回调内的赋值是最终值（客户端证书也在这里挂）。
+            // 扩展入口放最后，回调内的赋值是最终值。
             transport.ConfigureSslOptions?.Invoke(handler.SslOptions);
         }
 
         return handler;
     }
 
-    /// <summary>
-    /// 给连接寿命加 ±10% 抖动。抖动只落在真正建 Handler 的那一刻，
-    /// 不写回 <see cref="ConnectionPoolOptions"/>。
-    /// </summary>
+    /// <summary>给连接寿命加 ±10% 抖动；抖动只在建 Handler 时生效，不写回 <see cref="ConnectionPoolOptions"/>。</summary>
     /// <remarks><see cref="TimeSpan.Zero"/>（不复用）与 <see cref="Timeout.InfiniteTimeSpan"/>（不限期）保持原样。</remarks>
     internal static TimeSpan JitterLifetime(TimeSpan lifetime)
     {
@@ -82,13 +74,13 @@ internal static partial class DefaultHandlerFactory
 
         var ticks = lifetime.Ticks * (0.9d + (PlatformCompat.NextJitter() * 0.2d));
 
-        // 截断成 0 在 SocketsHttpHandler 里表示「连接不复用」：至少保留 1 tick。
+        // 0 在 SocketsHttpHandler 里表示「连接不复用」：至少保留 1 tick。
         if (ticks < 1d)
         {
             ticks = 1d;
         }
 
-        // 夹到 TimeSpan 上限，避免抖动制造溢出。
+        // 夹到 TimeSpan 上限。
         return ticks >= TimeSpan.MaxValue.Ticks ? TimeSpan.MaxValue : TimeSpan.FromTicks((long)ticks);
     }
 }

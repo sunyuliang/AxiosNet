@@ -3,16 +3,11 @@ using System.Dynamic;
 
 namespace AxiosNet;
 
-/// <summary>
-/// dynamic 响应（<see cref="ResponseType.Dynamic"/>）的对象节点：支持 <c>data.name</c> / <c>data["name"]</c>，
-/// 缺省成员返回 <c>null</c>，运行期可增删属性。
-/// </summary>
+/// <summary>dynamic 响应（<see cref="ResponseType.Dynamic"/>）的对象节点：支持 <c>data.name</c> / <c>data["name"]</c>，缺省成员返回 <c>null</c>，运行期可增删属性。</summary>
 /// <remarks>
 /// 同时实现 <see cref="IDictionary{TKey,TValue}"/>，可原样当 <c>Params</c> / 请求体发出，也会被 <c>System.Text.Json</c> 序列化成普通 JSON 对象。
-/// <para>值映射：字符串/布尔原样，整数为 <see cref="long"/>，浮点为 <see cref="double"/>，JSON <c>null</c> 保持 <c>null</c>，
-/// 数组节点是 <c>List&lt;object?&gt;</c>。
-/// 读无锁、写串行；枚举取键快照、值实时读取，枚举期间被删除的键值为 <c>null</c>。
-/// 动态成员优先于 CLR 成员：<c>data.Count</c> 读的是 JSON 里名为 <c>Count</c> 的字段。</para>
+/// 值映射：字符串/布尔原样，整数为 <see cref="long"/>，浮点为 <see cref="double"/>，JSON <c>null</c> 保持 <c>null</c>，数组为 <c>List&lt;object?&gt;</c>。
+/// 读无锁、写串行；枚举取键快照、值实时读取，枚举期间被删除的键值为 <c>null</c>。动态成员优先于 CLR 成员。
 /// </remarks>
 public sealed partial class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<string, object?>
 {
@@ -22,7 +17,7 @@ public sealed partial class AxiosDynamic : IDynamicMetaObjectProvider, IDictiona
     /// <summary>当前形状（不可变，同形状实例共享同一实例）。</summary>
     private Shape _shape = Shape.Empty;
 
-    /// <summary>按槽位存值；扩容走整数组替换，永不原地改长度。</summary>
+    /// <summary>按槽位存值；扩容走整数组替换。</summary>
     private object?[] _values = Array.Empty<object?>();
 
     /// <summary>创建空对象：形状为空，首次赋值才建立形状缓存。</summary>
@@ -147,7 +142,7 @@ public sealed partial class AxiosDynamic : IDynamicMetaObjectProvider, IDictiona
 
             if (slot < values.Length)
             {
-                // 断开引用；已捕获旧 shape 的枚举器读到 null。
+                // 断开引用。
                 Volatile.Write(ref values[slot], null);
             }
 
@@ -186,7 +181,7 @@ public sealed partial class AxiosDynamic : IDynamicMetaObjectProvider, IDictiona
 
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
-    /// <summary>慢路径取值（索引访问、shape 不匹配时使用）。</summary>
+    /// <summary>按名字取值；键不存在返回 <c>null</c>。</summary>
     private object? GetValue(string name)
     {
         var shape = Volatile.Read(ref _shape);
@@ -199,7 +194,7 @@ public sealed partial class AxiosDynamic : IDynamicMetaObjectProvider, IDictiona
         return slot < values.Length ? values[slot] : null;
     }
 
-    /// <summary>改值或新增槽位。必须先在锁内取槽再索引：扩容会换掉整个值数组。</summary>
+    /// <summary>改值或新增槽位；需在锁内操作。</summary>
     private void SetValue(string name, object? value)
     {
         lock (_gate)
@@ -223,7 +218,7 @@ public sealed partial class AxiosDynamic : IDynamicMetaObjectProvider, IDictiona
         }
     }
 
-    /// <summary>槽位数组按需扩容（至少 8，否则翻倍）：拷完旧值再发布，读侧不会看到半截数组。</summary>
+    /// <summary>槽位数组按需扩容（至少 8，否则翻倍）。</summary>
     private void EnsureCapacity(int slots)
     {
         var values = Volatile.Read(ref _values);
@@ -237,16 +232,13 @@ public sealed partial class AxiosDynamic : IDynamicMetaObjectProvider, IDictiona
         Volatile.Write(ref _values, grown);
     }
 
-    /// <summary>
-    /// 形状：名字 → 槽位的映射 + 有界迁移缓存。不可变，同形状的实例共享同一个对象；
-    /// 单节点缓存到 <see cref="MaxTransitions"/> 条后停止缓存。
-    /// </summary>
+    /// <summary>形状：名字到槽位的映射 + 有界迁移缓存；不可变，同形状共享同一实例。</summary>
     private sealed class Shape
     {
         /// <summary>单个形状节点最多缓存多少个「加字段 / 减字段」迁移。</summary>
         private const int MaxTransitions = 256;
 
-        // 空形状：所有动态空对象的共同起点。
+        // 空形状。
         internal static readonly Shape Empty = new(new Dictionary<string, int>(StringComparer.Ordinal), 0);
 
         /// <summary>名字 → 槽位；构造后不再修改（增删都换新实例）。</summary>
@@ -289,7 +281,7 @@ public sealed partial class AxiosDynamic : IDynamicMetaObjectProvider, IDictiona
                     return next;
                 }
 
-                // 已经缓存满：本次照常派生，但结果与它的后代都不再登记。
+                // 缓存已满：照常派生，结果不再登记。
                 var cacheable = _added.Count < MaxTransitions;
                 next = DeriveAdded(name, cacheable);
                 if (cacheable)
@@ -327,14 +319,14 @@ public sealed partial class AxiosDynamic : IDynamicMetaObjectProvider, IDictiona
             }
         }
 
-        /// <summary>在现形状上加一个槽位派生出新形状；旧形状不变，写入方随后把它发布为当前值。</summary>
+        /// <summary>在现形状上加一个槽位派生新形状。</summary>
         private Shape DeriveAdded(string name, bool cacheable)
         {
             var slots = new Dictionary<string, int>(Slots, StringComparer.Ordinal) { [name] = NextSlot };
             return new Shape(slots, NextSlot + 1, cacheable);
         }
 
-        /// <summary>从现形状里摘掉一个槽位派生出新形状；槽位号不复用，已编译的 DLR 规则仍然指得对。</summary>
+        /// <summary>从现形状里摘掉一个槽位派生新形状；槽位号不复用。</summary>
         private Shape DeriveRemoved(string name, bool cacheable)
         {
             var slots = new Dictionary<string, int>(Slots, StringComparer.Ordinal);

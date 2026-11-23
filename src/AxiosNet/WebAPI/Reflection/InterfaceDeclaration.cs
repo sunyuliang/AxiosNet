@@ -5,8 +5,7 @@ using AxiosNet.WebAPI.Attributes;
 namespace AxiosNet.WebAPI.Reflection;
 
 /// <summary>
-/// 接口级声明的反射读取与静态校验：接口形状、路由特性、返回类型、参数绑定特性。
-/// <see cref="ApiClient.Create{T}"/> 与 <see cref="ApiClient.ValidateInterfaces(Type[])"/> 共用这一份规则。
+/// 接口级声明的反射读取与静态校验：接口形状、路由特性、返回类型、参数绑定特性；<see cref="ApiClient.Create{T}"/> 与 <see cref="ApiClient.ValidateInterfaces(Type[])"/> 共用。
 /// </summary>
 internal static class InterfaceDeclaration
 {
@@ -64,7 +63,7 @@ internal static class InterfaceDeclaration
         return errors;
     }
 
-    /// <summary>校验通过则返回；否则把全部错误拼成一条 <see cref="InvalidOperationException"/>。</summary>
+    /// <summary>校验通过则返回；否则抛 <see cref="InvalidOperationException"/>（消息含全部错误）。</summary>
     public static void EnsureValid([DynamicallyAccessedMembers(InterfaceMembers)] Type interfaceType)
     {
         var errors = Validate(interfaceType);
@@ -112,9 +111,7 @@ internal static class InterfaceDeclaration
     }
 
     /// <summary>
-    /// 接口链：自身在前，其余按「依赖的接口数量」降序（派生接口依赖更多，必然排在它继承的接口之前）；
-    /// 同层再按全限定名排序，使顺序不再依赖 <see cref="Type.GetInterfaces"/> 的未定义返回顺序——
-    /// 生成器侧用同一条规则，两条路径才能选中同一层。
+    /// 接口链：自身在前，其余按「依赖的接口数量」降序，同层按全限定名排序（与生成器同一规则）。
     /// </summary>
     [UnconditionalSuppressMessage(
         "Trimming",

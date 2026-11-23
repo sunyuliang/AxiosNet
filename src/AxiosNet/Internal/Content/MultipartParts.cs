@@ -4,16 +4,14 @@ using System.Text.Json;
 
 namespace AxiosNet.Internal.Content;
 
-/// <summary>
-/// multipart 部件的所有权回收：装配中途失败时释放已取得所有权的流 / 内容（含嵌套在字典、集合、对象里的）。
-/// 单项释放异常只放弃该项，不中断其余部件，也不遮蔽装配的原始异常。
-/// </summary>
+/// <summary>multipart 部件的所有权回收：装配中途失败时释放已取得所有权的流 / 内容（含嵌套在容器里的）。</summary>
+/// <remarks>单项释放异常只放弃该项，不中断其余部件，也不遮蔽装配的原始异常。</remarks>
 internal static class MultipartOwnership
 {
     /// <summary>回收一组表单值（装配前的表单字典）。</summary>
     public static void DisposeOwned(IEnumerable<object?> values)
     {
-        // 按引用记录已访问，避免自引用字典无限递归。
+        // 按引用记录已访问。
         var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
         var owned = new List<IDisposable>();
 
@@ -25,7 +23,7 @@ internal static class MultipartOwnership
         Release(owned);
     }
 
-    /// <summary>回收一个根对象（装配入口只拿得到 <c>data</c> 本身，见 <see cref="MultipartBodyBuilder.Create"/>）。</summary>
+    /// <summary>回收一个根对象。</summary>
     public static void DisposeOwned(object? value)
     {
         var owned = new List<IDisposable>();
@@ -34,9 +32,7 @@ internal static class MultipartOwnership
         Release(owned);
     }
 
-    /// <summary>
-    /// 把 <paramref name="value"/> 里的部件收进 <paramref name="owned"/>（只读遍历，不释放）。
-    /// </summary>
+    /// <summary>把 <paramref name="value"/> 里的部件收进 <paramref name="owned"/>（只读遍历，不释放）。</summary>
     private static void Collect(object? value, HashSet<object> visited, List<IDisposable> owned)
     {
         try
@@ -45,7 +41,7 @@ internal static class MultipartOwnership
         }
         catch
         {
-            // 遍历本身失败（属性 getter 抛等）：已经收集到的部件仍然要释放
+            // 遍历失败时已收集的部件仍然要释放。
         }
     }
 
@@ -60,21 +56,16 @@ internal static class MultipartOwnership
             }
             catch
             {
-                // 单个部件释放失败不连累其余部件。
+                // 单个部件释放失败不连累其余。
             }
         }
     }
 
-    /// <summary>
-    /// 遍历一个根对象里「随正文一起发出去」的流（<see cref="FormFile.Content"/> 与裸 <see cref="Stream"/>）
-    /// 以及调用方自带的 <see cref="HttpContent"/> 部件；<paramref name="visitContent"/> 传 <c>null</c> 表示只关心裸流。
-    /// </summary>
+    /// <summary>遍历根对象里随正文发出的流与调用方自带的 <see cref="HttpContent"/> 部件；<paramref name="visitContent"/> 为 <c>null</c> 表示只关心裸流。</summary>
     public static void VisitStreams(object? value, Action<Stream> visit, Action<HttpContent>? visitContent = null)
         => Walk(value, new HashSet<object>(ReferenceEqualityComparer.Instance), visit, visitContent);
 
-    /// <summary>
-    /// 对象图遍历本体：叶子上分别回调「流」与「<see cref="HttpContent"/>」，容器继续下钻。
-    /// </summary>
+    /// <summary>对象图遍历本体：叶子上分别回调流与 <see cref="HttpContent"/>，容器继续下钻。</summary>
     // 反射读属性：运行时类型无法静态标注。
     [UnconditionalSuppressMessage(
         "Trimming",
@@ -89,7 +80,7 @@ internal static class MultipartOwnership
         switch (value)
         {
             case null:
-            // string 也是 IEnumerable<char>；byte[] 按二进制内容处理
+            // string 也是 IEnumerable<char>；byte[] 按二进制内容处理。
             case string _:
             case byte[] _:
             case JsonElement:
@@ -107,7 +98,7 @@ internal static class MultipartOwnership
                 onStream(stream);
                 return;
 
-            // 字典：声明覆盖整体透传，值里的 FormFile / 裸流仍然是库的所有权
+            // 字典：值里的 FormFile / 裸流仍归库所有。
             case IDictionary dictionary:
                 if (!visited.Add(dictionary))
                 {
@@ -121,7 +112,7 @@ internal static class MultipartOwnership
 
                 return;
 
-            // 只实现 IReadOnlyDictionary 的字典：builder 同样按 a[b] 展平
+            // 只实现 IReadOnlyDictionary 的字典：同样按 a[b] 展平。
             case IReadOnlyDictionary<string, object?> readOnlyDictionary:
                 if (!visited.Add(readOnlyDictionary))
                 {
@@ -135,7 +126,7 @@ internal static class MultipartOwnership
 
                 return;
 
-            // 自定义只读字典 / 仅泛型字典：能安全枚举的才按键值对下钻（拿不准的形态留给下面的集合通道）。
+            // 自定义只读字典 / 仅泛型字典：能安全枚举的才下钻。
             case IEnumerable map when QueryMap.CanEnumerateBestEffort(map):
                 if (!visited.Add(map))
                 {
@@ -149,7 +140,7 @@ internal static class MultipartOwnership
 
                 return;
 
-            // 集合 / 迭代器（含非泛型 ArrayList 等）：逐项回收
+            // 集合 / 迭代器：逐项回收。
             case IEnumerable items:
                 if (!visited.Add(value))
                 {
@@ -164,7 +155,7 @@ internal static class MultipartOwnership
                 return;
         }
 
-        // 嵌套对象：按对象形状下钻回收；AOT 下没有形状就停止（回收路径尽力而为，不抛错）。
+        // 嵌套对象：按对象形状下钻；AOT 下没有形状就停止。
         var type = value.GetType();
         if (ScalarTypes.IsScalarType(type) || !visited.Add(value) || !ShapeCache.TryGet(type, out var shape))
         {

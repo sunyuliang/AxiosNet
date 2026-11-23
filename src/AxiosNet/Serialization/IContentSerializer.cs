@@ -1,10 +1,8 @@
 
 namespace AxiosNet.Serialization;
 
-/// <summary>
-/// 请求体 / 响应体的格式编解码抽象：JSON（默认）、XML、YAML、Protobuf 等都通过它接入。
-/// 实现会被并发请求共享，必须无状态或线程安全；string / byte[] / Stream / 表单 / multipart / 基础类型由库直接处理，不经过本接口。
-/// </summary>
+/// <summary>请求体 / 响应体的格式编解码抽象：JSON（默认）、XML、YAML、Protobuf 等都通过它接入。</summary>
+/// <remarks>实现会被并发请求共享，必须无状态或线程安全；string / byte[] / Stream / 表单 / multipart / 基础类型由库直接处理，不经过本接口。</remarks>
 /// <example>
 /// <code>
 /// public sealed class YamlSerializer : IContentSerializer
@@ -20,28 +18,22 @@ namespace AxiosNet.Serialization;
 /// </example>
 public interface IContentSerializer
 {
-    /// <summary>
-    /// 本格式对应的媒体类型（<c>Content-Type</c> 主值，如 <c>application/json</c>）。
-    /// 请求方向未显式设置 <see cref="AxiosConfig.ContentType"/> 时由库写进请求头；默认 <c>null</c> 表示不自报。
-    /// </summary>
+    /// <summary>本格式对应的媒体类型（<c>Content-Type</c> 主值，如 <c>application/json</c>）；请求方向未显式设置 <see cref="AxiosConfig.ContentType"/> 时由库写进请求头，<c>null</c> 表示不自报。</summary>
 #if NETSTANDARD2_0
-    // netstandard2.0 运行时不支持默认接口实现（CS8701），兼容资产上退化为纯声明：
-    // 实现者必须显式给出全部成员。net6.0 / net8.0 资产仍保留默认实现，第三方实现者不受影响。
+    // netstandard2.0 运行时不支持默认接口实现（CS8701），实现者必须显式给出全部成员；net6.0 / net8.0 保留默认实现。
     string? MediaType { get; }
 #else
     string? MediaType => null;
 #endif
 
     /// <summary>
-    /// 把业务对象序列化为该格式的文本。编码取 <c>ContentType</c> 声明的 charset → <see cref="AxiosConfig.SerializationSettings.TextEncoding"/> → UTF-8；
-    /// charset 只在显式设置 <see cref="AxiosConfig.SerializationSettings.TextEncoding"/> 时才写进请求头。
+    /// 把业务对象序列化为该格式的文本。编码取 <c>ContentType</c> 声明的 charset → <see cref="AxiosConfig.SerializationSettings.TextEncoding"/> → UTF-8，charset 仅在显式设置时写进请求头。
     /// 二进制格式请覆写 <see cref="SerializeToBytes"/>，本方法实现成抛 <see cref="NotSupportedException"/>。
     /// </summary>
     string Serialize(object? value, Type type, AxiosConfig config);
 
     /// <summary>
-    /// 把业务对象序列化为该格式的<b>字节</b>：二进制格式的请求出口，以及正文本身就以 UTF-8 产出的文本格式（如 JSON）。
-    /// 返回 <c>null</c>（默认）表示改用 <see cref="Serialize"/> 的文本，由库按生效编码转成字节。
+    /// 把业务对象序列化为该格式的字节：二进制格式的请求出口，以及正文本身以 UTF-8 产出的文本格式（如 JSON）。返回 <c>null</c>（默认）表示改用 <see cref="Serialize"/> 的文本，由库按生效编码转成字节。
     /// 返回的内存会被直接交给请求内容，生命周期必须覆盖到整条请求结束。
     /// </summary>
 #if NETSTANDARD2_0
@@ -51,16 +43,13 @@ public interface IContentSerializer
 #endif
 
     /// <summary>
-    /// 把该格式的文本反序列化为业务对象，返回值原样进入 <c>Response.Data</c>；
-    /// 正文按声明字符集解码后调用（非 UTF-8 的文本响应，或经 <see cref="Deserialize(ReadOnlyMemory{byte}, Type, AxiosConfig)"/> 的默认实现转调）。
-    /// 需要响应头时读 <see cref="AxiosConfig.Response"/>。
+    /// 把该格式的文本反序列化为业务对象，返回值原样进入 <c>Response.Data</c>；正文按声明字符集解码后调用。需要响应头时读 <see cref="AxiosConfig.Response"/>。
     /// </summary>
     object? Deserialize(string text, Type type, AxiosConfig config);
 
     /// <summary>
-    /// 把该格式的字节反序列化为业务对象，不做文本解码。
-    /// 二进制正文原样交给序列化器，合法 UTF-8 的文本也按字节解析；非法 UTF-8 时库改调文本入口（坏字节替换为 U+FFFD），
-    /// 因此本入口不必处理非法 UTF-8。默认实现按响应字符集解码后转调文本入口。
+    /// 把该格式的字节反序列化为业务对象，不做文本解码：二进制正文原样交给序列化器，合法 UTF-8 的文本也按字节解析，非法 UTF-8 时库改调文本入口（坏字节替换为 U+FFFD）。
+    /// 默认实现按响应字符集解码后转调文本入口。
     /// </summary>
 #if NETSTANDARD2_0
     object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config);

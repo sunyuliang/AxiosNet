@@ -6,7 +6,7 @@ namespace AxiosNet.Metadata;
 /// </summary>
 public sealed class AxiosAotMetadataException : InvalidOperationException
 {
-    // 修复提示：直接给出三个可选动作，避免用户只看到「元数据缺失」。
+    // 修复提示：给出三个可选动作。
     private const string RepairHint =
         "修复方式（任选其一）："
         + "（1）启用 AxiosNet 源生成器（默认随包启用，确认项目未设置 <AxiosNetSourceGen>false</AxiosNetSourceGen>）；"

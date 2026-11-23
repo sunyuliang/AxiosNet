@@ -13,9 +13,7 @@ namespace AxiosNet.Tests.Resilience;
 [Collection(TimingCollection.Name)]
 public sealed class TotalTimeoutTests
 {
-    // ------------------------------------------------------------------
-    // 单次尝试：总预算比 Timeout 小的时候，实际上限是「剩余总预算」
-    // ------------------------------------------------------------------
+// 单次尝试：总预算比 Timeout 小的时候，实际上限是「剩余总预算」
 
     [Fact]
     public async Task TotalTimeout_ClampsAttemptTimeout_AndSaysSoInMessage()
@@ -44,9 +42,7 @@ public sealed class TotalTimeoutTests
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(1.5), $"实际耗时 {watch.Elapsed}：总预算没有生效");
     }
 
-    // ------------------------------------------------------------------
-    // 重试：总预算在多次尝试之间共享，用尽后下一次尝试根本不发出
-    // ------------------------------------------------------------------
+// 重试：总预算在多次尝试之间共享，用尽后下一次尝试根本不发出
 
     [Fact]
     public async Task TotalTimeout_CutsRetryLoopShort()
@@ -170,9 +166,7 @@ public sealed class TotalTimeoutTests
         Assert.Equal(1d, outer.AvailableTokens);
     }
 
-    // ------------------------------------------------------------------
-    // 备用端点：总预算耗尽后不再换端点，最终错误必须是「总预算耗尽」
-    // ------------------------------------------------------------------
+// 备用端点：总预算耗尽后不再换端点，最终错误必须是「总预算耗尽」
 
     // 复现：Timeout=100ms + TotalTimeout=150ms + 1 个备用端点。
     // 第一个端点快速 503 后换到备用端点，备用端点拖住直到总预算到点 —— 旧实现会把第一次的 503
@@ -245,9 +239,7 @@ public sealed class TotalTimeoutTests
         Assert.True(ex.IsTotalTimeoutExceeded, "对冲分支在总预算到点后必须报总预算耗尽");
     }
 
-    // ------------------------------------------------------------------
-    // 排队：TotalTimeout 计入排队时间（与 QueueTimeout 的口径不同）
-    // ------------------------------------------------------------------
+// 排队：TotalTimeout 计入排队时间（与 QueueTimeout 的口径不同）
 
     [Fact]
     public async Task TotalTimeout_CountsTimeSpentWaitingForConcurrencySlot()
@@ -332,9 +324,7 @@ public sealed class TotalTimeoutTests
         await holder;
     }
 
-    // ------------------------------------------------------------------
-    // 与 Timeout 的关系 / 合并 / 校验
-    // ------------------------------------------------------------------
+// 与 Timeout 的关系 / 合并 / 校验
     [Fact]
     public async Task TotalTimeout_InheritedFromDefaults_ButPerCallValueWins()
     {

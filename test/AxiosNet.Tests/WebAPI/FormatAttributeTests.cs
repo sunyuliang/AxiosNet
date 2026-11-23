@@ -18,9 +18,7 @@ namespace AxiosNet.Tests.WebAPI;
 /// </summary>
 public sealed class FormatAttributeTests
 {
-    // ------------------------------------------------------------------
-    // 值文本：格式串 / 格式化函数 / 优先级
-    // ------------------------------------------------------------------
+// 值文本：格式串 / 格式化函数 / 优先级
 
     [Fact]
     public async Task FormatString_AppliesToPathQueryAndHeader()
@@ -374,9 +372,7 @@ public sealed class FormatAttributeTests
         Assert.All(seen, static channel => Assert.Equal(ValueTextChannel.Query, channel));
     }
 
-    // ------------------------------------------------------------------
-    // 表单 / multipart：实例钩子与成员声明的分工
-    // ------------------------------------------------------------------
+// 表单 / multipart：实例钩子与成员声明的分工
 
     [Fact]
     public async Task ValueFormatter_AppliesToFormFields_MemberFormatStillWins()
@@ -414,9 +410,7 @@ public sealed class FormatAttributeTests
         Assert.Contains("2024-01-02", body);
     }
 
-    // ------------------------------------------------------------------
-    // 默认正文（按键名聚合）：成员没有 [Format] 时也走实例钩子
-    // ------------------------------------------------------------------
+// 默认正文（按键名聚合）：成员没有 [Format] 时也走实例钩子
 
     /// <summary>聚合正文的成员与裸标量正文同一条值文本规则：没有 <c>[Format]</c> 就走实例钩子。</summary>
     [Fact]
@@ -483,9 +477,7 @@ public sealed class FormatAttributeTests
             Encoding.UTF8.GetString(Assert.Single(server.Received).Body));
     }
 
-    // ------------------------------------------------------------------
-    // 构建期报错：不适用的组合不留到运行期
-    // ------------------------------------------------------------------
+// 构建期报错：不适用的组合不留到运行期
 
     [Fact]
     public void Format_WithStructuredBody_IsRejected()
@@ -548,9 +540,7 @@ public sealed class FormatAttributeTests
         Assert.Throws<ArgumentException>(() => new FormatAttribute(typeof(FormatHelpers), " "));
     }
 
-    // ------------------------------------------------------------------
-    // 运行期装配失败：声明式绑定与正文同口径（统一 ERR_BAD_REQUEST）
-    // ------------------------------------------------------------------
+// 运行期装配失败：声明式绑定与正文同口径（统一 ERR_BAD_REQUEST）
 
     [Fact]
     public async Task ModelPathFormatterFailure_IsBadRequest()
@@ -663,9 +653,7 @@ public sealed class FormatAttributeTests
         Assert.Equal(string.Empty, received.Headers["X-Empty"]);
     }
 
-    // ------------------------------------------------------------------
-    // 接口式：参数上的声明走同一套规则
-    // ------------------------------------------------------------------
+// 接口式：参数上的声明走同一套规则
 
     [Fact]
     public async Task InterfaceParameter_Format_AppliesToPathAndQuery()
@@ -728,9 +716,7 @@ public sealed class FormatAttributeTests
     }
 
 #if NET8_0_OR_GREATER
-    // ------------------------------------------------------------------
-    // JSON 桥：结构化正文内部也按 [Format] 输出（默认不挂）
-    // ------------------------------------------------------------------
+// JSON 桥：结构化正文内部也按 [Format] 输出（默认不挂）
 
     [Fact]
     public void JsonBridge_WritesFormattedText_AndRoundTrips()
@@ -776,9 +762,7 @@ public sealed class FormatAttributeTests
     }
 #endif
 
-    // ------------------------------------------------------------------
-    // 测试模型：请求模型
-    // ------------------------------------------------------------------
+// 测试模型：请求模型
 
     [Get("ch/{id}")]
     private sealed class MemberChannelRequest : IApiRequest<Person>
@@ -1040,9 +1024,7 @@ public sealed class FormatAttributeTests
         public DateTime Since { get; set; }
     }
 
-    // ------------------------------------------------------------------
-    // 测试模型：接口式
-    // ------------------------------------------------------------------
+// 测试模型：接口式
 
     public interface IFormatApi
     {

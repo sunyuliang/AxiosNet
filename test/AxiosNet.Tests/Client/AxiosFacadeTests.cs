@@ -40,9 +40,7 @@ public sealed class AxiosFacadeTests
         Assert.Equal("https://example.com/a?q=x%20y", uri);
     }
 
-    // ------------------------------------------------------------------
-    // L12：Axios.Create 支持共享池
-    // ------------------------------------------------------------------
+// L12：Axios.Create 支持共享池
 
     [Fact]
     public async Task AxiosCreate_AcceptsSharedPool()
@@ -71,9 +69,7 @@ public sealed class AxiosFacadeTests
         Assert.Equal(200, response.Status);
     }
 
-    // ------------------------------------------------------------------
-    // 门面转发：每个重载都要真的落到默认实例上（否则「加了重载但没接上」不会被发现）
-    // ------------------------------------------------------------------
+// 门面转发：每个重载都要真的落到默认实例上（否则「加了重载但没接上」不会被发现）
 
     [Fact]
     public async Task Facade_ShortcutOverloads_ForwardVerbDataAndConfigure()

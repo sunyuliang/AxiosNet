@@ -5,16 +5,13 @@ using System.Runtime.CompilerServices;
 
 namespace AxiosNet;
 
-/// <summary>
-/// <see cref="AxiosDynamic"/> 的 DLR 绑定：dynamic 成员语法要编译表达式（运行时代码生成），
-/// Native AOT 下由 <see cref="IDynamicMetaObjectProvider.GetMetaObject"/> 直接拒绝；索引访问与字典接口不受影响。
-/// </summary>
+/// <summary><see cref="AxiosDynamic"/> 的 DLR 绑定：dynamic 成员语法要编译表达式，Native AOT 下由 <see cref="IDynamicMetaObjectProvider.GetMetaObject"/> 拒绝。</summary>
+/// <remarks>索引访问与字典接口在 AOT 下不受影响。</remarks>
 public sealed partial class AxiosDynamic
 {
     DynamicMetaObject IDynamicMetaObjectProvider.GetMetaObject(Expression parameter)
     {
-        // DLR 需要 Expression.Compile（运行时代码生成）：Native AOT 下直接拒绝，索引 / 字典接口不受影响。
-        // 守卫条件必须直接写 intrinsic，AOT 下绑定器才整段不可达、连同表达式编译一起被裁掉。
+        // 守卫条件直接写 intrinsic，AOT 下整段不可达、可被裁掉。
         if (!RuntimeSupport.ForceNoDynamicCode && RuntimeFeature.IsDynamicCodeSupported)
         {
             return new Meta(parameter, this);
@@ -28,7 +25,7 @@ public sealed partial class AxiosDynamic
     /// <summary>DLR 绑定用到的私有成员句柄：放在嵌套类里，只在 dynamic 语法首次绑定（JIT）时初始化。</summary>
     private static class Dlr
     {
-        // DLR 访问内部字段 / 方法的句柄，静态构造时解析一次。
+        // 访问内部字段 / 方法的句柄，静态构造时解析一次。
         internal static readonly FieldInfo ShapeField =
             typeof(AxiosDynamic).GetField(nameof(_shape), BindingFlags.NonPublic | BindingFlags.Instance)!;
 
@@ -56,7 +53,7 @@ public sealed partial class AxiosDynamic
             var self = Expression.Convert(Expression, typeof(AxiosDynamic));
             var shape = ((AxiosDynamic)Value!)._shape; // 绑定必然拿到实例本身，Value 不会为 null
 
-            // 名字 → 槽位在绑定期解析成常量；shape 是缓存键的一部分，同形状的实例共享规则。
+            // 名字到槽位在绑定期解析成常量；shape 参与规则缓存键。
             var restrictions = BindingRestrictions.GetTypeRestriction(Expression, typeof(AxiosDynamic))
                 .Merge(BindingRestrictions.GetExpressionRestriction(
                     Expression.ReferenceEqual(Expression.Field(self, Dlr.ShapeField), Expression.Constant(shape))));

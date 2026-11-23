@@ -468,9 +468,7 @@ internal partial class ExchangeJsonContext : JsonSerializerContext
 {
 }
 
-// ------------------------------------------------------------------
 // 本地回环 HTTP 服务：断网环境也能跑，并完整经过连接池与请求管线
-// ------------------------------------------------------------------
 
 internal sealed class LoopbackServer : IDisposable
 {

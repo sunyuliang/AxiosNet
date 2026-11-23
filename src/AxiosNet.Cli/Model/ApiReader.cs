@@ -195,10 +195,9 @@ internal sealed class ApiReader
     /// <summary>按分组键创建 <see cref="ApiGroup"/>：确定接口名、请求模型文件名与分组描述（均需去重）。</summary>
     private void CreateGroups(List<OperationEntry> entries)
     {
-        // 接口名与请求模型文件名各自独立去重，避免不同 tag 规范化后撞名。
+        // 接口名与请求模型文件名各自独立去重。
         var usedInterfaceNames = new HashSet<string>(StringComparer.Ordinal);
-        // 请求模型文件名最终落成磁盘上的文件：Windows 文件系统不区分大小写，
-        // 因此这里也按忽略大小写去重，否则 AB / Ab 两个 tag 会生成同名文件互相覆盖。
+        // 请求模型文件名要落成磁盘文件：Windows 文件系统不区分大小写，这里也按忽略大小写去重。
         var usedFileNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var entry in entries)
@@ -687,7 +686,7 @@ internal sealed class ApiReader
             return true;
         }
 
-        // 与路径参数同理：先判形态再映射，避免为被跳过的操作注册死模型。
+        // 先判形态再映射。
         var schema = ParameterSchema(parameter);
         var (scalar, isArray) = ClassifyParameterSchema(schema, $"{location} header {wireName}");
         if (!scalar)
@@ -1002,8 +1001,7 @@ internal sealed class ApiReader
                 return result;
 
             case MediaKind.Text:
-                // 媒体类型保持文档声明（text/csv、text/markdown 等不能一律改写成 text/plain），
-                // 否则服务端收到的 Content-Type 与契约不一致。
+                // 媒体类型保持文档声明（text/csv、text/markdown 等不能改写成 text/plain）。
                 result.Type = TypeRef.String with { Nullable = result.Required ? false : true };
                 result.BodyName = Naming.Unique("body", usedNames);
                 return result;
@@ -1414,7 +1412,7 @@ internal sealed class ApiReader
             return EnsureAsync(Naming.Pascal(operationId));
         }
 
-        // HTTP 动词在 internal 模型里大写保存；拼方法名时先转小写，避免出现 GETMulti 这类缩写。
+        // 拼方法名时先转小写。
         var builder = new StringBuilder(Naming.Pascal(method.ToLowerInvariant()));
         foreach (var segment in path.Split('/', StringSplitOptions.RemoveEmptyEntries))
         {

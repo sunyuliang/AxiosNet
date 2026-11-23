@@ -15,7 +15,7 @@ public sealed partial class AxiosClient
 
         if (responseInterceptors.Length == 0)
         {
-            // 空链：直接交回管线的 ValueTask，无需兜底释放。
+            // 空链：直接交回管线的 ValueTask。
             return _attemptPipeline(template, ctx);
         }
 
@@ -28,12 +28,12 @@ public sealed partial class AxiosClient
         AxiosAttemptContext ctx,
         ResponseInterceptor[] responseInterceptors)
     {
-        // 流式正文的所有权：拦截器抛异常或丢弃响应时由这里兜底释放。
+        // 流式正文的所有权：异常时由这里兜底释放。
         IDisposable? streamOwner = null;
 
         try
         {
-            // 责任链的末端：真正发送（重试 / 备用端点 / 熔断 / 对冲 / 闸门都在这一层里面）
+            // 责任链末端：真正发送。
             Func<Task<AxiosResponse>> invoker = async () =>
             {
                 var attempt = AxiosAttemptResult.Ensure(

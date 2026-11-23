@@ -105,9 +105,7 @@ public sealed class ConfigSectionsTests
         Assert.Equal(2, server.Received.Count);
     }
 
-    // ------------------------------------------------------------------
-    // RetrySettings
-    // ------------------------------------------------------------------
+// RetrySettings
 
     [Fact]
     public void RetryMerge_UntouchedIncoming_KeepsInstancePolicyAndCallback()
@@ -153,9 +151,7 @@ public sealed class ConfigSectionsTests
         Assert.Same(incomingCallback, settings.OnRetry);
     }
 
-    // ------------------------------------------------------------------
-    // CircuitSettings
-    // ------------------------------------------------------------------
+// CircuitSettings
 
     [Fact]
     public void CircuitMerge_UntouchedIncoming_KeepsInstancePolicyAndCallback()
@@ -201,9 +197,7 @@ public sealed class ConfigSectionsTests
         Assert.Same(incomingCallback, settings.OnRejected);
     }
 
-    // ------------------------------------------------------------------
-    // HedgingSettings
-    // ------------------------------------------------------------------
+// HedgingSettings
 
     [Fact]
     public void HedgingMerge_UntouchedIncoming_KeepsInstanceValues()
@@ -240,9 +234,7 @@ public sealed class ConfigSectionsTests
         Assert.Equal(TimeSpan.Zero, settings.Delay);
     }
 
-    // ------------------------------------------------------------------
-    // FailoverSettings
-    // ------------------------------------------------------------------
+// FailoverSettings
 
     [Fact]
     public void FailoverMerge_UntouchedIncoming_KeepsInstanceEndpoints()
@@ -270,9 +262,7 @@ public sealed class ConfigSectionsTests
         Assert.True(settings.EndpointsSet);
     }
 
-    // ------------------------------------------------------------------
-    // CallbackSettings
-    // ------------------------------------------------------------------
+// CallbackSettings
 
     [Fact]
     public void CallbacksMerge_UntouchedIncoming_KeepsEveryInstanceCallback()
@@ -332,9 +322,7 @@ public sealed class ConfigSectionsTests
         Assert.Equal(TelemetryCapture.Query, settings.Capture);
     }
 
-    // ------------------------------------------------------------------
-    // ObservabilitySettings.Capture
-    // ------------------------------------------------------------------
+// ObservabilitySettings.Capture
 
     [Fact]
     public void ObservabilityMerge_UntouchedIncoming_KeepsInstanceCapture()
@@ -372,9 +360,7 @@ public sealed class ConfigSectionsTests
         Assert.Equal(TelemetryCapture.Query, settings.Capture);
     }
 
-    // ------------------------------------------------------------------
-    // 合并层真实接线：单次请求显式 null 必须真的关掉实例策略
-    // ------------------------------------------------------------------
+// 合并层真实接线：单次请求显式 null 必须真的关掉实例策略
 
     [Fact]
     public async Task PerRequestNullRetryPolicy_DisablesInstanceRetry()

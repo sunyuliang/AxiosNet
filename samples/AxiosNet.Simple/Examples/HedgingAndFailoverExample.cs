@@ -21,7 +21,7 @@ public sealed class HedgingAndFailoverExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        // ---- 1) 并发对冲：首发之后 100ms 再放一条同样的请求 ----
+        // 1) 并发对冲：首发之后 100ms 再放一条同样的请求
         var hedged = _hedged ??= new AxiosClient(new AxiosConfig
         {
             Resilience =
@@ -51,7 +51,7 @@ public sealed class HedgingAndFailoverExample : IExample
             Console.WriteLine($"  对照（单次发送）: code={ex.Code}, status={ex.Status}");
         }
 
-        // ---- 2) 备用端点：主端点连不上时换到演示服务器的同路径 ----
+        // 2) 备用端点：主端点连不上时换到演示服务器的同路径
         var failover = _failover ??= new AxiosClient(new AxiosConfig
         {
             Resilience =

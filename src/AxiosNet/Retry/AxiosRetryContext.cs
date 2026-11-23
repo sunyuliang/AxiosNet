@@ -1,9 +1,6 @@
 namespace AxiosNet.Retry;
 
-/// <summary>
-/// 一次失败尝试的上下文：策略据此判断要不要重试、等多久再试，
-/// 也作为 <see cref="AxiosConfig.RetrySettings.OnRetry"/> 回调的入参（只读结构体，栈上传递）。
-/// </summary>
+/// <summary>一次失败尝试的上下文：策略据此判断要不要重试、等多久，也作为 <see cref="AxiosConfig.RetrySettings.OnRetry"/> 回调的入参。</summary>
 public readonly struct AxiosRetryContext
 {
     /// <param name="attempt">刚失败的尝试序号，从 1 开始（1 = 首次请求就失败了）。</param>
@@ -11,7 +8,7 @@ public readonly struct AxiosRetryContext
     /// <param name="exception">本次失败抛出的异常（库内统一错误模型 <see cref="AxiosException"/>）。</param>
     /// <param name="config">本次请求的生效配置。</param>
     /// <param name="response">失败时拿到的响应（状态码非法 / 5xx 时可用；网络错误为 <c>null</c>）。</param>
-    /// <param name="delay">本次重试前的等待时间（策略判定阶段为 <c>default</c>；决定重试后才填入，随 <see cref="AxiosConfig.RetrySettings.OnRetry"/> 回调与 <c>AxiosNet.Retry</c> 事件下发）。</param>
+    /// <param name="delay">本次重试前的等待时间（策略判定阶段为 <c>default</c>，决定重试后才填入）。</param>
     public AxiosRetryContext(
         int attempt,
         int maxRetries,
@@ -28,7 +25,7 @@ public readonly struct AxiosRetryContext
         Config = config;
         Response = response;
 
-        // 状态码在这里就固定下来：响应对象会被后续尝试复用改写。
+        // 状态码在此固定：响应对象会被后续尝试改写。
         StatusCode = response?.Status;
 
         Delay = delay;
@@ -46,10 +43,8 @@ public readonly struct AxiosRetryContext
     /// <summary>本次请求的生效配置（已合并实例默认值、已跑完请求拦截器）。</summary>
     public AxiosConfig? Config { get; }
 
-    /// <summary>
-    /// 失败时的响应对象：状态码非法（4xx/5xx）时有值，网络层失败时为 <c>null</c>。
-    /// 该实例会被后续尝试复用改写，需要稳定的结论请读 <see cref="StatusCode"/>。
-    /// </summary>
+    /// <summary>失败时的响应对象：状态码非法（4xx/5xx）时有值，网络层失败时为 <c>null</c>。</summary>
+    /// <remarks>该实例会被后续尝试复用改写，需要稳定的结论请读 <see cref="StatusCode"/>。</remarks>
     public AxiosResponse? Response { get; }
 
     /// <summary>本次重试前的等待时间（策略判定阶段为 <c>default</c>，决定重试后才填入；OnRetry 回调与 <c>AxiosNet.Retry</c> 事件读到的是填入后的值）。</summary>

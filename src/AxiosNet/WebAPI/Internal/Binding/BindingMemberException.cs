@@ -1,20 +1,12 @@
 namespace AxiosNet.WebAPI.Internal.Binding;
 
 /// <summary>
-/// 绑定<b>某一个成员</b>时取值 / 格式化失败：携带通道与成员的定位文本，
-/// 让 <see cref="RequestBindingErrors"/> 能报出「哪一步、哪个字段」而不是只丢一句底层消息。
+/// 绑定某一个成员时取值 / 格式化失败：携带通道与成员的定位文本，交给 <see cref="RequestBindingErrors"/> 报出「哪一步、哪个字段」。
 /// </summary>
-/// <remarks>
-/// 只在包内流转：绑定循环捕获任意异常后包成这个类型再抛，外层统一翻译成
-/// <see cref="AxiosException.ErrBadRequest"/>。原始异常<b>原样</b>进 <see cref="Exception.InnerException"/>，
-/// 最终成为错误模型的 <c>Cause</c>，不丢、不多包一层。
-/// </remarks>
+/// <remarks>原始异常原样进 <see cref="Exception.InnerException"/>，最终成为错误模型的 <c>Cause</c>。</remarks>
 internal sealed class BindingMemberException : Exception
 {
-    /// <summary>构造一条成员级绑定失败。</summary>
-    /// <param name="channel">失败所在的绑定通道。</param>
-    /// <param name="member">成员的定位文本（如 <c>UserRequest.Page</c>）。</param>
-    /// <param name="inner">原始异常。</param>
+    /// <summary>构造一条成员级绑定失败；原始异常原样作为 <c>InnerException</c>。</summary>
     public BindingMemberException(BindingChannel channel, string member, Exception inner)
         : base(inner.Message, inner)
     {

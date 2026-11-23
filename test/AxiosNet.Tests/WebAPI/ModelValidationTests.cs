@@ -15,9 +15,7 @@ namespace AxiosNet.Tests.WebAPI;
 /// </summary>
 public sealed class ModelValidationTests
 {
-    // ------------------------------------------------------------------
-    // ValidateModels：抽象 / 开放泛型基类
-    // ------------------------------------------------------------------
+// ValidateModels：抽象 / 开放泛型基类
 
     [Fact]
     public void ValidateModels_AssemblyScan_SkipsAbstractAndOpenGenericBases()
@@ -160,9 +158,7 @@ public sealed class ModelValidationTests
         Assert.Equal(first.Message, second.Message);
     }
 
-    // ------------------------------------------------------------------
-    // 模型启动期校验
-    // ------------------------------------------------------------------
+// 模型启动期校验
 
     [Fact]
     public void ValidateModels_ValidModel_ReturnsEmpty()
@@ -201,9 +197,7 @@ public sealed class ModelValidationTests
         Assert.Contains(errors, message => message.Contains(nameof(NoRouteModel)));
     }
 
-    // ------------------------------------------------------------------
-    // 测试辅助
-    // ------------------------------------------------------------------
+// 测试辅助
 
 
     /// <summary>固定应答的离线 Handler（回放语义用例只需要一条稳定的响应）。</summary>
@@ -237,7 +231,7 @@ public sealed class ModelValidationTests
 
     private static ApiClient CreateClient_ApiClientModelValidation() => new("http://127.0.0.1:1/");
 
-    // ---- 非法模型样例（仅被上面用例经反射消费） ----
+    // 非法模型样例（仅被上面用例经反射消费）
 
     public sealed class NoRouteRequest : IApiRequest<object>
     {
@@ -318,9 +312,7 @@ public sealed class ModelValidationTests
         public string? PathValue { get; set; }
     }
 
-    // ------------------------------------------------------------------
-    // 测试模型
-    // ------------------------------------------------------------------
+// 测试模型
 
 
     [Get("headers")]

@@ -1,7 +1,6 @@
 #if NETSTANDARD2_0
-// netstandard2.0 兼容资产的 BCL 成员补位：这些是 .NET 5/6 才加进 BCL 的「实例方法 / 重载」，
-// 用扩展方法补齐后，业务源码一处都不用改。同名实例方法在 net6.0 / net8.0 上优先，
-// 因此这些扩展只在兼容资产里被选中。扩展类放在 AxiosNet 命名空间，所有 AxiosNet.* 子命名空间自动可见。
+// netstandard2.0 兼容资产的 BCL 成员补位：用扩展方法补齐 .NET 5/6 才有的实例方法与重载。
+// 同名实例方法在 net6.0 / net8.0 上优先，因此这些扩展只在兼容资产里被选中。
 using System;
 using System.Buffers;
 using System.Collections.Concurrent;
@@ -19,7 +18,7 @@ namespace AxiosNet;
 /// <summary>netstandard2.0 缺失的 BCL 实例方法补位（仅在兼容资产编译）。</summary>
 internal static class NetStandard20Extensions
 {
-    // ---- Task.WaitAsync：BCL 版本是 .NET 6 的实例方法，超时抛 TimeoutException、取消抛 TaskCanceledException ----
+    // Task.WaitAsync：超时抛 TimeoutException、取消抛 TaskCanceledException
 
     /// <summary>给等待加超时；超时不取消原任务，只放弃本次等待。</summary>
     /// <param name="task">被等待的任务。</param>
@@ -81,9 +80,7 @@ internal static class NetStandard20Extensions
             return;
         }
 
-        // 与 BCL 同构的三方裁决：原任务完成 / 超时 / 取消先到者决定结果。
-        // 超时用 CancellationTokenSource.CancelAfter（一个可释放的定时器），不再额外创建 Task.Delay：
-        // 原任务先完成时不会留下一个继续跑到超时点的定时器任务。
+        // 原任务完成 / 超时 / 取消，先到者决定结果。
         var signal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var timeoutSource = timeout == Timeout.InfiniteTimeSpan ? null : new CancellationTokenSource(timeout);
         using var timeoutRegistration = timeoutSource?.Token.Register(
@@ -91,7 +88,7 @@ internal static class NetStandard20Extensions
         using var cancellationRegistration = cancellationToken.Register(
             () => signal.TrySetCanceled(cancellationToken));
 
-        // 原任务完成时把结果 / 原始异常转到 signal 上；不保存这个续延任务（它可能还没跑完，不能 Dispose）。
+        // 原任务完成时把结果 / 原始异常转到 signal 上。
         _ = task.ContinueWith(
             static (completed, state) =>
             {
@@ -132,7 +129,7 @@ internal static class NetStandard20Extensions
         return await task.ConfigureAwait(false);
     }
 
-    // ---- 集合：Dictionary.TryAdd / ConcurrentDictionary.TryRemove(KeyValuePair) ----
+    // 集合：Dictionary.TryAdd / ConcurrentDictionary.TryRemove(KeyValuePair)
 
     /// <summary>键不存在时写入；等价于 .NET Core 2.0+ 的 Dictionary.TryAdd。</summary>
     /// <param name="dictionary">目标字典。</param>
@@ -161,7 +158,7 @@ internal static class NetStandard20Extensions
     public static bool TryRemove<TKey, TValue>(this ConcurrentDictionary<TKey, TValue> dictionary, KeyValuePair<TKey, TValue> item)
         => ((ICollection<KeyValuePair<TKey, TValue>>)dictionary).Remove(item);
 
-    // ---- Stream：Memory 版读写与异步释放 ----
+    // Stream：Memory 版读写与异步释放
 
     /// <summary>Memory 版异步读；兼容资产上零分配转发到数组重载。</summary>
     /// <param name="stream">目标流。</param>
@@ -175,8 +172,7 @@ internal static class NetStandard20Extensions
             return 0;
         }
 
-        // 调用方几乎都传 ArrayPool 数组切出的 Memory：TryGetArray 直接取出同一块底层数组，
-        // 一次读取零分配。只有非数组支撑的 Memory 才回落到租借缓冲（旧实现每次都 new 出整块）。
+        // 数组支撑的 Memory 直接取底层数组，零分配。
         if (MemoryMarshal.TryGetArray((ReadOnlyMemory<byte>)buffer, out var segment) && segment.Array is not null)
         {
             return await stream.ReadAsync(segment.Array, segment.Offset, segment.Count, cancellationToken).ConfigureAwait(false);
@@ -272,10 +268,7 @@ internal static class NetStandard20Extensions
         }
     }
 
-    /// <summary>
-    /// 带令牌地读正文为字节数组；netstandard2.0 的 HttpContent 没有该重载。
-    /// 令牌在进入 / 返回两个边界真正生效（内部缓冲由 HttpContent 自己完成，无法逐块中断）。
-    /// </summary>
+    /// <summary>带令牌地读正文为字节数组；令牌只在进入 / 返回两个边界生效。</summary>
     /// <param name="content">正文。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>正文字节。</returns>
@@ -307,10 +300,7 @@ internal static class NetStandard20Extensions
         return WriteRentedAsync(stream, buffer, cancellationToken);
     }
 
-    /// <summary>
-    /// 内存不是数组段的兜底路径：借一块池化缓冲拷过去再写，写完立即归还。
-    /// 只在 <c>MemoryMarshal.TryGetArray</c> 失败时才走到。
-    /// </summary>
+    /// <summary>内存不是数组段时的兜底：借池化缓冲拷过去再写，写完立即归还。</summary>
     /// <param name="stream">目标流。</param>
     /// <param name="buffer">待写字节。</param>
     /// <param name="cancellationToken">取消令牌。</param>
@@ -338,7 +328,7 @@ internal static class NetStandard20Extensions
         return default;
     }
 
-    // ---- HttpContent：带令牌的重载 ----
+    // HttpContent：带令牌的重载
 
     /// <summary>带令牌的复制写出；netstandard2.0 没有该重载，令牌只能在进入 / 返回两个边界生效（保留流式写出）。</summary>
     /// <param name="content">正文。</param>
@@ -362,7 +352,7 @@ internal static class NetStandard20Extensions
         return content.ReadAsStreamAsync();
     }
 
-    // ---- 字符串 / Span ----
+    // 字符串 / Span
 
     /// <summary>string.Contains(char)：netstandard2.0 只有 string 重载。</summary>
     /// <param name="text">文本。</param>
@@ -411,7 +401,7 @@ internal static class NetStandard20Extensions
     /// <returns>是否包含。</returns>
     public static bool Contains(this ReadOnlySpan<char> span, char value) => span.IndexOf(value) >= 0;
 
-    // ---- 反射 ----
+    // 反射
 
     /// <summary>MethodInfo.CreateDelegate&lt;T&gt;()：netstandard2.0 只有非泛型重载。</summary>
     /// <param name="method">方法信息。</param>

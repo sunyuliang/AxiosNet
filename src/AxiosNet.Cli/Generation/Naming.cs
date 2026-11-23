@@ -171,10 +171,7 @@ internal static class Naming
         }
     }
 
-    /// <summary>
-    /// 把候选名加入集合；比较时忽略关键字转义前缀 <c>@</c>，否则 <c>@class2</c> 与 <c>class2</c>
-    /// 会被当成两个不同名字，生成的成员其实同名（CS0100）。比较规则沿用集合自身的比较器。
-    /// </summary>
+    /// <summary>把候选名加入集合；比较时忽略关键字转义前缀 <c>@</c>（<c>@class2</c> 与 <c>class2</c> 视为同名），规则沿用集合自身的比较器。</summary>
     private static bool TryAddUnique(string candidate, ISet<string> used)
     {
         var comparer = used is HashSet<string> set ? set.Comparer : StringComparer.Ordinal;

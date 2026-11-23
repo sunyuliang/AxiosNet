@@ -1527,9 +1527,7 @@ public sealed class CacheTests
         Assert.Equal(1, calls); // 核心验收：整条链路服务端只收到 1 次
     }
 
-    // ------------------------------------------------------------------
-    // 命中的 Age 与多值头
-    // ------------------------------------------------------------------
+// 命中的 Age 与多值头
 
     [Fact]
     public async Task CacheHit_AdvancesAgeHeader_BasedOnReceivedAt()

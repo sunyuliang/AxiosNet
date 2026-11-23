@@ -38,17 +38,16 @@ internal abstract class DelegatingStream : Stream
     // 改长度直接转给内层，本层不缓存长度（缓存了就得以内层为准同步）。
     public override void SetLength(long value) => _inner.SetLength(value);
 
-    // 同步读复用异步核心再阻塞等待：包装流只维护一套逻辑，不写两遍。
+    // 同步读：复用异步核心再阻塞等待。
     public override int Read(byte[] buffer, int offset, int count)
         => BlockingWait.Wait(ReadCoreAsync(buffer.AsMemory(offset, count), CancellationToken.None));
 
-    // 旧版数组重载：转成 Memory 后和下面那条走同一个核心。
+    /// <summary>异步读（数组重载），转发到读核心。</summary>
     public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         => ReadCoreAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
 
 #if !NETSTANDARD2_0
-    // 新版 Memory 重载：直接进核心，不再包一层 Task。netstandard2.0 的 Stream 没有该虚方法，
-    // 那里的调用由 System.Memory 包提供的扩展方法接到数组重载上。
+    // Memory 重载：netstandard2.0 的 Stream 没有该虚方法，调用经扩展方法接到数组重载上。
     public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         => ReadCoreAsync(buffer, cancellationToken);
 #endif
@@ -57,16 +56,16 @@ internal abstract class DelegatingStream : Stream
     protected virtual ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken cancellationToken)
         => _inner.ReadAsync(buffer, cancellationToken);
 
-    // 同步写同样复用异步核心再阻塞等待。
+    // 同步写：复用异步核心再阻塞等待。
     public override void Write(byte[] buffer, int offset, int count)
         => BlockingWait.Wait(WriteCoreAsync(buffer.AsMemory(offset, count), CancellationToken.None));
 
-    // 旧版数组重载：转成 Memory 后走同一个核心。
+    /// <summary>异步写（数组重载），转发到写核心。</summary>
     public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         => WriteCoreAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
 
 #if !NETSTANDARD2_0
-    // 新版 Memory 重载：直接进核心。netstandard2.0 的 Stream 没有该虚方法。
+    // Memory 重载：netstandard2.0 的 Stream 没有该虚方法。
     public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         => WriteCoreAsync(buffer, cancellationToken);
 #endif

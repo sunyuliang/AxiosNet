@@ -14,9 +14,7 @@ namespace AxiosNet.Tests.WebAPI;
 /// </summary>
 public sealed class BindingAttributesTests
 {
-    // ------------------------------------------------------------------
-    // 类级静态头 + 字典头
-    // ------------------------------------------------------------------
+// 类级静态头 + 字典头
 
     [Fact]
     public async Task StaticHeaders_AreSent_PropertyHeaderOverridesSameName()
@@ -98,7 +96,7 @@ public sealed class BindingAttributesTests
     [Fact]
     public void HeaderCollection_NonStringDictionary_IsRejected()
     {
-        // 元数据错误走统一出口：用户 catch (AxiosException) 必须抓得住（此前是裸 InvalidOperationException）。
+        // 元数据错误走统一出口：调用方 catch (AxiosException) 必须抓得住。
         var ex = Assert.ThrowsAny<AxiosException>(
             () => new ApiClient("http://127.0.0.1:1/").GetUri(new BadHeaderCollectionRequest()));
 
@@ -118,9 +116,7 @@ public sealed class BindingAttributesTests
         Assert.Contains("二义性", ex.Message);
     }
 
-    // ------------------------------------------------------------------
-    // 查询映射平铺 + CollectionFormat
-    // ------------------------------------------------------------------
+// 查询映射平铺 + CollectionFormat
 
     [Fact]
     public async Task QueryMap_FlattensDictionaryEntries_IntoTopLevelKeys()
@@ -222,9 +218,7 @@ public sealed class BindingAttributesTests
         Assert.Equal("tags=a b", Uri.UnescapeDataString(server.Received[1].Query ?? string.Empty));
     }
 
-    // ------------------------------------------------------------------
-    // URL 参数格式化钩子
-    // ------------------------------------------------------------------
+// URL 参数格式化钩子
 
     [Fact]
     public async Task ValueFormatter_AppliesToPathAndQuery()
@@ -249,9 +243,7 @@ public sealed class BindingAttributesTests
         Assert.Equal("When=20240102", Uri.UnescapeDataString(received.Query ?? string.Empty));
     }
 
-    // ------------------------------------------------------------------
-    // B3：基类的「删除声明」不能删掉派生类同名静态头的值
-    // ------------------------------------------------------------------
+// B3：基类的「删除声明」不能删掉派生类同名静态头的值
 
     [Fact]
     public async Task B3_DerivedStaticHeader_WinsOverBaseRemoval()
@@ -266,9 +258,7 @@ public sealed class BindingAttributesTests
         Assert.Equal("derived", trace);
     }
 
-    // ------------------------------------------------------------------
-    // 测试模型
-    // ------------------------------------------------------------------
+// 测试模型
 
     [Get("static")]
     [Headers("Accept: application/json", "X-Api-Version: 2", "X-Trace: static")]
@@ -347,9 +337,7 @@ public sealed class BindingAttributesTests
     }
 
 
-    // ------------------------------------------------------------------
-    // 测试模型
-    // ------------------------------------------------------------------
+// 测试模型
 
 
     [Headers("X-Trace")]
@@ -364,9 +352,7 @@ public sealed class BindingAttributesTests
     }
 
 
-    // ------------------------------------------------------------------
-    // 测试替身
-    // ------------------------------------------------------------------
+// 测试替身
 
 
     /// <summary>预置分块的响应流；可为每个分块指定读取前的延迟，读完后挂起。</summary>

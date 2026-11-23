@@ -4,8 +4,8 @@ namespace AxiosNet;
 /// <summary>
 /// multipart/form-data 中的一个文件部件：把 <see cref="FormFile"/>（或其集合）放进 data 的对象/字典字段里，
 /// 并把 <see cref="AxiosConfig.ContentType"/> 设为 <c>multipart/form-data</c>。
-/// 部件内容随请求释放（结束、异常或取消时都会 Dispose），传入的流不要在请求之外复用。
 /// </summary>
+/// <remarks>部件内容随请求释放（结束、异常或取消时都会 Dispose），传入的流不要在请求之外复用。</remarks>
 public sealed class FormFile
 {
     /// <summary>用流构造文件部件。</summary>
@@ -21,7 +21,7 @@ public sealed class FormFile
 
         ArgumentNullException.ThrowIfNull(content);
 
-        // 文件名写进 Content-Disposition 的 quoted-string，先校验非法字符。
+        // 文件名要写进 Content-Disposition，先校验非法字符。
         if (DispositionTokens.FindInvalidCharacter(fileName) is { } invalid)
         {
             throw new ArgumentException(

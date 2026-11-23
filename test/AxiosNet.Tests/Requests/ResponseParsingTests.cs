@@ -376,9 +376,7 @@ public sealed class ResponseParsingTests
 
     // 回放不携带按请求 Auth 的契约由 Audit20261024P2FixTests 锁定（含「用目标实例默认」），
 
-    // ------------------------------------------------------------------
-    // ScalarParser：Enum 未定义值 / char 多字符
-    // ------------------------------------------------------------------
+// ScalarParser：Enum 未定义值 / char 多字符
 
     [Fact]
     public async Task GetAsync_Enum_UndefinedNumericValue_FailsBadResponse()
@@ -598,9 +596,7 @@ public sealed class ResponseParsingTests
         Assert.Equal("café", forced.Data);
     }
 
-    // ---------------------------------------------------------------
-    // 响应解码
-    // ---------------------------------------------------------------
+// 响应解码
 
     [Fact]
     public async Task JsonDocument_NonUtf8Charset_IsDecodedThenParsed()
@@ -687,9 +683,7 @@ public sealed class ResponseParsingTests
         Assert.Equal(payload, response.Data);
     }
 
-    // ---------------------------------------------------------------
-    // ScalarParser：非 JSON 文本按目标类型兜底
-    // ---------------------------------------------------------------
+// ScalarParser：非 JSON 文本按目标类型兜底
 
     [Fact]
     public async Task BareText_Bool_IsParsedCaseInsensitively()
@@ -828,9 +822,7 @@ public sealed class ResponseParsingTests
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
     }
 
-    // ---------------------------------------------------------------
-    // ResponseTextDecoder：charset / BOM / 强制编码的优先级
-    // ---------------------------------------------------------------
+// ResponseTextDecoder：charset / BOM / 强制编码的优先级
 
     [Fact]
     public async Task Response_UnknownCharset_FallsBackToUtf8()
@@ -887,9 +879,7 @@ public sealed class ResponseParsingTests
 
     // StatusTextMap（reason phrase 由库维护、不走线上）的整张表在 StatusTextTests 里逐码断言。
 
-    // ---------------------------------------------------------------
-    // 非 JSON 文本：不解析、不抛异常（首个非空白字符闸口）
-    // ---------------------------------------------------------------
+// 非 JSON 文本：不解析、不抛异常（首个非空白字符闸口）
 
     [Fact]
     public async Task NonJsonText_IsReturnedVerbatim()
@@ -977,9 +967,7 @@ public sealed class ResponseParsingTests
         Assert.Contains("responseType", ex.Cause!.Message);
     }
 
-    // ------------------------------------------------------------------
-    // 测试辅助
-    // ------------------------------------------------------------------
+// 测试辅助
 
     private static HttpResponseMessage JsonResponse()
         => new(HttpStatusCode.OK)

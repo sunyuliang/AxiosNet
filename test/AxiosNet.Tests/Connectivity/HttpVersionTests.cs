@@ -35,9 +35,7 @@ public sealed class HttpVersionTests
         Assert.Equal("HTTP/1.0", server.Received[0].Version);
     }
 
-    // ------------------------------------------------------------------
-    // 本地能力探测
-    // ------------------------------------------------------------------
+// 本地能力探测
 
     [Fact]
     public void Probe_IsSelfConsistent()
@@ -74,9 +72,7 @@ public sealed class HttpVersionTests
         Assert.Equal(runtimeQuicSupported, Http3Support.IsSupported);
     }
 
-    // ------------------------------------------------------------------
-    // 默认策略：h3 只是「优先」，永远不该在客户端被拦下
-    // ------------------------------------------------------------------
+// 默认策略：h3 只是「优先」，永远不该在客户端被拦下
 
     [Fact]
     public async Task OrLowerPolicy_PassesHttp3ThroughToHandler()
@@ -96,9 +92,7 @@ public sealed class HttpVersionTests
         Assert.Equal(HttpVersionPolicy.RequestVersionOrLower, sent.Policy);
     }
 
-    // ------------------------------------------------------------------
-    // 强制策略：环境不可能做到就立刻失败（一个字节都不发）
-    // ------------------------------------------------------------------
+// 强制策略：环境不可能做到就立刻失败（一个字节都不发）
 
     [Fact]
     public async Task ExactPolicy_OnCleartext_FailsBeforeAnyConnection()
@@ -177,9 +171,7 @@ public sealed class HttpVersionTests
         Assert.Equal(HttpVersion.Version11, Assert.Single(handler.Sent).Version);
     }
 
-    // ------------------------------------------------------------------
-    // 重试：h3 的版本与策略要跟着每一次尝试走
-    // ------------------------------------------------------------------
+// 重试：h3 的版本与策略要跟着每一次尝试走
 
     [Fact]
     public async Task Retry_KeepsHttp3VersionAndPolicy()
@@ -207,9 +199,7 @@ public sealed class HttpVersionTests
         });
     }
 
-    // ------------------------------------------------------------------
-    // 出站请求携带的版本与策略
-    // ------------------------------------------------------------------
+// 出站请求携带的版本与策略
 
     [Fact]
     public async Task Default_RequestsHttp2()
@@ -367,9 +357,7 @@ public sealed class HttpVersionTests
         Assert.Equal(HttpVersionPolicy.RequestVersionOrLower, sent.Policy);
     }
 
-    // ------------------------------------------------------------------
-    // 线上行为：明文连接
-    // ------------------------------------------------------------------
+// 线上行为：明文连接
 
     [Fact]
     public async Task DefaultOnCleartext_FallsBackToHttp11()
@@ -462,9 +450,7 @@ public sealed class HttpVersionTests
         }
     }
 
-    // ------------------------------------------------------------------
-    // 线上行为：TLS / ALPN
-    // ------------------------------------------------------------------
+// 线上行为：TLS / ALPN
 
     [Fact]
     public async Task TlsServerWithOnlyHttp11_FallsBackToHttp11()
@@ -497,9 +483,7 @@ public sealed class HttpVersionTests
         Assert.StartsWith("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", first);
     }
 
-    // ------------------------------------------------------------------
-    // 协商结果对调用方可见（降级是静默的，这是唯一的确认入口）
-    // ------------------------------------------------------------------
+// 协商结果对调用方可见（降级是静默的，这是唯一的确认入口）
 
     [Fact]
     public async Task Response_ReportsNegotiatedVersion()
@@ -566,9 +550,7 @@ public sealed class HttpVersionTests
         Assert.Equal(0, server.TotalConnections);
     }
 
-    // ------------------------------------------------------------------
-    // 重试：复制请求不能丢版本策略
-    // ------------------------------------------------------------------
+// 重试：复制请求不能丢版本策略
 
     [Fact]
     public async Task Retry_KeepsVersionPolicyOnEveryAttempt()
@@ -599,9 +581,7 @@ public sealed class HttpVersionTests
         });
     }
 
-    // ------------------------------------------------------------------
-    // 连接池：h2 多连接
-    // ------------------------------------------------------------------
+// 连接池：h2 多连接
 
     [Fact]
     public async Task PoolOptions_EnableMultipleHttp2Connections_DefaultsToTrue()

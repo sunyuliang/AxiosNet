@@ -6,15 +6,12 @@ namespace AxiosNet.Pipeline;
 // 「一次尝试」的对冲：首发之后按 Delay 放出延迟副本，第一个成功结果胜出，其余分支取消并收尾。
 public static partial class Attempt
 {
-    /// <summary>
-    /// 对冲：首发之后按 <see cref="AxiosConfig.HedgingSettings.Delay"/> 的间隔再放出延迟副本，第一个成功结果胜出；
-    /// 其余分支取消并等它们收尾。全部失败时把失败原样抛给外层重试。
-    /// </summary>
+    /// <summary>对冲：首发之后按 <see cref="AxiosConfig.HedgingSettings.Delay"/> 放出延迟副本，第一个成功结果胜出，其余分支取消并收尾。</summary>
     /// <remarks>
     /// 位置在 <see cref="Retry"/>、<see cref="Failover"/>、<see cref="Circuit"/> 之内、<see cref="Gate"/> 之外：
-    /// 熔断看整组分支的最终结果，每条分支各占一个并发槽位（额度是 <c>1 + MaxHedges</c> 倍）。
-    /// <c>MaxHedges = 0</c> 时纯直通。流式响应、非幂等方法、正文不能并发重放、带进度回调或限速的请求按单次发送。
-    /// 每条分支各执行一次 <c>transformResponse</c> 与响应侧回调；响应拦截器仍只对胜出结果执行一次。
+    /// 熔断看整组分支的最终结果，每条分支各占一个并发槽位。
+    /// <c>MaxHedges = 0</c> 时纯直通；全部失败时把第一条失败抛给外层重试。流式响应、非幂等方法、正文不能并发重放、
+    /// 带进度回调或限速的请求按单次发送。响应拦截器只对胜出结果执行一次。
     /// </remarks>
     public static AxiosAttemptMiddleware Hedging { get; } = next =>
     {
@@ -26,26 +23,25 @@ public static partial class Attempt
                 : next(request, ctx);
     };
 
-    /// <summary>这次请求能不能对冲：不满足时按一次普通发送处理。</summary>
+    /// <summary>这次请求能否对冲：不满足时按一次普通发送处理。</summary>
     private static bool CanHedge(
         HttpRequestMessage request,
         AxiosAttemptContext ctx,
         AxiosConfig.HedgingSettings hedging)
     {
-        // 流式响应不对冲：败者的正文没人读。
+        // 流式响应不对冲。
         if (ctx.StreamResponse)
         {
             return false;
         }
 
-        // 非幂等方法默认不对冲；放行开关由配置级 Resilience.AllowUnsafeRetry 统一提供。
+        // 非幂等方法默认不对冲，除非 AllowUnsafeRetry。
         if (!ctx.Config.AllowUnsafeRetry && !RetryPolicy.IsIdempotent(ctx.Config.Method))
         {
             return false;
         }
 
-        // 进度回调与限速器都挂在同一条正文的共享可变状态上：多个分支并发写会丢字节 / 重复上报，
-        // 因此请求侧（上传）与响应侧（下载）任一带进度或限速，都按单次发送处理。
+        // 进度回调与限速器带共享状态，分支并发会丢字节或重复上报。
         var observability = ctx.Config.ObservabilityOrNull;
         if (observability?.OnUploadProgress is not null
             || observability?.OnDownloadProgress is not null
@@ -54,14 +50,11 @@ public static partial class Attempt
             return false;
         }
 
-        // 正文必须能并发重放：流 / multipart / 进度包装都带共享可变状态。
+        // 正文必须能并发重放。
         return BodyReplayability.CanReplay(ctx.Config, ReplayMode.Hedge);
     }
 
-    /// <summary>
-    /// 放出各条分支并等待第一个成功结果。失败分支的异常先记账；全部失败时抛第一条失败，
-    /// 让外层重试决定是否再来一轮。
-    /// </summary>
+    /// <summary>放出各条分支并等待第一个成功结果；全部失败时抛第一条失败，交给外层重试。</summary>
     private static async ValueTask<AxiosAttemptResult> HedgeAsync(
         AxiosAttemptHandler next,
         HttpRequestMessage template,
@@ -70,7 +63,7 @@ public static partial class Attempt
     {
         var branches = hedging.MaxHedges + 1;
 
-        // 链接调用方令牌：胜出者出现时取消败者，调用方取消时连锁取消所有分支。
+        // 链接调用方令牌：胜出或调用方取消时连锁取消各分支。
         using var group = CancellationTokenSource.CreateLinkedTokenSource(ctx.ExternalToken);
 
         var remaining = new List<Task<AxiosAttemptResult>>(branches);
@@ -87,7 +80,7 @@ public static partial class Attempt
                 Task<AxiosAttemptResult> completed;
                 try
                 {
-                    // 分支可以不响应取消令牌：等待期间也要跟着调用方令牌走，否则取消要等到某条分支自己返回才生效。
+                    // 等待期间也跟随调用方令牌。
                     completed = await Task.WhenAny(remaining).WaitAsync(ctx.ExternalToken).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException oce)
@@ -102,7 +95,7 @@ public static partial class Attempt
                     // Ensure 挡住中间件返回的 default 结果。
                     var winner = AxiosAttemptResult.Ensure(await completed.ConfigureAwait(false), ctx.Config);
 
-                    // 胜出者分支的配置回填到共享配置：调用方按契约从 ctx.Config.Response 读响应信息。
+                    // 胜出者的配置回填到共享配置。
                     if (winner.Response.Config is { } branchConfig)
                     {
                         if (branchConfig.Response is { } responseInfo)
@@ -110,7 +103,6 @@ public static partial class Attempt
                             ctx.Config.Response = responseInfo;
                         }
 
-                        // 交出去的响应指向本次请求的配置，而不是分支副本。
                         winner.Response.Config = ctx.Config;
                     }
 
@@ -122,8 +114,7 @@ public static partial class Attempt
                 }
                 catch (Exception ex) when (IsBudgetExhausted(ex))
                 {
-                    // 分支共享同一个总预算截止点：任一分支到点，其余分支也不可能成功。
-                    // 直接按「总预算耗尽」收尾（finally 会取消并收掉其余分支），不把某条分支的超时当成最终答案。
+                    // 分支共享同一总预算：任一分支到点即全部到点。
                     if (ex is AxiosException { IsTotalTimeoutExceeded: true })
                     {
                         throw;
@@ -133,7 +124,7 @@ public static partial class Attempt
                 }
                 catch (Exception ex)
                 {
-                    // 闸门拒绝会盖掉真正的下游故障：已记下它时用后到的真实失败替换。
+                    // 闸门拒绝不代表下游故障；已有真实失败时不覆盖。
                     if (firstFailure is null || IsGateRejection(firstFailure))
                     {
                         firstFailure = ex;
@@ -141,7 +132,7 @@ public static partial class Attempt
                 }
             }
 
-            // 全部分支都失败：交给外层的重试。
+            // 全部分支都失败：交给外层重试。
             if (firstFailure is null)
             {
                 throw AxiosException.Canceled(ctx.Config, template, "所有对冲分支都被取消");
@@ -152,13 +143,13 @@ public static partial class Attempt
         }
         finally
         {
-            // 取消仍在路上的分支并等它们收尾：否则会继续占着连接租约与并发槽位。
+            // 取消仍在路上的分支并等它们收尾。
             group.Cancel();
             await DiscardPendingAsync(remaining, ctx.ExternalToken.IsCancellationRequested).ConfigureAwait(false);
         }
     }
 
-    /// <summary>胜出后等待败者收尾的整组上限：不响应取消令牌的分支最多挡胜出者这么久，之后改由后台续延收尾。</summary>
+    /// <summary>胜出后等待败者收尾的整组上限，超时改由后台续延收尾。</summary>
     private static readonly TimeSpan DiscardGrace = TimeSpan.FromSeconds(2);
 
     /// <summary>收尾所有没被采用的分支：整组共用一个截止时刻，而不是每条各等一份上限。</summary>
@@ -173,7 +164,7 @@ public static partial class Attempt
 
         if (callerCanceled)
         {
-            // 取消语义是「尽快退出」：不响应的分支不能把调用方拖到收尾上限。
+            // 取消语义是尽快退出，不占调用方的等待时间。
             foreach (var branch in pending)
             {
                 _ = DrainAsync(branch);
@@ -192,17 +183,17 @@ public static partial class Attempt
             }
             catch (OperationCanceledException)
             {
-                // 要么分支不响应取消（还没结束），要么与截止时刻撞车：交给后台续延收尾。
+                // 分支尚未结束或与截止时刻撞车，交给后台续延收尾。
                 _ = DrainAsync(branch);
             }
             catch
             {
-                // 失败 / 被取消的分支：终端已经在自己的失败路径上归还了租约与槽位。
+                // 失败分支：终端已归还租约与槽位。
             }
         }
     }
 
-    /// <summary>后台等分支真正结束并释放它持有的库内资源：结果已经丢弃，不能让收尾反过来挡住调用方。</summary>
+    /// <summary>后台等分支结束并释放库内资源。</summary>
     private static async Task DrainAsync(Task<AxiosAttemptResult> branch)
     {
         try
@@ -211,25 +202,19 @@ public static partial class Attempt
         }
         catch
         {
-            // 这里没有观察者：失败 / 取消只需吞掉。
+            // 没有观察者，吞掉失败与取消。
         }
     }
 
-    /// <summary>这条失败是不是「并发闸门拒绝」（排队超时 / 队列满）：它说明不了下游健康与否。</summary>
+    /// <summary>是否为并发闸门拒绝（排队超时 / 队列满）。</summary>
     private static bool IsGateRejection(Exception exception)
         => exception is AxiosException { Code: AxiosException.ErrQueueTimeout or AxiosException.ErrQueueFull };
 
-    /// <summary>
-    /// 释放一条败者结果持有的库内资源（流式凭证：正文流 + 连接租约 + 并发槽位）。
-    /// 非流式正文归调用方 / 序列化器所有，不在这里释放；流式正文也不排空。
-    /// </summary>
+    /// <summary>释放败者结果持有的库内资源（正文流 + 连接租约 + 并发槽位）；非流式正文归调用方所有，流式正文不排空。</summary>
     private static void Discard(AxiosAttemptResult result)
         => result.StreamOwner?.Dispose();
 
-    /// <summary>
-    /// 第 <paramref name="index"/> 条分支：先按 <c>index × delay</c> 等待，再换一条自己的请求消息发送。
-    /// 第 0 条直接用模板；其余按模板复制（正文沿用同一份，已由 <see cref="BodyReplayability.CanReplay(AxiosConfig, ReplayMode)"/> 保证可并发重放）。
-    /// </summary>
+    /// <summary>第 <paramref name="index"/> 条分支：先按 <c>index × delay</c> 等待，再换一条自己的请求消息发送（正文沿用同一份）。</summary>
     private static async Task<AxiosAttemptResult> SendHedgeBranchAsync(
         AxiosAttemptHandler next,
         HttpRequestMessage template,
@@ -251,11 +236,11 @@ public static partial class Attempt
             {
                 if (ctx.ExternalToken.IsCancellationRequested)
                 {
-                    // 调用方在等待期间取消：按统一错误模型报「已取消」。
+                    // 调用方取消：报「已取消」。
                     throw AxiosException.Canceled(ctx.Config, template, "请求在对冲分支起跑前被取消", oce);
                 }
 
-                // 胜出者已经出现：这条分支不必起跑。
+                // 胜出者已出现，不必起跑。
                 throw;
             }
         }
@@ -263,7 +248,7 @@ public static partial class Attempt
         var request = index == 0 ? template : CloneRequest(template);
         try
         {
-            // 每条分支用自己的令牌与配置副本：否则败者被取消时会中止胜者，两条分支也会互相覆盖响应。
+            // 每条分支用自己的令牌与配置副本。
             var branchContext = ctx
                 .WithoutTarget()
                 .WithConfig(ctx.Config.CloneForAttempt())

@@ -26,24 +26,21 @@ internal enum BodyReplayKind
     Streamed,
 }
 
-/// <summary>
-/// 正文可重放性的唯一分类入口：直接调用 <see cref="RetryBody.Prepare"/>，不再维护第二份类型名单。
-/// </summary>
+/// <summary>正文可重放性的唯一分类入口：结论由 <see cref="RetryBody.Prepare"/> 给出。</summary>
 internal static class BodyReplayability
 {
     /// <summary>四态分类；内核重试与 WebAPI 的跨调用重放都从这里取结论。</summary>
-    /// <param name="config">本次请求的生效配置。</param>
     public static BodyReplayKind Classify(AxiosConfig config)
     {
         try
         {
-            // 需要流回拨的形态（可 seek 的 Stream / 含流部件的 multipart）只有内核在同一次请求内能重放。
+            // 需要流回拨的形态只有内核能在同一请求内重放。
             if (RetryBody.Prepare(config) is not null)
             {
                 return BodyReplayKind.Streamed;
             }
 
-            // Prepare 返回 null 时，HttpContent 是内存缓冲内容（白名单外会在上面抛出），其余都是可重建的数据。
+            // 返回 null 时：HttpContent 是内存缓冲内容，其余是可重建的数据。
             return config.Body is HttpContent ? BodyReplayKind.Content : BodyReplayKind.Rebuild;
         }
         catch (AxiosException)
@@ -52,28 +49,21 @@ internal static class BodyReplayability
         }
     }
 
-    /// <summary>
-    /// 按使用方式判定可重放性：顺序重放接受白名单内的内存内容与可回拨的流；
-    /// 对冲只接受「两条分支同时读也安全」的形态——内存字节内容，或多路复用后落在内存字节内容上的数据正文。
-    /// </summary>
-    /// <param name="config">本次请求的生效配置。</param>
-    /// <param name="mode">顺序重放或并行对冲。</param>
+    /// <summary>按使用方式判定可重放性：顺序重放接受白名单内的内存内容与可回拨的流；对冲只接受两条分支可同时读的形态。</summary>
     public static bool CanReplay(AxiosConfig config, ReplayMode mode)
     {
         return Classify(config) switch
         {
             BodyReplayKind.None => false,
 
-            // 可回拨的流只在同一请求内顺序重放成立：对冲的两条分支会同时读到同一份流。
+            // 可回拨的流只能顺序重放。
             BodyReplayKind.Streamed => mode == ReplayMode.Sequential,
 
-            // 数据正文由 <see cref="RequestBodyFactory"/> 装配成内存字节内容；multipart 除外（部件带共享可变状态）。
-            // 没有正文时与 multipart 媒体类型无关。
+            // 数据正文由 <see cref="RequestBodyFactory"/> 装配成内存字节内容；multipart 除外。
             BodyReplayKind.Rebuild => config.Body is null
                 || !MediaTypes.Is(config.ContentType, AxiosContentType.MultipartFormData),
 
-            // 调用方自备的 HttpContent：顺序重放接受白名单内的全部内存内容；
-            // 对冲只有内存字节内容能被两条分支同时读，JsonContent 等只能顺序重放。
+            // 调用方自备的 HttpContent：对冲只接受内存字节内容。
             BodyReplayKind.Content => mode == ReplayMode.Sequential
                 || config.Body is ByteArrayContent or ReadOnlyMemoryContent,
 

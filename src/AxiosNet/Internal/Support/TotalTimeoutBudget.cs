@@ -28,7 +28,7 @@ internal static class TotalTimeoutBudget
             return None;
         }
 
-        // 超长预算收敛到计时器上限，避免溢出成负数。
+        // 超长预算收敛到计时器上限。
         var budget = totalTimeout > Timeouts.Max ? Timeouts.Max : totalTimeout;
         return entryTimestamp + (long)(budget.TotalSeconds * Stopwatch.Frequency);
     }

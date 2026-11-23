@@ -9,9 +9,7 @@ namespace AxiosNet.Tests.Connectivity;
 /// </summary>
 public sealed class WarmupTests
 {
-    // ------------------------------------------------------------------
-    // 池：Prewarm 建节点、不建连
-    // ------------------------------------------------------------------
+// 池：Prewarm 建节点、不建连
 
     [Fact]
     public void Prewarm_BuildsOriginNodeWithoutConnecting()
@@ -106,9 +104,7 @@ public sealed class WarmupTests
         Assert.Throws<ObjectDisposedException>(() => pool.Prewarm(new Uri("http://127.0.0.1:9204/")));
     }
 
-    // ------------------------------------------------------------------
-    // 实例：Warmup 只做一次、按基地址建节点、失败不污染标记
-    // ------------------------------------------------------------------
+// 实例：Warmup 只做一次、按基地址建节点、失败不污染标记
 
     [Fact]
     public void Warmup_WithoutBaseAddress_OnlyRunsStaticWarmup()

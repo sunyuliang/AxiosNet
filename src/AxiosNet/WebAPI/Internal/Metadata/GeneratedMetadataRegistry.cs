@@ -1,13 +1,10 @@
 
 namespace AxiosNet.WebAPI.Internal.Metadata;
 
-/// <summary>
-/// 声明式 API 的生成元数据注册表：请求模型与接口代理。
-/// </summary>
+/// <summary>声明式 API 的生成元数据注册表：请求模型与接口代理。</summary>
 /// <remarks>
-/// 写时复制 + <c>Volatile.Read</c>，读路径无锁、无分配；注册只发生在模块初始化 / 启动期，注册后不再修改字典本身（替换整个实例）。
-/// 同一类型重复注册属编程错误，直接抛出（生成器与手工注册不应同时声明同一类型）。
-/// 冻结开关归 <see cref="ShapeRegistry"/>（对象形状与字典映射也共用同一个进程级状态）。
+/// 写时复制 + <c>Volatile.Read</c>，读路径无锁；注册只发生在启动期，注册后整个字典实例被替换。
+/// 同一类型重复注册属编程错误（生成器与手工注册不应同时声明同一类型）。冻结开关归 <see cref="ShapeRegistry"/>。
 /// </remarks>
 internal static class GeneratedMetadataRegistry
 {
@@ -54,10 +51,7 @@ internal static class GeneratedMetadataRegistry
     internal static void RegisterInterface(InterfaceDeclarationData declaration, Func<ApiClient, object> factory)
         => AddInterface(declaration, factory, allowExisting: false);
 
-    /// <summary>
-    /// 生成代码的注册入口：两个互不引用的程序集引用同一份契约程序集时，会各自为同一接口生成代理并注册；
-    /// 生成结果等价，保留先注册的一份即可（否则第二个模块初始化器会抛错）。
-    /// </summary>
+    /// <summary>生成代码的注册入口：多个程序集为同一接口各生成一份时，生成结果等价，保留先注册的一份。</summary>
     internal static void RegisterGeneratedInterface(InterfaceDeclarationData declaration, Func<ApiClient, object> factory)
         => AddInterface(declaration, factory, allowExisting: true);
 
@@ -143,7 +137,7 @@ internal sealed class InterfaceEntry
     /// <summary>返回全部声明错误（按方法顺序，保留重载各自的错误）；空列表 = 合法。启动期校验与 Create 共用。</summary>
     public IReadOnlyList<string> ValidateAll()
     {
-        // 接口级错误（configure 在声明任何方法前抛错）没有方法可挂：直接返回，避免被空方法表吞掉。
+        // 接口级错误没有方法可挂：直接返回。
         if (Declaration.Error is { } error)
         {
             return [error];

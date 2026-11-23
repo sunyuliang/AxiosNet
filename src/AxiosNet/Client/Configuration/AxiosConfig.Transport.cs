@@ -11,9 +11,7 @@ public sealed partial class AxiosConfig
         /// HTTP 版本，<c>null</c>（默认）= HTTP/2，配合默认协商策略可降级到 1.1；netstandard2.0 资产默认 1.1，
         /// 显式要求 2.0 / 3.0 会在发送前以 <c>ERR_BAD_OPTION_VALUE</c> 拒绝。
         /// </summary>
-        /// <remarks>
-        /// 显式写 <c>null</c> 是「显式回到库默认版本」，会压过实例默认值（不是「未设置」）；要沿用实例默认值就不要碰本项。
-        /// </remarks>
+        /// <remarks>显式写 <c>null</c> 是「显式回到库默认版本」，会压过实例默认值；要沿用实例默认值就不要碰本项。</remarks>
         public Version? HttpVersion
         {
             get => _httpVersion;
@@ -30,8 +28,8 @@ public sealed partial class AxiosConfig
         internal bool HttpVersionSet { get; set; }
 
         /// <summary>
-        /// 版本协商策略（<c>HttpVersionPolicy</c>），默认 <c>RequestVersionOrLower</c>；<c>RequestVersionExact</c> 表示只用该版本，协商不上就报错。
-        /// netstandard2.0 资产只有 HTTP/1.1，<see cref="HttpVersion"/> 设为 2.0 / 3.0 时本项不参与协商，无论取值都在发送前拒绝。
+        /// 版本协商策略（<c>HttpVersionPolicy</c>），默认 <c>RequestVersionOrLower</c>；<c>RequestVersionExact</c> 表示只用该版本。
+        /// netstandard2.0 资产只有 HTTP/1.1，<see cref="HttpVersion"/> 设为 2.0 / 3.0 时本项不参与协商，发送前直接拒绝。
         /// </summary>
         /// <remarks>显式写 <c>null</c> 是「显式回到库默认值」，会压过实例默认值。</remarks>
         public HttpVersionPolicy? VersionPolicy
@@ -57,8 +55,7 @@ public sealed partial class AxiosConfig
         /// </summary>
         /// <remarks>
         /// <para>按请求项：单次请求可以走另一条出口，不需要新建客户端或连接池。</para>
-        /// <para>档必须已在池上登记，否则请求发出前抛 <c>ERR_BAD_OPTION_VALUE</c>（不静默回落默认档）。</para>
-        /// <para>直接注入自定义 <see cref="HttpMessageHandler"/> 时不走连接池，本项无效：此时传非空档名会报错。</para>
+        /// <para>档必须已在池上登记，否则请求发出前抛 <c>ERR_BAD_OPTION_VALUE</c>；注入自定义 Handler 时本项无效，传非空档名会报错。</para>
         /// </remarks>
         public string? Profile
         {
@@ -77,9 +74,7 @@ public sealed partial class AxiosConfig
 
         /// <summary>凭据来源的唯一槽位（对应 axios <c>auth</c>）：静态 Basic、静态令牌、完整头值，或每请求调用一次的提供方。</summary>
         /// <remarks>
-        /// <c>Auth = null</c> 表示本次请求不带认证，会压住实例默认凭据。
-        /// 同一请求只能取一种形态；显式 <c>Authorization</c> 头与本项同时设置视为配置冲突，发出前抛 <c>ERR_BAD_OPTION_VALUE</c>，不做二选一静默压制。
-        /// 凭据 → <c>Authorization</c> 头由内核统一映射；WebAPI 的 <c>CredentialProvider</c> 会包成这里的提供方形态。
+        /// <c>Auth = null</c> 表示本次请求不带认证，会压住实例默认凭据；显式 <c>Authorization</c> 头与本项同时设置视为配置冲突（<c>ERR_BAD_OPTION_VALUE</c>）。
         /// </remarks>
         public AxiosCredential? Auth
         {

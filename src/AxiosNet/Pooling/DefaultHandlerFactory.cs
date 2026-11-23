@@ -1,10 +1,7 @@
 namespace AxiosNet.Pooling;
 
 /// <summary>按 <see cref="ConnectionPoolOptions"/> 与一条传输档构建库默认的内层 Handler。</summary>
-/// <remarks>
-/// net6.0 / net8.0 用 <c>SocketsHttpHandler</c>；netstandard2.0 退化为 <c>HttpClientHandler</c>，只映射两边都有的选项
-/// （连接数上限、响应头上限、压缩、重定向、Cookie、代理、凭据、TLS 协议版本、证书校验回调），降级清单见 README。
-/// </remarks>
+/// <remarks>net6.0 / net8.0 用 <c>SocketsHttpHandler</c>；netstandard2.0 退化为 <c>HttpClientHandler</c>，只映射两边都有的选项。</remarks>
 internal static partial class DefaultHandlerFactory
 {
 #if NETSTANDARD2_0

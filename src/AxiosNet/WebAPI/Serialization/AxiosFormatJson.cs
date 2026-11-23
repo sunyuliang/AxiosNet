@@ -12,19 +12,14 @@ using AxiosNet.WebAPI.Reflection;
 
 namespace AxiosNet.WebAPI.Serialization;
 
-/// <summary>
-/// <see cref="FormatAttribute"/> 的 JSON 桥：让成员上的格式化在结构化正文内部也生效（默认不启用）。
-/// </summary>
+/// <summary><see cref="FormatAttribute"/> 的 JSON 桥：让成员上的格式化在结构化正文内部也生效（默认不启用）。</summary>
 /// <remarks>
-/// 库默认不进入序列化器的文档内部——JSON 里怎么长由 <c>JsonSerializerOptions</c> 决定。
-/// 需要「URL 与 JSON 用同一份 <c>[Format]</c>」时，把 <see cref="ApplyTo"/> 的返回值设给
-/// <c>Serialization.JsonOptions</c>（或 <c>AxiosJson.Options</c>）。
+/// 需要「URL 与 JSON 用同一份 <c>[Format]</c>」时，把 <see cref="ApplyTo"/> 的返回值设给 <c>Serialization.JsonOptions</c>（或 <c>AxiosJson.Options</c>）。
 /// 只支持 net7.0 及以上（依赖 <see cref="JsonTypeInfo.Properties"/> 的属性级改写），读取方向按不变文化尽力还原。
 /// </remarks>
 public static class AxiosJsonFormat
 {
-    /// <summary>在现有选项上挂 <c>[Format]</c> 桥，返回新选项（原选项不被修改）。</summary>
-    /// <param name="options">基线选项；<c>null</c> 表示 <see cref="AxiosJson.Options"/>。</param>
+    /// <summary>在现有选项上挂 <c>[Format]</c> 桥，返回新选项（原选项不被修改）；<paramref name="options"/> 为 <c>null</c> 表示 <see cref="AxiosJson.Options"/>。</summary>
     [RequiresDynamicCode("[Format] 桥按属性类型构造泛型转换器，Native AOT 下不可用。")]
     [RequiresUnreferencedCode("[Format] 桥读取属性特性并构造转换器，裁剪后可能缺少元数据。")]
     public static JsonSerializerOptions ApplyTo(JsonSerializerOptions? options = null)
@@ -44,8 +39,7 @@ public sealed class AxiosJsonFormatTypeInfoResolver : IJsonTypeInfoResolver
 {
     private readonly IJsonTypeInfoResolver _inner;
 
-    /// <summary>包装一个已有的解析器。</summary>
-    /// <param name="inner">基础解析器（通常是 <see cref="DefaultJsonTypeInfoResolver"/>）。</param>
+    /// <summary>包装一个已有的解析器（通常是 <see cref="DefaultJsonTypeInfoResolver"/>）。</summary>
     public AxiosJsonFormatTypeInfoResolver(IJsonTypeInfoResolver inner)
     {
         ArgumentNullException.ThrowIfNull(inner);
@@ -103,7 +97,6 @@ internal static class FormattedValueConverterFactory
             culture: null)!;
 }
 
-/// <summary>按成员级格式化写出 JSON 字符串，读取时按不变文化还原。</summary>
 /// <summary>单个 <c>[Format]</c> 成员的转换器：写走格式化，读按不变文化还原。</summary>
 [UnconditionalSuppressMessage(
     "Trimming",

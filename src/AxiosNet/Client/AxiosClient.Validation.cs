@@ -10,7 +10,7 @@ public sealed partial class AxiosClient
 {
     /// <summary>连接级选项无法按 <paramref name="options"/> 生效时的构造期校验（注入 handler / 共享池共用）。</summary>
     /// <param name="options">本实例的选项。</param>
-    /// <param name="config">实例配置：挂到异常上，便于日志里定位是哪个客户端没配成。</param>
+    /// <param name="config">实例配置：挂到异常上。</param>
     /// <param name="messages">对应场景的报错文案。</param>
     private static void ValidateConnectionLevelOptions(AxiosClientOptions options, AxiosConfig config, ConnectionLevelMessages messages)
     {
@@ -55,14 +55,12 @@ public sealed partial class AxiosClient
     }
 
     /// <summary>
-    /// HTTP/3 前置护栏：<c>RequestVersionExact</c> / <c>RequestVersionOrHigher</c> 且本机不支持 h3
-    /// （<see cref="Http3Support"/>）时拒绝；netstandard2.0 资产对 <c>Major &gt; 1</c> 一律拒绝。
+    /// HTTP/3 前置护栏：<c>RequestVersionExact</c> / <c>RequestVersionOrHigher</c> 且本机不支持 h3 时拒绝；netstandard2.0 对 <c>Major &gt; 1</c> 一律拒绝。
     /// </summary>
     internal static void ValidateHttp3Request(Uri uri, Version version, HttpVersionPolicy policy, AxiosConfig config)
     {
 #if NETSTANDARD2_0
-        // 兼容资产只有 HttpClientHandler：HTTP/2 / HTTP/3 都发不出去。在这里明确拒绝，
-        // 而不是让 Framework 静默按 1.1 发出、让调用方以为自己用了高版本协议。
+        // 兼容资产只有 HttpClientHandler：HTTP/2 / HTTP/3 都发不出去。
         if (version.Major > 1)
         {
             throw AxiosException.InvalidOption(
@@ -144,8 +142,7 @@ public sealed partial class AxiosClient
             }
 
 #if NETSTANDARD2_0
-            // 兼容资产没有 ZLibStream / BrotliStream，只能用 gzip 压缩器。在选项校验阶段就用统一错误码拒绝，
-            // 而不是等请求体构建到一半再抛 PlatformNotSupportedException 绕过 AxiosException 体系。
+            // 兼容资产没有 ZLibStream / BrotliStream，只能用 gzip。
             if (compression is AxiosCompression.Deflate or AxiosCompression.Brotli)
             {
                 throw AxiosException.InvalidOption(
@@ -184,8 +181,7 @@ public sealed partial class AxiosClient
             throw AxiosException.InvalidOption($"Limits.MaxRequestBytes 不能为负（当前 {limits.MaxRequestBytes}）：不限制请设为 null。", config);
         }
 
-        // 并发上限 / 排队深度的取值范围在构造期由 AxiosClientOptions 校验（那是实例级项）；
-        // 这里只剩按请求可变的排队等待时长。
+        // 并发上限 / 排队深度在构造期由 AxiosClientOptions 校验，这里只剩排队等待时长。
         if (config.ResilienceOrNull?.Concurrency.QueueTimeout is { } queueTimeout && queueTimeout < TimeSpan.Zero)
         {
             throw AxiosException.InvalidOption($"Resilience.Concurrency.QueueTimeout 不能为负（当前 {queueTimeout}）：要不排队请设为 TimeSpan.Zero，要一直等请设为 null。", config);
@@ -208,7 +204,7 @@ public sealed partial class AxiosClient
     /// <summary>校验重试次数与等待区间。</summary>
     private static void ValidateRetry(AxiosConfig config)
     {
-        // 重试策略的取值范围：自定义策略只能校验 MaxRetries，内置实现连等待时间一起校验。
+        // 自定义策略只能校验 MaxRetries，内置实现连等待时间一起校验。
         if (config.RetryOrNull?.Policy is { } retry)
         {
             if (retry.MaxRetries < 0)
@@ -308,8 +304,7 @@ public sealed partial class AxiosClient
                         + "要让某个参数只出现在备用端点上，请改用请求拦截器按 ctx 拼 URL。", config);
                 }
 
-                // 重复端点会让同一份请求对同一地址重发。比较 origin + 路径前缀（去尾斜杠），
-                // scheme / host 已由 Uri 规范化为小写，路径按大小写敏感比较。
+                // 重复端点会让同一份请求对同一地址重发；比较 origin + 路径前缀（去尾斜杠）。
                 var baseUrl = i == 0 ? null : endpoint.GetLeftPart(UriPartial.Path).TrimEnd('/');
                 for (var j = 0; j < i; j++)
                 {
@@ -430,8 +425,7 @@ public sealed partial class AxiosClient
     }
 
     /// <summary>
-    /// 解析本实例的备用端点健康表：只有「配有端点 + 健康记忆开启」时才需要，
-    /// 首次用到时创建（CAS 保证并发下只有一份，避免各请求各记一套）。
+    /// 解析本实例的备用端点健康表：只有「配有端点 + 健康记忆开启」时才需要，首次用到时创建。
     /// </summary>
     private FailoverHealth? ResolveFailoverHealth(AxiosConfig config)
     {
@@ -453,8 +447,7 @@ public sealed partial class AxiosClient
     }
 
     /// <summary>
-    /// 解析（必要时懒创建）本实例的并发闸门：容量取构造期定稿的 <see cref="_maxInFlight"/>，
-    /// 创建后固定；没配在途上限就不建闸门（默认请求零分配）。
+    /// 解析（必要时懒创建）本实例的并发闸门：容量取构造期定稿的 <see cref="_maxInFlight"/>；没配在途上限就不建闸门。
     /// </summary>
     private ConcurrencyGate? ResolveConcurrencyGate()
     {
@@ -471,14 +464,11 @@ public sealed partial class AxiosClient
 
         var created = new ConcurrencyGate(limit, _maxQueue);
 
-        // 并发首请求：输的一方用赢家的闸门（容量对所有人都一样，不存在不一致）。
+        // 并发首请求：输的一方用赢家的闸门。
         return Interlocked.CompareExchange(ref _gate, created, null) ?? created;
     }
 
-    /// <summary>
-    /// 按请求可变的传输项守卫：代理 / 凭据 / Cookie / 重定向次数 / 连接池都是实例级选项（<see cref="AxiosClient.Options"/>），
-    /// 已经不在这份配置上，写不进去；这里只剩「凭据来源与 Authorization 头互斥」与「传输档必须已登记」两条。
-    /// </summary>
+    /// <summary>按请求可变的传输项守卫：只剩「凭据来源与 Authorization 头互斥」与「传输档必须已登记」两条。</summary>
     private void ValidatePerRequestOptions(AxiosConfig config)
     {
         ValidateProfileTransport(config);
@@ -500,15 +490,14 @@ public sealed partial class AxiosClient
             config);
     }
 
-    /// <summary>配置里是否已经有 <c>Authorization</c> 头（先看有没有头集合，避免为判定而分配一个空集合）。</summary>
+    /// <summary>配置里是否已经有 <c>Authorization</c> 头。</summary>
     /// <param name="config">待校验的配置。</param>
     /// <returns>已有显式 <c>Authorization</c> 头时为 <c>true</c>。</returns>
     private static bool HasAuthorizationHeader(AxiosConfig config)
         => config.HasHeaders && config.Headers.Has(AuthorizationHeader.Name);
 
     /// <summary>
-    /// 命名档与默认档的出口设置互斥：选中命名档后实际 Handler 只取该档的 Proxy / Credentials，
-    /// 默认档上的同类设置不可能生效，故直接报错而不是静默忽略。注入自定义 Handler 时没有默认档，交给发送终端报错。
+    /// 命名档与默认档的出口设置互斥：选中命名档后实际 Handler 只取该档的 Proxy / Credentials，默认档上的同类设置不可能生效。
     /// </summary>
     private void ValidateProfileTransport(AxiosConfig config)
     {

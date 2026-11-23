@@ -4,13 +4,11 @@ namespace AxiosNet;
 
 public sealed partial class AxiosConfig
 {
-    // Resilience 是既有五个治理设置的统一入口：子对象仍是原来的类型与实例，
-    // 这里只做分组收敛，不拍平、不复制状态。
+    // Resilience 是五个治理设置的统一入口。
     private ResilienceSettings? _resilienceFacade;
 
     /// <summary>
     /// 流量治理的统一入口：重试 / 熔断 / 并发对冲 / 备用端点 / 并发闸门。
-    /// 五个子对象原样保留，配置写法从「五个顶层分组」收敛为「一个分组 + 五个子对象」。
     /// </summary>
     /// <remarks>
     /// <see cref="AllowUnsafeRetry"/> 是重试与对冲共用的唯一「非幂等方法放行」开关；
@@ -41,8 +39,7 @@ public sealed partial class AxiosConfig
 
     private bool _allowUnsafeRetrySet;
 
-    // 排队超时的存储：只在真正碰过这一项时才分配。在途上限与排队深度属实例级选项
-    // （AxiosClientOptions），闸门容量在构造期定死，不存在「按请求改容量」这条路径。
+    // 排队超时的存储：只在真正碰过这一项时才分配。
     private ConcurrencyState? _concurrencyState;
 
     private sealed class ConcurrencyState
@@ -53,14 +50,11 @@ public sealed partial class AxiosConfig
         /// <summary><see cref="QueueTimeout"/> 是否被显式赋值过（含显式 <c>null</c>），合并层用。</summary>
         internal bool QueueTimeoutSet;
 
-        /// <summary>按指针浅拷贝：两个字段都可独立改写，克隆出的状态不共享。</summary>
+        /// <summary>按指针浅拷贝。</summary>
         internal ConcurrencyState Clone() => (ConcurrencyState)MemberwiseClone();
     }
 
-    /// <summary>
-    /// <see cref="ResilienceSettings.Concurrency"/> 的门面缓存：首次访问时创建，之后复用，
-    /// 避免热路径上反复 new。门面只转发到本实例、本身无状态，故可长期共享。
-    /// </summary>
+    /// <summary><see cref="ResilienceSettings.Concurrency"/> 的门面缓存：首次访问时创建，之后复用。</summary>
     private ConcurrencySettings? _concurrencyFacade;
 
     /// <summary>治理分组：重试 / 熔断 / 对冲 / 备用端点 / 并发闸门 / 幂等键。</summary>
@@ -124,8 +118,7 @@ public sealed partial class AxiosConfig
         }
 
         /// <summary>
-        /// 是否允许重试 / 对冲作用于 POST / PATCH 等非幂等方法，默认 <c>false</c>。
-        /// 打开前请确认接口幂等：重发可能让服务端收到两次写操作。
+        /// 是否允许重试 / 对冲作用于 POST / PATCH 等非幂等方法，默认 <c>false</c>；打开前请确认接口幂等。
         /// </summary>
         public bool AllowUnsafeRetry
         {

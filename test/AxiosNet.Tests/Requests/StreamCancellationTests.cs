@@ -31,9 +31,7 @@ public sealed class StreamCancellationTests
         Assert.Equal(200, response.Status);
     }
 
-    // ---------------------------------------------------------------
-    // P1：流式响应的超时与租约
-    // ---------------------------------------------------------------
+// P1：流式响应的超时与租约
 
     [Fact]
     public async Task StreamTimeout_AppliesToBodyRead()
@@ -187,9 +185,7 @@ public sealed class StreamCancellationTests
         Assert.True(clock.Elapsed < Budget, $"不限时时外部取消没有打断正文读取，耗时 {clock.Elapsed}");
     }
 
-    // ------------------------------------------------------------------
-    // 流式响应：同步读 / 异步读
-    // ------------------------------------------------------------------
+// 流式响应：同步读 / 异步读
     [Fact]
     public async Task StreamRead_Sync_HonorsTimeout()
     {
@@ -330,9 +326,7 @@ public sealed class StreamCancellationTests
         Assert.True(clock.Elapsed < Budget, $"同步读没有响应正文阶段的超时，耗时 {clock.Elapsed}");
     }
 
-    // ------------------------------------------------------------------
-    // 限速包装：同步读必须走 Task.Delay 的异步等待，且能被超时打断
-    // ------------------------------------------------------------------
+// 限速包装：同步读必须走 Task.Delay 的异步等待，且能被超时打断
 
     [Fact]
     public async Task StreamRead_Sync_TimeoutInterruptsRateLimitWait()
@@ -366,9 +360,7 @@ public sealed class StreamCancellationTests
         Assert.True(clock.Elapsed < BlockingReadBudget, $"限速等待没有响应超时，耗时 {clock.Elapsed}");
     }
 
-    // ------------------------------------------------------------------
-    // 非流式响应：库内读完正文的阶段也要被超时/取消覆盖
-    // ------------------------------------------------------------------
+// 非流式响应：库内读完正文的阶段也要被超时/取消覆盖
 
     [Fact]
     public async Task BufferedResponse_HonorsTimeoutDuringBodyRead()
@@ -399,9 +391,7 @@ public sealed class StreamCancellationTests
         Assert.True(clock.Elapsed < HungReadBudget, $"正文读取阶段没有响应取消，耗时 {clock.Elapsed}");
     }
 
-    // ------------------------------------------------------------------
-    // 上传：异步写（CopyToAsync）与同步写（自定义内容里的 stream.Write）
-    // ------------------------------------------------------------------
+// 上传：异步写（CopyToAsync）与同步写（自定义内容里的 stream.Write）
 
     [Fact]
     public async Task Upload_TimeoutInterruptsRateLimitWait()
@@ -481,9 +471,7 @@ public sealed class StreamCancellationTests
         }
     }
 
-    // ---------------------------------------------------------------
-    // 辅助
-    // ---------------------------------------------------------------
+// 辅助
 
     /// <summary>
     /// 正文读取阶段的超时预算。必须同时满足两头：
@@ -534,9 +522,7 @@ public sealed class StreamCancellationTests
     /// <summary>足够大、不参与断言的超时：只用于让 TimeoutStream 把外部令牌接进链路。</summary>
     private static readonly TimeSpan LongTimeout = TimeSpan.FromSeconds(30);
 
-    // ------------------------------------------------------------------
-    // 测试替身
-    // ------------------------------------------------------------------
+// 测试替身
 
     /// <summary>
     /// 只实现异步、同步成员一律抛 <see cref="NotSupportedException"/> 的流（async-only），并且异步读写永不完成。

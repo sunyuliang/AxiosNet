@@ -130,9 +130,7 @@ public sealed class ObservabilityMergeTests
         Assert.Null(target.TimeoutMessage);
     }
 
-    // ------------------------------------------------------------------
-    // 回放 response.Config：实例继承的回调 / 标记不能跨实例传播
-    // ------------------------------------------------------------------
+// 回放 response.Config：实例继承的回调 / 标记不能跨实例传播
 
     [Fact]
     public async Task Replay_GetWithResponseConfig_DoesNotCarrySourceInstanceCallback()

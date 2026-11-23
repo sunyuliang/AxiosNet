@@ -264,9 +264,7 @@ public sealed class InterfaceTests
             typeof(IMultipleBodyApi)));
     }
 
-    // ------------------------------------------------------------------
-    // 阶段 2：接口级 multipart
-    // ------------------------------------------------------------------
+// 阶段 2：接口级 multipart
 
     [Fact]
     public async Task Multipart_PartsUseDeclaredNameFileAndContentType()
@@ -319,9 +317,7 @@ public sealed class InterfaceTests
         Assert.Empty(server.Received);
     }
 
-    // ------------------------------------------------------------------
-    // 阶段 2：接口级流式
-    // ------------------------------------------------------------------
+// 阶段 2：接口级流式
 
     [Fact]
     public async Task Stream_DefaultFormatIsNdjson()

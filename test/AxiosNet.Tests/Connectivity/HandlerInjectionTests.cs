@@ -282,9 +282,7 @@ public sealed class HandlerInjectionTests
         Assert.Same(factory, clone.HandlerFactory);
     }
 
-    // ------------------------------------------------------------------
-    // L10：SslOptions 扩展点（回调 / 协议之外的 SslClientAuthenticationOptions）
-    // ------------------------------------------------------------------
+// L10：SslOptions 扩展点（回调 / 协议之外的 SslClientAuthenticationOptions）
 
     [Fact]
     public async Task ConfigureSslOptions_ReachesHandlerWithoutOtherSslSettings()
@@ -325,9 +323,7 @@ public sealed class HandlerInjectionTests
         Assert.Same(configure, options.Clone().ConfigureSslOptions);
     }
 
-    // ------------------------------------------------------------------
-    // 辅助
-    // ------------------------------------------------------------------
+// 辅助
 
 
     private static async Task DrainAsync<T>(IAsyncEnumerable<T>? source)

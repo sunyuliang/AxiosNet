@@ -5,20 +5,16 @@ namespace AxiosNet.Pipeline;
 // 「一次尝试」的备用端点：当前端点用不了时，按顺序把同一份请求嫁接到下一个端点重发。
 public static partial class Attempt
 {
-    /// <summary>
-    /// 备用端点：当前端点不可用时换下一个端点重发，顺序即优先级；全部端点都失败才把第一条失败交给外层重试。
-    /// </summary>
+    /// <summary>备用端点：当前端点不可用时换下一个端点重发，顺序即优先级；全部失败才把第一条失败交给外层。</summary>
     /// <remarks>
-    /// 位置在 <see cref="Retry"/> 之内、<see cref="Hedging"/> 之外：每个端点各得一组对冲分支。
-    /// 换端点时连接租约、熔断计数维度与审计事件的地址 / 端点序号跟着新端点走；请求级 span 与重试指标仍按逻辑地址记。
-    /// 端点表为空时纯直通；4xx、<c>ERR_QUEUE_TIMEOUT</c> / <c>ERR_QUEUE_FULL</c>、配置错误与取消不换端点，<c>ERR_CIRCUIT_OPEN</c> 换。
-    /// 要求正文能重放；跑不了当前 HTTP 版本、或拼出来就是当前地址的端点直接跳过。流式响应只在响应头阶段能换端点。
+    /// 位置在 <see cref="Retry"/> 之内、<see cref="Hedging"/> 之外：每个端点各得一组对冲分支。端点表为空时纯直通；4xx、闸门拒绝、配置错误与取消不换端点，
+    /// <c>ERR_CIRCUIT_OPEN</c> 换。要求正文能重放；版本不可行或拼出来就是当前地址的端点直接跳过；流式响应只在响应头阶段能换端点。
     /// </remarks>
     public static AxiosAttemptMiddleware Failover { get; } = next =>
     {
         ArgumentNullException.ThrowIfNull(next);
 
-        // 没配备用端点时纯直通。
+        // 未配备用端点时纯直通。
         return (request, ctx) =>
             ctx.Failover is { Endpoints.Count: > 0 } failover
                 ? FailoverAsync(next, request, ctx, failover)
@@ -34,18 +30,18 @@ public static partial class Attempt
     {
         var endpoints = failover.Endpoints!;
 
-        // 换端点按顺序重发同一份正文：流必须可拨回起点。
+        // 换端点重发同一份正文：流必须可拨回起点。
         var bodyRewind = RetryBody.Prepare(ctx.Config);
 
         Exception? firstFailure = null;
 
-        // 健康记忆：关掉时（阈值 0 / 冷却 0）不读也不写，行为与「每次从第一个端点开始」一致。
+        // 健康记忆关闭时（阈值或冷却为 0）不读也不写。
         var health = ctx.FailoverHealth;
         var usesHealth = health is not null && failover.FailureThreshold > 0 && failover.Cooldown > TimeSpan.Zero;
 
         var order = usesHealth ? BuildOrder(template.RequestUri!, endpoints, health!) : null;
 
-        // 只有「真的发送过」才需要拨回正文：被跳过的端点没读过流。
+        // 只有真的发送过才需要拨回正文。
         var attempted = 0;
 
         // 第 0 轮是原始端点，之后依次是端点表里的备用端点；order 非空时按健康顺序走。
@@ -56,25 +52,25 @@ public static partial class Attempt
 
             if (attempted > 0)
             {
-                // 同一份正文再发一次：先把读指针拨回起点。
+                // 同一份正文再发一次：先拨回读指针。
                 bodyRewind?.Rewind(ctx.Config);
             }
 
             var uri = round == 0 ? null : MirrorUri(template.RequestUri!, endpoints[round - 1]);
 
-            // 端点拼出来就是当前地址（同 origin 且端点不带路径前缀）：换过去等于原地重发，跳过。
+            // 拼出来就是当前地址，跳过。
             if (uri is not null && uri.Equals(template.RequestUri))
             {
                 continue;
             }
 
-            // 换端点会换掉 scheme：按同一套 h3 护栏重判当前 HTTP 版本是否可行，不行就换下一个端点。
+            // 换端点可能换掉 scheme：重新校验当前 HTTP 版本是否可行。
             if (uri is not null)
             {
                 try
                 {
 #if NETSTANDARD2_0
-                    // 兼容资产没有 HttpRequestMessage.VersionPolicy；校验在版本 >1.1 时一律拒绝，策略不参与。
+                    // 兼容资产没有 VersionPolicy，校验在版本 >1.1 时一律拒绝。
                     AxiosClient.ValidateHttp3Request(uri, template.Version, default, ctx.Config);
 #else
                     AxiosClient.ValidateHttp3Request(uri, template.Version, template.VersionPolicy, ctx.Config);
@@ -82,7 +78,7 @@ public static partial class Attempt
                 }
                 catch (AxiosException ex) when (ex.Code == AxiosException.ErrBadOptionValue)
                 {
-                    // 跳过不算一次失败，只在一个失败都没记下时兜住。
+                    // 跳过不算失败，仅在无失败记录时兜底。
                     firstFailure ??= ex;
                     continue;
                 }
@@ -97,7 +93,7 @@ public static partial class Attempt
 
                 var result = await next(request, attemptCtx).ConfigureAwait(false);
 
-                // 端点给出成功响应：立刻解除冷却（4xx 由下面的 catch 处理，同样算健康证据）。
+                // 端点给出成功响应：解除冷却。
                 if (key is not null)
                 {
                     health!.RecordSuccess(key);
@@ -107,26 +103,25 @@ public static partial class Attempt
             }
             catch (Exception ex) when (IsGateRejection(ex) && firstFailure is { } realFailure)
             {
-                // 备用端点连槽位都没拿到（排队超时 / 队列满）：闸门是客户端级的，抛已记下的真实失败。
+                // 闸门是客户端级的，抛已记下的真实失败。
                 ExceptionDispatchInfo.Capture(realFailure).Throw();
 
-                // Throw() 不返回，编译器不知道。
+                // Throw() 不返回。
                 throw;
             }
             catch (AxiosException ex) when (ex.IsTotalTimeoutExceeded)
             {
-                // 下一次尝试开始前预算就已耗尽：请求根本没发出，直接按预算耗尽收尾。
+                // 预算已耗尽：按预算耗尽收尾。
                 throw;
             }
             catch (Exception ex) when (IsBudgetExhausted(ex))
             {
-                // 本次尝试的上限就是剩余总预算且已到点：换端点只会再发一次注定超时的请求，
-                // 还会让更早端点的 5xx 盖掉真正的终止原因 —— 立即改报「总预算耗尽」。
+                // 剩余预算已到点，换端点也注定超时。
                 throw AsBudgetExhausted(ex, ctx, template);
             }
             catch (Exception ex) when (CanFailover(ex, ctx.ExternalToken))
             {
-                // 这个端点用不了：记一笔失败（到阈值后进入冷却），继续下一个端点。
+                // 该端点用不了：记一笔失败后继续下一个端点。
                 if (key is not null)
                 {
                     health!.RecordFailure(key, failover.FailureThreshold, failover.Cooldown, failover.MaxCooldown);
@@ -136,7 +131,7 @@ public static partial class Attempt
             }
             catch (AxiosException ex) when (key is not null && IsHealthyEvidence(ex))
             {
-                // 4xx 说明端点本身是活的：清掉它的失败记录，然后把错误照常交给外层（不换端点）。
+                // 4xx 说明端点活着：清掉失败记录，错误照常交给外层（不换端点）。
                 health!.RecordSuccess(key);
                 throw;
             }
@@ -151,20 +146,17 @@ public static partial class Attempt
             }
         }
 
-        // 所有端点都失败：交回重试（它决定要不要再来一轮），没有重试就是调用方看到的错误。
+        // 所有端点都失败：交给外层重试。
         throw firstFailure!;
     }
 
-    /// <summary>
-    /// 轮次顺序：健康的端点按原顺序在前，冷却中的端点按原顺序退到末尾。
-    /// 全部健康时返回 <c>null</c>（按原顺序走，稳态零分配）。
-    /// </summary>
+    /// <summary>轮次顺序：健康的端点按原顺序在前，冷却中的按原顺序退到末尾；全部健康时返回 <c>null</c>（按原顺序走）。</summary>
     private static int[]? BuildOrder(Uri requestUri, IReadOnlyList<Uri> endpoints, FailoverHealth health)
     {
         var total = endpoints.Count + 1;
         var anyCooling = false;
 
-        // 第一遍只判定「有没有必要重排」：全健康就走原顺序，不分配那个 int[]。
+        // 第一遍只判定是否需要重排。
         for (var round = 0; round < total; round++)
         {
             if (!health.IsAvailable(EndpointKey(requestUri, endpoints, round)))
@@ -182,8 +174,7 @@ public static partial class Attempt
         var order = new int[total];
         var at = 0;
 
-        // 第二遍先放健康端点（保持原相对顺序），第三遍把冷却中的追加到末尾（同样保持原序）：
-        // 这样每一轮都先试可能成功的端点，冷却的仍然全部试过，只是排在后面。
+        // 第二遍放健康端点（保持原相对顺序），第三遍把冷却中的追加到末尾。
         for (var round = 0; round < total; round++)
         {
             if (health.IsAvailable(EndpointKey(requestUri, endpoints, round)))
@@ -203,10 +194,7 @@ public static partial class Attempt
         return order;
     }
 
-    /// <summary>
-    /// 健康表的记账键：<c>0</c> 用请求的 origin（同一后端的业务路径不算区别），
-    /// 备用端点用它的 base URL（可以带路径前缀，不同前缀可能是不同后端）。
-    /// </summary>
+    /// <summary>健康表的记账键：<c>0</c> 取请求 origin，备用端点取其 base URL（可带路径前缀）。</summary>
     private static string EndpointKey(Uri requestUri, IReadOnlyList<Uri> endpoints, int round)
         => round == 0
             ? requestUri.GetLeftPart(UriPartial.Authority)
@@ -216,10 +204,7 @@ public static partial class Attempt
     private static bool IsHealthyEvidence(AxiosException exception)
         => exception.Status is >= 400 and < 500;
 
-    /// <summary>
-    /// 换端点判据：只换「换一个下游就能解决」的故障。取消、配置 / 编程错误、闸门拒绝（排队超时 / 队列满）、
-    /// 总预算耗尽与 4xx 都不换；熔断拒绝要换（按 <c>host:port</c> 独立成账）。
-    /// </summary>
+    /// <summary>换端点判据：只换「换一个下游就能解决」的故障；取消、配置错误、闸门拒绝、总预算耗尽与 4xx 都不换。</summary>
     private static bool CanFailover(Exception exception, CancellationToken externalToken)
     {
         if (externalToken.IsCancellationRequested || exception is OperationCanceledException)
@@ -234,17 +219,16 @@ public static partial class Attempt
 
         return axios.Code switch
         {
-            // 建连 / DNS / TLS / 读响应失败、本机连接池耗尽：换下游可能好。
+            // 建连 / DNS / TLS / 读响应失败、本机连接池耗尽。
             AxiosException.ErrNetwork or AxiosException.ErrPoolExhausted => true,
 
-            // 发出之后的超时：换一个下游可能响应；被总预算压小后到点（TimedOutOnTotalBudget）说明整条请求的
-            // 预算已经花完，换端点只会再次撞上同一个截止点，不换。
+            // 发出之后的超时；预算已耗尽的超时不再换。
             AxiosException.ErrConnAborted when !axios.IsTotalTimeoutExceeded && !axios.TimedOutOnTotalBudget => true,
 
-            // 熔断按端点独立成账：这个端点被拦下不代表下一个端点也被拦下。
+            // 熔断按端点独立成账。
             AxiosException.ErrCircuitOpen => true,
 
-            // 5xx 说明下游自身故障；其余 ERR_BAD_RESPONSE（如 2xx 的畸形正文）不换。
+            // 仅 5xx 换端点。
             AxiosException.ErrBadResponse => axios.Status is >= 500,
 
             _ => false
@@ -252,16 +236,15 @@ public static partial class Attempt
     }
 
     /// <summary>
-    /// 把请求的 path / query 嫁接到备用端点的 base URL 上（端点可以带路径前缀）。
-    /// 例：请求 <c>https://primary/v1/users?page=2</c>，端点 <c>https://mirror/api</c> →
-    /// <c>https://mirror/api/v1/users?page=2</c>。
+    /// 把请求的 path / query 嫁接到备用端点的 base URL 上（端点可带路径前缀）。
+    /// 例：<c>https://primary/v1/users?page=2</c> + <c>https://mirror/api</c> → <c>https://mirror/api/v1/users?page=2</c>。
     /// </summary>
     internal static Uri MirrorUri(Uri requestUri, Uri endpoint)
     {
         var baseUrl = endpoint.GetLeftPart(UriPartial.Path).TrimEnd('/');
         var pathAndQuery = requestUri.PathAndQuery;
 
-        // path 恒以 '/' 开头；端点本身以 '/' 结尾时其 path 就是 "/"，拼起来不会出现双斜杠。
+        // path 恒以 '/' 开头，拼接不会出现双斜杠。
         return new Uri(baseUrl + pathAndQuery, UriKind.Absolute);
     }
 }

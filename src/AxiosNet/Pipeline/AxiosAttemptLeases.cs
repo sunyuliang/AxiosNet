@@ -2,14 +2,9 @@ using System.Runtime.ExceptionServices;
 
 namespace AxiosNet.Pipeline;
 
-/// <summary>
-/// 一次尝试里登记的<b>多个</b>跨终端租约的合成：终端把它当成一个 <see cref="IDisposable"/> 处置，
-/// 或整个交给流式正文的所有权凭证。
-/// </summary>
+/// <summary>一次尝试里登记的多个跨终端租约的合成：终端把它当成一个 <see cref="IDisposable"/> 处置，或整个交给流式正文的所有权凭证。</summary>
 /// <remarks>
-/// 不可变链表，最新登记的排在最前，因此 <see cref="Dispose"/> 是登记顺序的<b>逆序</b>
-/// （后登记的资源可能依赖先登记的，逆序释放才安全）。
-/// 只有登记第二个资源时才分配节点：一个租约（闸门槽位是绝大多数请求里唯一的一个）直接裸放。
+/// 不可变链表，最新登记的排在最前，<see cref="Dispose"/> 按登记顺序的逆序释放；只有一个租约时直接裸放，登记第二个才分配节点。
 /// </remarks>
 internal sealed class AxiosAttemptLeases : IDisposable
 {
@@ -31,19 +26,14 @@ internal sealed class AxiosAttemptLeases : IDisposable
         _next = next;
     }
 
-    /// <summary>一共登记了几个租约（遍历链表，注册的租约个数通常是个位数）。</summary>
+    /// <summary>一共登记了几个租约。</summary>
     public int Count => _next is null ? 1 : _next.Count + 1;
 
-    /// <summary>
-    /// 逆序释放全部租约。重复调用只生效一次；某个租约抛异常也不跳过其余。
-    /// </summary>
-    /// <remarks>
-    /// 失败会被<b>全部收集</b>而不是「后一个盖掉前一个」：只有一个失败时按原样重抛（类型与堆栈都保留），
-    /// 多个失败时抛 <see cref="AggregateException"/>。收集只在失败路径上分配，正常请求零成本。
-    /// </remarks>
+    /// <summary>逆序释放全部租约；重复调用只生效一次，某个租约抛异常也不跳过其余。</summary>
+    /// <remarks>失败会被全部收集：只有一个时按原样重抛（类型与堆栈都保留），多个时抛 <see cref="AggregateException"/>。</remarks>
     public void Dispose()
     {
-        // 原子置位：并发的第二次 Dispose 直接返回，保证每个租约只释放一次。
+        // 原子置位：并发的第二次 Dispose 直接返回。
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
         {
             return;
@@ -51,7 +41,7 @@ internal sealed class AxiosAttemptLeases : IDisposable
 
         List<Exception>? failures = null;
 
-        // 逆序沿链表释放（后取的先还）；单个失败只记录，不中断其余项。
+        // 逆序沿链表释放；单个失败只记录，不中断其余项。
         for (AxiosAttemptLeases? node = this; node is not null; node = node._next)
         {
             try

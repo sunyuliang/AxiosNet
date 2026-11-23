@@ -10,14 +10,12 @@ namespace AxiosNet.Pooling;
 /// 需要插入自己的 <see cref="DelegatingHandler"/>（日志 / 签名 / 重试）时用 <see cref="HandlerFactory"/>。
 /// </summary>
 /// <remarks>
-/// netstandard2.0 资产由 <c>HttpClientHandler</c> 承载，连接生命周期 / 空闲回收 / 建连超时 / h2 ping 这些选项没有映射位置：
-/// 设为非默认值会在建池时以 <c>ERR_BAD_OPTION_VALUE</c> 拒绝，默认值本身在该资产上同样不生效。
-/// 需要这些语义时用 <see cref="HandlerFactory"/> 接管默认档，或让消费方运行 .NET 6+。
+/// netstandard2.0 资产由 <c>HttpClientHandler</c> 承载，连接生命周期 / 空闲回收 / 建连超时 / h2 ping
+/// 没有映射位置：设为非默认值会在建池时以 <c>ERR_BAD_OPTION_VALUE</c> 拒绝，默认值也不生效。
 /// </remarks>
 public sealed class ConnectionPoolOptions
 {
-    // 默认值只在这里定义一份：ConnectionPoolOptions 的属性初值与 HttpConnectionPool 的兼容资产校验共用，
-    // 避免两处各写一份导致「改了默认值反而被判成非默认」。
+    // 默认值集中定义一处，属性初值与兼容资产校验共用。
     internal static readonly TimeSpan DefaultPooledConnectionLifetime = TimeSpan.FromMinutes(10);
     internal static readonly TimeSpan DefaultPooledConnectionIdleTimeout = TimeSpan.FromMinutes(2);
     internal static readonly TimeSpan DefaultConnectTimeout = TimeSpan.FromSeconds(15);
@@ -28,7 +26,7 @@ public sealed class ConnectionPoolOptions
 
     /// <summary>
     /// 池化连接的最大存活时间（默认 10 分钟，到期优雅轮换）；<see cref="Timeout.InfiniteTimeSpan"/> 表示不限。
-    /// 实际落到 Handler 的值有 ±10% 抖动，本属性保持你设置的原值。
+    /// 落到 Handler 的值有 ±10% 抖动，本属性保持设置的原值。
     /// </summary>
     public TimeSpan PooledConnectionLifetime { get; set; } = DefaultPooledConnectionLifetime;
 
@@ -43,15 +41,10 @@ public sealed class ConnectionPoolOptions
     /// 自定义建连回调（直通 <see cref="SocketsHttpHandler.ConnectCallback"/>）：接管「把目标端点变成一条流」这一步，
     /// 为 <c>null</c> 时用 BCL 默认建连。
     /// </summary>
-    /// <remarks>
-    /// 回调必须自己尊重 <c>cancellationToken</c>（<see cref="ConnectTimeout"/> 到点会触发它）；返回的流由 Handler 持有并释放。
-    /// TLS 仍由 Handler 在返回的流上完成（回调只负责明文传输），除非自行返回已加密的流。
-    /// 仅作用于库默认 Handler；<see cref="HandlerFactory"/> 自建 Handler 时请自行映射。
-    /// </remarks>
+    /// <remarks>回调需尊重 <c>cancellationToken</c>；返回的流由 Handler 持有并释放，TLS 由其在该流上完成。</remarks>
     public Func<SocketsHttpConnectionContext, CancellationToken, ValueTask<Stream>>? ConnectCallback { get; set; }
 #endif
-    // netstandard2.0 兼容资产没有 SocketsHttpConnectionContext / SocketsHttpHandler，
-    // 因此不暴露本项；需要自定义拨号时用 HandlerFactory 自行接管整个 Handler。
+    // netstandard2.0 无 SocketsHttpHandler，自定义拨号请用 HandlerFactory 接管整个 Handler。
 
     /// <summary>
     /// 响应头体积上限（KB，必须大于 0，默认 64）。超出时本次请求在响应头解析阶段失败并归一为 <c>ERR_NETWORK</c>；
@@ -61,16 +54,14 @@ public sealed class ConnectionPoolOptions
 
     /// <summary>
     /// 某个 origin 的 Handler 空闲（无在途租约）多久后从池中驱逐并释放（默认 5 分钟）。
-    /// </summary>
-    /// <remarks>
     /// <see cref="TimeSpan.Zero"/> 表示任何空闲节点都可驱逐，<see cref="Timeout.InfiniteTimeSpan"/> 表示不按空闲时间驱逐。
-    /// 两者都会让后台定时扫描不启动，此时驱逐只在容量压力或手动 <c>EvictIdleEndpoints()</c> 时发生。
-    /// </remarks>
+    /// </summary>
+    /// <remarks>两者都不启动后台扫描，此时驱逐只在容量压力或手动 <c>EvictIdleEndpoints()</c> 时发生。</remarks>
     public TimeSpan IdleHandlerLifetime { get; set; } = TimeSpan.FromMinutes(5);
 
     /// <summary>
-    /// 空闲 Handler 驱逐扫描间隔（默认 30 秒）；<c>0</c> 表示不启动后台定时扫描（<see cref="IdleHandlerLifetime"/> 不大于 <see cref="TimeSpan.Zero"/> 时同样不启动），
-    /// 此时仍可按容量压力驱逐或手动调 <c>EvictIdleEndpoints()</c>。
+    /// 空闲 Handler 驱逐扫描间隔（默认 30 秒）；<c>0</c> 表示不启动后台定时扫描
+    /// （<see cref="IdleHandlerLifetime"/> 不大于 <see cref="TimeSpan.Zero"/> 时同样不启动）。
     /// </summary>
     public TimeSpan EvictionInterval { get; set; } = TimeSpan.FromSeconds(30);
 
@@ -116,7 +107,6 @@ public sealed class ConnectionPoolOptions
     /// </remarks>
     public DecompressionMethods Decompression { get; set; } =
 #if NETSTANDARD2_0
-        // Framework 的枚举没有 Brotli / All，兼容资产只放行 gzip / deflate。
         DecompressionMethods.GZip | DecompressionMethods.Deflate;
 #else
         DecompressionMethods.All;
@@ -129,18 +119,13 @@ public sealed class ConnectionPoolOptions
     /// HTTP/2 keep-alive ping 的间隔（默认 <see cref="Timeout.InfiniteTimeSpan"/>，即不发 ping）。
     /// 只影响 HTTP/2 连接：h1 没有 ping 帧。
     /// </summary>
-    /// <remarks>
-    /// 链路上的代理 / 中间盒不回应 <c>PING</c> 时连接会被判死重连（<c>ERR_NETWORK</c> 变多），确认链路健康后再打开。
-    /// </remarks>
     public TimeSpan KeepAlivePingDelay { get; set; } = Timeout.InfiniteTimeSpan;
 
     /// <summary>
     /// 发出 ping 后多久没收到 <c>PING ACK</c> 就判定连接已死并关闭（默认 20 秒）；<see cref="Timeout.InfiniteTimeSpan"/> 表示不因此断连。
-    /// 只影响 HTTP/2 连接，且只有 <see cref="KeepAlivePingDelay"/> 为有限值（真的会发 ping）时才有意义。
+    /// 只影响 HTTP/2 连接，且 <see cref="KeepAlivePingDelay"/> 为有限值时才生效。
     /// </summary>
-    /// <remarks>
-    /// 一般取值小于 <see cref="KeepAlivePingDelay"/>；本项不做「必须小于」的校验，反过来配置不会报错。
-    /// </remarks>
+    /// <remarks>不校验与 <see cref="KeepAlivePingDelay"/> 的大小关系。</remarks>
     public TimeSpan KeepAlivePingTimeout { get; set; } = DefaultKeepAlivePingTimeout;
 
 #if !NETSTANDARD2_0
@@ -150,7 +135,7 @@ public sealed class ConnectionPoolOptions
     /// </summary>
     public HttpKeepAlivePingPolicy KeepAlivePingPolicy { get; set; } = HttpKeepAlivePingPolicy.WithActiveRequests;
 #endif
-    // netstandard2.0 兼容资产的 HttpClientHandler 没有 h2 keep-alive ping，本项在该资产上不存在。
+    // netstandard2.0 的 HttpClientHandler 没有 h2 keep-alive ping。
 
     /// <summary>
     /// 池内 origin 节点数上限，默认 1024；0 或负数不限制（软上限：容量检查与插入非原子）。
@@ -174,8 +159,8 @@ public sealed class ConnectionPoolOptions
     /// <summary>TLS 选项扩展入口：在库构造的 <see cref="SslClientAuthenticationOptions"/> 上做最后调整（回调内的赋值不会被覆盖）。</summary>
     public Action<SslClientAuthenticationOptions>? ConfigureSslOptions { get; set; }
 #endif
-    // netstandard2.0 兼容资产没有 SslClientAuthenticationOptions；服务端证书校验请用
-    // ServerCertificateCustomValidationCallback，客户端证书请用 HandlerFactory 自行挂载。
+    // netstandard2.0 无 SslClientAuthenticationOptions；服务端证书校验用 ServerCertificateCustomValidationCallback，
+    // 客户端证书用 HandlerFactory 自行挂载。
 
     /// <summary>
     /// 自定义 Handler 工厂：每个 origin 节点创建时调用一次（节点被驱逐 / 重建后会再次调用），
@@ -193,7 +178,7 @@ public sealed class ConnectionPoolOptions
     public IReadOnlyDictionary<string, ConnectionTransportOptions> Transports
         => _transports ?? EmptyTransports;
 
-    // 包一层只读集合：直接交出可变字典会被强转回 Dictionary 改内容。
+    /// <summary>空档表（只读包装）。</summary>
     private static readonly IReadOnlyDictionary<string, ConnectionTransportOptions> EmptyTransports =
         new System.Collections.ObjectModel.ReadOnlyDictionary<string, ConnectionTransportOptions>(
             new Dictionary<string, ConnectionTransportOptions>(StringComparer.Ordinal));
@@ -203,7 +188,7 @@ public sealed class ConnectionPoolOptions
     /// 由 <see cref="AxiosConfig.TransportSettings.Profile"/> 按请求选择。
     /// </summary>
     /// <param name="name">档名（区分大小写，不能为空或空白；空串保留给默认档）。</param>
-    /// <param name="transport">该档的出口设置（保存副本，之后改传入的对象不影响已登记的档）。</param>
+    /// <param name="transport">该档的出口设置（保存副本）。</param>
     /// <returns>本实例，便于链式登记。</returns>
     /// <exception cref="ArgumentException">档名为空 / 空白，或同名档已登记。</exception>
     public ConnectionPoolOptions AddTransport(string name, ConnectionTransportOptions transport)
@@ -225,9 +210,7 @@ public sealed class ConnectionPoolOptions
         return this;
     }
 
-    /// <summary>
-    /// 把本类上的出口字段投影成默认档：池内部用它统一「默认档」与「命名档」的处理路径。
-    /// </summary>
+    /// <summary>把本类上的出口字段投影成默认档。</summary>
     internal ConnectionTransportOptions ProjectDefaultTransport() => new()
     {
         Proxy = Proxy,
@@ -244,7 +227,7 @@ public sealed class ConnectionPoolOptions
 
     /// <summary>
     /// 复制一份独立实例：池内部持有的是副本（<see cref="HttpConnectionPool.Options"/> 也返回副本）。
-    /// 引用型字段（代理、委托）按引用共享，不做深拷贝。
+    /// 引用型字段（代理、委托）按引用共享。
     /// </summary>
     public ConnectionPoolOptions Clone()
     {
@@ -281,7 +264,7 @@ public sealed class ConnectionPoolOptions
         return copy;
     }
 
-    /// <summary>复制仅在现代资产上存在的选项（netstandard2.0 契约里没有这 3 个属性）。</summary>
+    /// <summary>复制仅现代资产上存在的选项（netstandard2.0 契约里没有这 3 个属性）。</summary>
     private static void CopyTfmOnlyOptions(ConnectionPoolOptions source, ConnectionPoolOptions target)
     {
 #if !NETSTANDARD2_0
@@ -291,7 +274,7 @@ public sealed class ConnectionPoolOptions
 #endif
     }
 
-    /// <summary>深拷贝命名传输档字典（键区分大小写）：克隆后改一份不会串到另一份。</summary>
+    /// <summary>深拷贝命名传输档字典（键区分大小写）。</summary>
     private static Dictionary<string, ConnectionTransportOptions>? CloneTransports(
         Dictionary<string, ConnectionTransportOptions>? source)
     {

@@ -1,13 +1,10 @@
 
 namespace AxiosNet;
 
-// AxiosClient 的快捷方法层：与 axios.get/post/put/patch/delete/head/options 及 postForm/putForm/patchForm
-// 一一对应，只负责组装 AxiosConfig。
+// AxiosClient 的快捷方法层：与 axios.get/post/put/patch/delete/head/options 及 *Form 一一对应，只负责组装 AxiosConfig。
 public sealed partial class AxiosClient
 {
-    // ------------------------------------------------------------------
-    // 快捷方法（与 axios.get/post/put/patch/delete/head/options 对齐）
-    // ------------------------------------------------------------------
+// 快捷方法（与 axios.get/post/put/patch/delete/head/options 对齐）
 
     /// <summary>对应 axios.get，返回非泛型响应。</summary>
     public Task<AxiosResponse> GetAsync(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
@@ -153,9 +150,7 @@ public sealed partial class AxiosClient
     public Task<AxiosResponse<T>> PatchAsync<T>(string url, AxiosConfig config)
         => SendTypedAsync<T>(WithUrl(config, url, PlatformCompat.PatchMethod));
 
-    // ------------------------------------------------------------------
-    // 表单快捷方法（对应 axios postForm / putForm / patchForm）
-    // ------------------------------------------------------------------
+// 表单快捷方法（对应 axios postForm / putForm / patchForm）
 
     /// <summary>对应 axios postForm：默认按 multipart/form-data 发送（字段 + FormFile 文件部件）。</summary>
     public Task<AxiosResponse> PostFormAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
@@ -181,9 +176,7 @@ public sealed partial class AxiosClient
     public Task<AxiosResponse<T>> PatchFormAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => SendTypedAsync<T>(FormShortcut(url, PlatformCompat.PatchMethod, configure, cancellationToken, data, bodyProvided: true));
 
-    // ------------------------------------------------------------------
-    // CancellationToken 显式重载（令牌不再走 data 参数）。
-    // ------------------------------------------------------------------
+// CancellationToken 显式重载（令牌不再走 data 参数）。
 
     /// <summary>对应 axios.get 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public Task<AxiosResponse> GetAsync(string url, CancellationToken cancellationToken)
@@ -330,8 +323,7 @@ public sealed partial class AxiosClient
                 axios.Response = response;
             }
 
-            // 泛型参数与 responseType 不匹配（如 stream + GetAsync<byte[]>）：流式正文必须在此释放，
-            // 短路响应除外（Data 归调用方）。
+            // 泛型参数与 responseType 不匹配（如 stream + GetAsync<byte[]>）：流式正文必须在此释放，短路响应除外。
             if (response.Request is not null)
             {
                 (response.Data as IDisposable)?.Dispose();
@@ -344,8 +336,7 @@ public sealed partial class AxiosClient
 
     /// <summary>
     /// 组装一次快捷调用的<b>生效配置</b>：在实例默认值的副本上填写本次请求项，并标记 <see cref="AxiosConfig.EffectiveMerged"/>。
-    /// <paramref name="bodyProvided"/> / <paramref name="tokenProvided"/> 区分「参数没给」与「给了 null / None」：
-    /// 后者与通用入口显式写 <c>Body = null</c> / <c>CancellationToken = None</c> 同义，会摘掉实例默认值。
+    /// <paramref name="bodyProvided"/> / <paramref name="tokenProvided"/> 区分「参数没给」与「给了 null / None」。
     /// </summary>
     private AxiosConfig Shortcut(
         string url,
@@ -374,8 +365,7 @@ public sealed partial class AxiosClient
             config.ContentType = defaultContentType;
         }
 
-        // 显式给令牌（含 CancellationToken.None）时写回：与通用入口写 None 同义。
-        // 没给令牌时仍以「可取消」为界，避免普通快捷调用把实例默认令牌冲掉。
+        // 显式给令牌（含 None）时写回；没给令牌时以「可取消」为界。
         if (tokenProvided ?? cancellationToken.CanBeCanceled)
         {
             config.CancellationToken = cancellationToken;
@@ -383,8 +373,7 @@ public sealed partial class AxiosClient
 
         if (bodyProvided)
         {
-            // 令牌 / 配置落到 data 上时直接报错：两者都是「参数放错位置」，
-            // 静默当正文发出去（或退化成一句「正文序列化失败」）只会让人更猜不到问题在哪。
+            // 令牌 / 配置落到 data 上时直接报错：两者都是参数放错位置。
             if (data is CancellationToken)
             {
                 throw AxiosException.InvalidOption("CancellationToken 不能作为请求体传入，请使用 cancellationToken 参数。", config);
@@ -414,8 +403,7 @@ public sealed partial class AxiosClient
         var config = Defaults.Clone();
         config.EffectiveMerged = true;
 
-        // 与 MergeConfig 同一口径：继承来的 *Set 标记不算「调用方显式写过」，清掉后
-        // configure 里的显式写会重新置标记，回放这份产物时只搬调用方意图、不搬来源实例默认值。
+        // 与 MergeConfig 同一口径：继承来的 *Set 标记不算调用方显式写过。
         config.ObservabilityOrNull?.ClearSetFlags();
 
         // 记下继承来的 transform 段长度：合并层只对这一段去重。

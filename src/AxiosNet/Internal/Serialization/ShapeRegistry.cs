@@ -1,10 +1,7 @@
 namespace AxiosNet.Internal.Serialization;
 
-/// <summary>
-/// 生成元数据注册表的核心部分：对象形状与字典映射（params / 表单 / multipart 展平要用），
-/// 以及进程级的「冻结」开关（声明式 API 那半张表也读同一个开关）。
-/// 写时复制 + <c>Volatile.Read</c>，读路径无锁、无分配；注册只发生在模块初始化 / 启动期。
-/// </summary>
+/// <summary>生成元数据注册表：对象形状、字典映射，以及进程级的冻结开关。</summary>
+/// <remarks>写时复制 + <c>Volatile.Read</c>，读路径无锁；注册只发生在启动期。</remarks>
 internal static class ShapeRegistry
 {
     // 写入锁；读路径不加锁（写时复制 + Volatile.Read）。
@@ -18,7 +15,7 @@ internal static class ShapeRegistry
     // 类型 → 字符串键字典访问器（写时复制，整体替换）。
     private static Dictionary<Type, MapAccessor> _maps = new();
 
-    /// <summary>注册表是否已冻结（冻结只影响写入，读路径不变）。</summary>
+    /// <summary>注册表是否已冻结（冻结只影响写入）。</summary>
     internal static bool IsFrozen => _frozen;
 
     /// <summary>冻结注册表：此后任何注册都抛 <see cref="InvalidOperationException"/>。可重复调用。</summary>
@@ -30,7 +27,7 @@ internal static class ShapeRegistry
         }
     }
 
-    /// <summary>测试钩子：冻结是进程级状态，用例之间必须复位，否则后续注册会全部失败。</summary>
+    /// <summary>测试钩子：复位冻结状态。</summary>
     internal static void UnfreezeForTests()
     {
         lock (Gate)
@@ -39,11 +36,11 @@ internal static class ShapeRegistry
         }
     }
 
-    /// <summary>按类型取已注册的形状（生成期烘焙或手工注册）；查不到只返回 <c>false</c>，不触发反射构建。</summary>
+    /// <summary>取已注册的形状；查不到返回 <c>false</c>，不触发反射构建。</summary>
     internal static bool TryGetShape(Type type, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ObjectShape? shape)
         => Volatile.Read(ref _shapes).TryGetValue(type, out shape);
 
-    /// <summary>按类型取已注册的字典访问器；查不到只返回 <c>false</c>，不触发反射构建。</summary>
+    /// <summary>取已注册的字典访问器；查不到返回 <c>false</c>。</summary>
     internal static bool TryGetMap(Type type, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out MapAccessor? accessor)
         => Volatile.Read(ref _maps).TryGetValue(type, out accessor);
 
@@ -51,7 +48,7 @@ internal static class ShapeRegistry
     internal static void RegisterShape(ObjectShape shape)
         => AddShape(shape, allowExisting: false);
 
-    /// <summary>生成代码的形状注册：同一被引用类型可能被多个程序集各生成一份，结果等价，保留先注册的一份。</summary>
+    /// <summary>生成代码的形状注册：重复注册保留先注册的一份。</summary>
     internal static void RegisterGeneratedShape(ObjectShape shape)
         => AddShape(shape, allowExisting: true);
 
@@ -59,14 +56,11 @@ internal static class ShapeRegistry
     internal static void RegisterMap(MapAccessor accessor)
         => AddMap(accessor, allowExisting: false);
 
-    /// <summary>生成代码的映射注册：重复注册保留先注册的一份（与 <see cref="RegisterGeneratedShape"/> 同理）。</summary>
+    /// <summary>生成代码的映射注册：重复注册保留先注册的一份。</summary>
     internal static void RegisterGeneratedMap(MapAccessor accessor)
         => AddMap(accessor, allowExisting: true);
 
-    /// <summary>
-    /// 冻结后拒绝写入。消息必须能自证现场：说清楚是哪个类型、哪个程序集在冻结之后才来注册——
-    /// 最常见的成因是「启动时冻结，之后才加载带生成元数据的程序集」。
-    /// </summary>
+    /// <summary>冻结后拒绝写入；消息带上类型与程序集以便定位。</summary>
     internal static void ThrowIfFrozen(Type target, string kind)
     {
         if (!_frozen)
@@ -83,7 +77,7 @@ internal static class ShapeRegistry
     /// <summary>异常 / 日志里的类型名：全名优先，无名类型退回短名。</summary>
     internal static string Describe(Type type) => type.FullName ?? type.Name;
 
-    /// <summary>登记对象形状：写时复制换表并失效反射缓存；<paramref name="allowExisting"/> 为 true 时重复注册直接忽略（先注册者胜），否则按声明冲突抛出。</summary>
+    /// <summary>登记对象形状：写时复制换表并失效反射缓存；<paramref name="allowExisting"/> 为 true 时重复注册忽略（先注册者胜）。</summary>
     private static void AddShape(ObjectShape shape, bool allowExisting)
     {
         ArgumentNullException.ThrowIfNull(shape);
@@ -106,12 +100,12 @@ internal static class ShapeRegistry
             var next = new Dictionary<Type, ObjectShape>(current) { [shape.Type] = shape };
             Volatile.Write(ref _shapes, next);
 
-            // 显式注册必须压过反射构建的旧缓存，否则同类型仍会读到旧形状。
+            // 显式注册必须压过反射缓存。
             ShapeCache.Invalidate(shape.Type);
         }
     }
 
-    /// <summary>登记映射访问器：写时复制换表并清掉 <see cref="QueryMap"/> 按类型的缓存；重复注册的两种处理同 <c>AddShape</c>。</summary>
+    /// <summary>登记映射访问器：写时复制换表并清掉 <see cref="QueryMap"/> 的按类型缓存。</summary>
     private static void AddMap(MapAccessor accessor, bool allowExisting)
     {
         ArgumentNullException.ThrowIfNull(accessor);
@@ -134,7 +128,7 @@ internal static class ShapeRegistry
             var next = new Dictionary<Type, MapAccessor>(current) { [accessor.Type] = accessor };
             Volatile.Write(ref _maps, next);
 
-            // 手工注册可能晚于首次展平：丢掉 QueryMap 按类型缓存的「没有访问器」结果。
+            // 丢掉 QueryMap 按类型缓存的「没有访问器」结果。
             QueryMap.Invalidate();
         }
     }

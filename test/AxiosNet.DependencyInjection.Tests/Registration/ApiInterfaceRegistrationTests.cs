@@ -118,9 +118,7 @@ public sealed class ApiInterfaceRegistrationTests
         Assert.Same(services, services.AddApiInterface<IDiOtherApi>("a"));
     }
 
-    // ------------------------------------------------------------------
-    // 同一接口绑两个站点：第二条会被 TryAddSingleton 静默丢弃，必须在注册期报错
-    // ------------------------------------------------------------------
+// 同一接口绑两个站点：第二条会被 TryAddSingleton 静默丢弃，必须在注册期报错
 
     [Fact]
     public void AddApiInterface_SameInterfaceTwoSites_ThrowsAtRegistration()

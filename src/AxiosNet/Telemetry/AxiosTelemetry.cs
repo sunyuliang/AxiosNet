@@ -8,12 +8,10 @@ using AxiosNet.Retry;
 
 namespace AxiosNet.Telemetry;
 
-/// <summary>
-/// 库的观测点：链路（<see cref="ActivitySource"/>）、指标（<see cref="Meter"/>）与事件（<see cref="DiagnosticListener"/>）。
-/// </summary>
+/// <summary>库的观测点：链路（<see cref="ActivitySource"/>）、指标（<see cref="Meter"/>）与事件（<see cref="DiagnosticListener"/>）。</summary>
 /// <remarks>
-/// 前两者共用「AxiosNet」这个名字，监听器名不同（见 <see cref="DiagnosticListenerName"/>）；
-/// 量的是 URL 拼好到响应读完（含响应拦截器与重试；请求拦截器与 URL 组装不在区间内），观测异常一律不影响请求结果。
+/// 前两者共用「AxiosNet」名，监听器名不同（见 <see cref="DiagnosticListenerName"/>）；量的是 URL 拼好到响应读完，
+/// 观测异常一律不影响请求结果。
 /// </remarks>
 public static class AxiosTelemetry
 {
@@ -38,16 +36,10 @@ public static class AxiosTelemetry
     /// <summary>事件名：一次失败尝试后决定重试（载荷 <see cref="AxiosRetryContext"/>）。</summary>
     public const string RetryEventName = "AxiosNet.Retry";
 
-    /// <summary>
-    /// 事件名：一次尝试成功结束（载荷 <see cref="AxiosAttemptEvent"/>）。
-    /// 只有链上装了 <see cref="Attempt.Audit"/> 时才产生。
-    /// </summary>
+    /// <summary>事件名：一次尝试成功结束（载荷 <see cref="AxiosAttemptEvent"/>），仅装了 <see cref="Attempt.Audit"/> 时产生。</summary>
     public const string AttemptStopEventName = "AxiosNet.AttemptStop";
 
-    /// <summary>
-    /// 事件名：一次尝试失败结束（载荷 <see cref="AxiosAttemptEvent"/>）。
-    /// 只有链上装了 <see cref="Attempt.Audit"/> 时才产生。
-    /// </summary>
+    /// <summary>事件名：一次尝试失败结束（载荷 <see cref="AxiosAttemptEvent"/>），仅装了 <see cref="Attempt.Audit"/> 时产生。</summary>
     public const string AttemptFailedEventName = "AxiosNet.AttemptFailed";
 
     /// <summary>指标名：逻辑请求耗时直方图（单位秒，含重试与等待）。</summary>
@@ -107,7 +99,7 @@ public static class AxiosTelemetry
     /// <summary>指标名：条件请求拿到 304 的次数（Counter，无标签）：正文来自缓存，请求确实发出去了。</summary>
     public const string CacheRevalidationsInstrumentName = "axiosnet.client.cache.revalidations";
 
-    // 驱逐原因：指标标签的取值，属对外契约（后端按它分面板）。
+    // 驱逐原因：指标标签取值，属对外契约。
     internal const string EvictionReasonIdle = "idle";
     internal const string EvictionReasonCapacity = "capacity";
     internal const string EvictionReasonManual = "manual";
@@ -115,7 +107,7 @@ public static class AxiosTelemetry
     internal const string EvictionReasonCookies = "cookies";
     internal const string EvictionReasonDispose = "dispose";
 
-    // 标签名一律取 OpenTelemetry HTTP 语义约定的标准名（v1.27）：后端 / Collector 无需额外映射。
+    // 标签名取 OpenTelemetry HTTP 语义约定标准名。
     private const string TagMethod = "http.request.method";
     private const string TagScheme = "url.scheme";
     private const string TagPath = "url.path";
@@ -138,7 +130,7 @@ public static class AxiosTelemetry
     private const string TagGateReason = "axiosnet.gate.reason";
     private const string TagCacheRevalidated = "axiosnet.cache.revalidated";
 
-    // 重试原因：低基数取值。有状态码就统一报 "status"（具体状态码在 error.type 里），否则用库错误码。
+    // 重试原因：低基数取值；有状态码统一报 "status"，否则用库错误码。
     internal const string RetryReasonStatus = "status";
     internal const string RetryReasonException = "exception";
 
@@ -151,14 +143,9 @@ public static class AxiosTelemetry
     internal const string CircuitStateOpen = "open";
     internal const string CircuitStateHalfOpen = "half_open";
 
-    /// <summary>
-    /// 观测实现：默认写内置的 <see cref="ActivitySource"/> / <see cref="Meter"/> / <see cref="DiagnosticListener"/>；
-    /// 换成自己的实现即整套接管（内置那套同时停用），设 <see cref="AxiosTelemetrySink.Off"/> 即彻底关掉。
-    /// </summary>
+    /// <summary>观测实现：默认写内置 <see cref="ActivitySource"/> / <see cref="Meter"/> / <see cref="DiagnosticListener"/>；换实现即整套接管，<see cref="AxiosTelemetrySink.Off"/> 彻底关闭。</summary>
     /// <remarks>
-    /// 进程级开关，启动时设一次。请求在途时替换会让成对水位（Enter / Exit）记到两个实现上，因此不要在还有在途请求
-    /// 或未归还租约时替换。观测句柄与请求结果回调派给「请求开始时认下的实现」，事件类按当前值派发。
-    /// 派发都经护栏（见 <see cref="GuardedTelemetrySink"/>），实现抛异常只丢掉那一次观测。
+    /// 进程级开关，启动时设一次；不要在还有在途请求或未归还租约时替换。请求级回调派给「请求开始时认下的实现」，事件类按当前值派发。
     /// </remarks>
     /// <exception cref="ArgumentNullException">赋值为 <c>null</c>（要关掉请用 <see cref="AxiosTelemetrySink.Off"/>）。</exception>
     public static IAxiosTelemetrySink Sink
@@ -168,24 +155,17 @@ public static class AxiosTelemetry
         {
             var installed = value ?? throw new ArgumentNullException(nameof(value));
 
-            // 先换派发层再发布实现：读者只经 Dispatch 派发，两字段之间没有「旧实现配新护栏」的窗口。
             _dispatch = new GuardedTelemetrySink(installed);
             _sink = installed;
         }
     }
 
     /// <summary>当前实现（默认 <see cref="BuiltInTelemetrySink"/>）。</summary>
-    /// <remarks>每次观测都要读它（含池与闸门的热路径），<c>volatile</c> 保证换上之后读到的就是新的，不会在某个核心上一直读旧值。</remarks>
+    /// <remarks>热路径每次都读它，<c>volatile</c> 保证换了之后立刻可见。</remarks>
     private static volatile IAxiosTelemetrySink _sink = BuiltInTelemetrySink.Instance;
 
-    /// <summary>
-    /// 库内派发入口：<see cref="Sink"/> 的护栏包装（违约异常就地结束）。
-    /// </summary>
-    /// <remarks>
-    /// 调用点用这个而不是 <see cref="Sink"/>：观测实现是第三方代码，它抛异常不能外溢到请求路径。
-    /// 强类型返回 <see cref="GuardedTelemetrySink"/> 是为了让「进 / 出」配对判定（<see cref="GuardedTelemetrySink.TryEnterRequest"/>）
-    /// 也发生在同一份快照上，不必回头再读一次 <see cref="Sink"/>。
-    /// </remarks>
+    /// <summary>库内派发入口：<see cref="Sink"/> 的护栏包装。</summary>
+    /// <remarks>调用点用它而不是 <see cref="Sink"/>，观测实现的异常不会外溢到请求路径；强类型返回让「进 / 出」配对在同一快照上判定。</remarks>
     internal static GuardedTelemetrySink Dispatch => _dispatch;
 
     /// <summary>派发层（随 <see cref="Sink"/> 一起替换，与 <see cref="_sink"/> 一一对应）。</summary>
@@ -227,12 +207,11 @@ public static class AxiosTelemetry
     /// <summary>活跃租约数（全进程，跨所有池）：正文下载期间仍然计入。</summary>
     private static long _activeLeases;
 
-    /// <summary>存活池数（全进程）：建池 +1、<c>Dispose</c> -1，用来发现「池被建了太多」。</summary>
+    /// <summary>存活池数（全进程）：建池 +1、<c>Dispose</c> -1。</summary>
     private static long _livePools;
 
     static AxiosTelemetry()
     {
-        // 版本跟着程序集走：后端据此区分同一个源的不同版本。
         var version = typeof(AxiosTelemetry).Assembly.GetName().Version?.ToString() ?? "0.0.0";
 
         Source = new ActivitySource(ActivitySourceName, version);
@@ -241,24 +220,18 @@ public static class AxiosTelemetry
         var meter = new Meter(MeterName, version);
         RequestDuration = meter.CreateHistogram<double>(RequestDurationInstrumentName, unit: "s", description: "AxiosNet 逻辑请求耗时（含重试与退避等待），单位秒。");
 
-        // net6.0 没有 UpDownCounter，改用 ObservableGauge：进 / 出各一次 Interlocked，收集时读取。
         meter.CreateObservableGauge(ActiveRequestsInstrumentName, () => Volatile.Read(ref _activeRequests), unit: "{request}", description: "已成型（URL 已拼好）并进入发送阶段、尚未结束的请求数。");
 
         Retries = meter.CreateCounter<long>(RetriesInstrumentName, unit: "{retry}", description: "按策略决定重试的次数（不含首次请求）；axiosnet.retry.reason 区分状态码 / 网络 / 超时等原因。");
 
-        // 预算耗尽与 retries 分开计。
         RetryBudgetExhausted = meter.CreateCounter<long>(RetryBudgetExhaustedInstrumentName, unit: "{retry}", description: "因共享重试预算不足而放弃的重试次数（请求未重发，错误原样返回给调用方）。");
 
-        // 排队深度：静态计数 + 收集时读取，看的是进程总量。
         meter.CreateObservableGauge(GateQueueDepthInstrumentName, () => ConcurrencyGate.QueueDepth, unit: "{request}", description: "当前正在等并发槽位的请求数（进程级，跨所有客户端）。");
 
-        // 拒绝数：与排队深度分开计。
         GateRejections = meter.CreateCounter<long>(GateRejectionsInstrumentName, unit: "{request}", description: "被并发闸门拒绝的请求数（请求未发出），按 axiosnet.gate.reason（queue_full / queue_timeout）区分。");
 
-        // 按 state 报维度数，不带 host（低基数）。
         meter.CreateObservableGauge(CircuitStateInstrumentName, ObserveCircuitStates, unit: "{circuit}", description: "熔断器跟踪的维度数，按 axiosnet.circuit.state（closed / open / half_open）分组；每个维度 = 一个熔断器实例上的一个 key（默认 host:port）。");
 
-        // 满员后新维度不再登记（按闭合态直通）：这条涨起来说明 MaxTrackedHosts 需要调大，或地址维度在失控。
         CircuitUntracked = meter.CreateCounter<long>(CircuitUntrackedInstrumentName, unit: "{host}", description: "因 MaxTrackedHosts 已满而未登记熔断状态、按闭合态直通的维度访问次数（无标签）。");
 
         PoolLeases = meter.CreateCounter<long>(PoolLeasesInstrumentName, unit: "{lease}", description: "成功租用 origin 节点的次数；axiosnet.pool.endpoint.reused=false 表示本次新建了节点。");
@@ -267,16 +240,12 @@ public static class AxiosTelemetry
 
         PoolEndpointsEvicted = meter.CreateCounter<long>(PoolEndpointsEvictedInstrumentName, unit: "{endpoint}", description: "被驱逐并释放的 origin 节点数，按 axiosnet.pool.eviction.reason 区分原因。");
 
-        // 与在途请求数同一手法：计的是持有租约的请求，含正文还没读完的流式响应。
         meter.CreateObservableGauge(ActiveLeasesInstrumentName, () => Volatile.Read(ref _activeLeases), unit: "{lease}", description: "当前持有 origin 节点租约的请求数（含正文下载中的流式响应）。");
 
-        // 池的个数而不是连接数。
         meter.CreateObservableGauge(ActivePoolsInstrumentName, () => Volatile.Read(ref _livePools), unit: "{pool}", description: "当前存活（未 Dispose）的连接池数；持续增长说明有代码在反复建池。");
 
-        // 条目数是 int（字典 Count），统一抬成 long：与其余水位的观测类型一致。
         meter.CreateObservableGauge(SharedPoolsInstrumentName, () => (long)Pooling.HttpConnectionPool.SharedCount, unit: "{pool}", description: "命名共享池表（HttpConnectionPool.GetOrCreate）里的条目数。");
 
-        // 缓存四件套：命中率 = hits / (hits + misses)，stalls 与失败分开看。
         CacheHits = meter.CreateCounter<long>(CacheHitsInstrumentName, unit: "{request}", description: "从缓存交付的请求数（含单飞跟随者拿到的共享结果），请求未发出。");
         CacheMisses = meter.CreateCounter<long>(CacheMissesInstrumentName, unit: "{request}", description: "缓存未命中的请求数（随后会真实发送）。");
         CacheStores = meter.CreateCounter<long>(CacheStoresInstrumentName, unit: "{entry}", description: "写入缓存完成的条目数（容量满时内置存储静默不收，这次写入仍算完成）。");
@@ -313,11 +282,8 @@ public static class AxiosTelemetry
     /// <summary>池被释放：存活池数 -1。</summary>
     internal static void ExitPool() => Interlocked.Decrement(ref _livePools);
 
-    /// <summary>
-    /// 一次成功的租约：<c>pool.leases</c> +1（带 <c>reused</c> 标签），节点是新建时再记一条
-    /// <c>pool.endpoints.created</c>。池域指标不受 <see cref="AxiosConfig.ObservabilitySettings.Capture"/> 约束。
-    /// </summary>
-    /// <remarks>不带 host / port（低基数）；要定位到具体 origin 看 span 上的 <c>server.address</c> / <c>server.port</c>。</remarks>
+    /// <summary>一次成功的租约：<c>pool.leases</c> +1（带 <c>reused</c> 标签），新建节点时另记 <c>pool.endpoints.created</c>；不受 Capture 约束。</summary>
+    /// <remarks>不带 host / port（低基数）；定位 origin 见 span 上的 <c>server.address</c> / <c>server.port</c>。</remarks>
     internal static void RecordLease(bool reused)
     {
         if (!PoolLeases.Enabled)
@@ -331,7 +297,7 @@ public static class AxiosTelemetry
         }
         catch
         {
-            // 测量回调抛异常不能影响租用（见类注释）
+            // 观测异常不影响租用。
         }
     }
 
@@ -345,7 +311,6 @@ public static class AxiosTelemetry
 
         try
         {
-            // 无标签计数：单参数重载不构造 TagList，也不分配标签数组。
             PoolEndpointsCreated.Add(1);
         }
         catch
@@ -381,13 +346,12 @@ public static class AxiosTelemetry
 
         try
         {
-            // 重试 / 换端点时会再次调用：已经是 "true" 就保留（一条链路复用过滤节点）；新的 "false" 会覆盖，表示最近一次用的是新建节点。
+            // 已是 "true" 则保留；新的 "false" 覆盖。
             if (reused && activity.GetTagItem(TagEndpointReused) is not null)
             {
                 return;
             }
 
-            // 用 "true"/"false" 字面量而不是 bool：驻留字符串，不产生装箱分配。
             activity.SetTag(TagEndpointReused, reused ? "true" : "false");
         }
         catch
@@ -401,9 +365,7 @@ public static class AxiosTelemetry
         { TagEndpointReused, reused ? "true" : "false" }
     };
 
-    /// <summary>
-    /// 熔断状态的分组计数：<c>closed</c> 由「已跟踪维度 - 打开 - 半开」推出。
-    /// </summary>
+    /// <summary>熔断状态的分组计数：<c>closed</c> 由「已跟踪维度 - 打开 - 半开」推出。</summary>
     private static IEnumerable<Measurement<long>> ObserveCircuitStates()
     {
         var open = CircuitBreaker.OpenCount;
@@ -412,7 +374,7 @@ public static class AxiosTelemetry
 
         if (closed < 0)
         {
-            // 并发采样下可能读到瞬时不一致：宁可报 0，也不给后端一个负数。
+            // 采样瞬时不一致时按 0 报。
             closed = 0;
         }
 
@@ -433,7 +395,7 @@ public static class AxiosTelemetry
     /// <summary>请求已成型（拦截器与 transformRequest 跑完）：开 span 并发出 <see cref="RequestStartEventName"/>；无监听者时返回 <c>null</c>。</summary>
     internal static Activity? StartRequest(AxiosConfig config, Uri uri)
     {
-        // 本次请求被显式关掉：不建 span、不发事件（指标与在途计数由调用方按同一判定跳过）
+        // 本次请求关闭遥测。
         if (!IsEnabled(config))
         {
             return null;
@@ -445,7 +407,7 @@ public static class AxiosTelemetry
         {
             if (Source.HasListeners())
             {
-                // span 名按语义约定取「方法」，URL 放在标签里。
+                // span 名取「方法」，URL 放在标签里。
                 activity = Source.StartActivity(config.Method.Method, ActivityKind.Client);
 
                 if (activity is not null)
@@ -461,7 +423,7 @@ public static class AxiosTelemetry
         }
         catch
         {
-            // 开 span 失败就当没有遥测，请求照发
+            // 开 span 失败即当无遥测，请求照发。
         }
 
         return activity;
@@ -509,12 +471,11 @@ public static class AxiosTelemetry
         long startTimestamp,
         Activity? activity)
     {
-        // 跑在成功路径上：任何意外都不能变成「请求失败」，连前置计算也一起包进 try。
         try
         {
             var elapsed = ElapsedSeconds(startTimestamp);
 
-            // 4xx / 5xx 即使被 validateStatus 接受也算 HTTP 层错误：span 标 Error、error.type 取状态码。
+            // 4xx / 5xx 即使被 validateStatus 接受也算 HTTP 层错误。
             var errorType = response.Status >= 400 ? response.Status.ToString(CultureInfo.InvariantCulture) : null;
 
             if (activity is not null)
@@ -523,7 +484,6 @@ public static class AxiosTelemetry
 
                 if (response.ProtocolVersion is { } protocolVersion)
                 {
-                    // 协商结果才是线上真正使用的协议版本。
                     activity.SetTag(TagProtocolVersion, ProtocolVersionTag(protocolVersion));
                 }
 
@@ -551,10 +511,7 @@ public static class AxiosTelemetry
         }
     }
 
-    /// <summary>
-    /// 请求失败结束：补状态码 / 错误码与异常事件，记录耗时指标，发出 <see cref="RequestFailedEventName"/>。
-    /// <paramref name="uri"/> 为 <c>null</c>（请求未成型）时不记指标也不发事件。
-    /// </summary>
+    /// <summary>请求失败结束：补状态码 / 错误码与异常事件，记录耗时指标，发出 <see cref="RequestFailedEventName"/>；<paramref name="uri"/> 为 <c>null</c> 时不记指标也不发事件。</summary>
     internal static void RequestFailed(
         AxiosConfig? config,
         Uri? uri,
@@ -567,7 +524,6 @@ public static class AxiosTelemetry
             return;
         }
 
-        // 跑在调用方的 catch 块里：自己抛异常会顶掉原始异常，所以连前置计算也一起包进 try。
         try
         {
             var elapsed = ElapsedSeconds(startTimestamp);
@@ -582,7 +538,7 @@ public static class AxiosTelemetry
                     activity.SetTag(TagStatusCode, status);
                 }
 
-                // 失败也可能是「收到了响应但不被接受」（4xx / 5xx）：协议版本与正文大小照样有，不能丢。
+                // 失败也可能带响应（4xx / 5xx）：协议版本与正文大小照样记。
                 if (axiosException?.Response is { } failedResponse)
                 {
                     if (failedResponse.ProtocolVersion is { } protocolVersion)
@@ -598,7 +554,7 @@ public static class AxiosTelemetry
 
                 activity.SetTag(TagErrorType, errorType);
 
-                // 有状态码时 error.type 取状态码，库错误码另写 axiosnet.error.code。
+                // 库错误码另写 axiosnet.error.code。
                 if (axiosException?.Code is string code)
                 {
                     activity.SetTag(TagErrorCode, code);
@@ -606,7 +562,7 @@ public static class AxiosTelemetry
 
                 activity.SetStatus(ActivityStatusCode.Error, exception.Message);
 
-                // net6.0 没有 Activity.AddException，按语义约定手工记一条 exception 事件。
+                // net6.0 无 Activity.AddException，手工记 exception 事件。
                 activity.AddEvent(new ActivityEvent(
                     "exception",
                     tags: new ActivityTagsCollection
@@ -629,15 +585,12 @@ public static class AxiosTelemetry
         }
     }
 
-    /// <summary>
-    /// 闸门拒绝了这次尝试（队列满 / 排队超时）：只记一条低基数计数，不写 span、不发事件 ——
-    /// 拒绝原因已经会随 <c>RequestFailed</c> 的错误码出现在链路与日志里。
-    /// </summary>
+    /// <summary>闸门拒绝了这次尝试（队列满 / 排队超时）：只记一条低基数计数，不写 span、不发事件。</summary>
     internal static void GateRejected(AxiosConfig config, string reason)
     {
         try
         {
-            // 拒绝不在主路径的开关分支内，必须自己判一次。
+            // 不在主路径的开关分支内，自己判一次。
             if (!IsEnabled(config) || !GateRejections.Enabled)
             {
                 return;
@@ -651,21 +604,17 @@ public static class AxiosTelemetry
         }
     }
 
-    /// <summary>
-    /// 一次尝试失败后决定重试：重试计数 +1，在 span 上写入 <c>http.request.resend_count</c>（= 第几次尝试）
-    /// 并记一条 <c>retry</c> 事件，同时发出 <see cref="RetryEventName"/>；只写本库的 span，且自己判开关。
-    /// </summary>
+    /// <summary>一次尝试失败后决定重试：重试计数 +1，在 span 上写 <c>http.request.resend_count</c> 与 <c>retry</c> 事件，并发出 <see cref="RetryEventName"/>。</summary>
     internal static void RequestRetried(in AxiosRetryContext context, Uri uri)
     {
         try
         {
-            // 重试观测不在主路径的开关分支内，必须自己判一次。
+            // 不在主路径的开关分支内，自己判一次。
             if (!IsEnabled(context.Config))
             {
                 return;
             }
 
-            // 三路都没人订阅时直接返回。
             var activity = Activity.Current;
             var hasSpan = activity is not null && ReferenceEquals(activity.Source, Source);
             var hasEvent = Listener.IsEnabled(RetryEventName);
@@ -678,10 +627,9 @@ public static class AxiosTelemetry
 
             var method = context.Method?.Method ?? "GET";
 
-            // 与耗时直方图同一口径：有状态码就用状态码（语义约定），没有才用库错误码
+            // 有状态码用状态码，否则用库错误码。
             var errorType = ErrorTypeOf(context.Exception, context.StatusCode);
 
-            // 重试原因：状态码归一到 "status"（具体码在 error.type），其余用库错误码。
             var retryReason = RetryReasonOf(context.Exception, context.StatusCode);
 
             if (hasMetric)
@@ -709,8 +657,7 @@ public static class AxiosTelemetry
                         { "axiosnet.retry.reason", retryReason },
                         { TagStatusCode, context.StatusCode },
                         { TagErrorType, errorType },
-                        // 与 span / 指标同一份逻辑地址（重试层拿不到换端点 / 对冲分支实际连的主机）：
-                        // 事件自带主机标签，只看事件的消费方不必回头去拼 span 标签。
+                        // 事件自带主机标签。
                         { TagServerAddress, HostOf(uri) },
                         { TagServerPort, uri.Port }
                     }));
@@ -718,7 +665,6 @@ public static class AxiosTelemetry
 
             if (hasEvent)
             {
-                // 结构体装箱只在「确实有人订阅」时发生
                 Emit(RetryEventName, context);
             }
         }
@@ -727,15 +673,12 @@ public static class AxiosTelemetry
         }
     }
 
-    /// <summary>
-    /// 共享重试预算拒绝了这次重试：<c>retry.budget_exhausted</c> +1。无标签（低基数），
-    /// 也不写 span / 发事件 —— 这次失败本身仍会按原错误码出现在链路与日志里。
-    /// </summary>
+    /// <summary>共享重试预算拒绝了这次重试：<c>retry.budget_exhausted</c> +1，无标签，不写 span / 不发事件。</summary>
     internal static void RetryBudgetRefused(AxiosConfig? config)
     {
         try
         {
-            // 与重试计数同一口径：本次请求关了遥测就不记。
+            // 本次请求关了遥测就不记。
             if (!IsEnabled(config) || !RetryBudgetExhausted.Enabled)
             {
                 return;
@@ -757,15 +700,10 @@ public static class AxiosTelemetry
     /// <summary>落库写入完成一条缓存条目（容量满时内置存储静默不收，仍由这里计数）。</summary>
     internal static void CacheStored(AxiosConfig? config) => AddCacheCount(CacheStores, config);
 
-    /// <summary>
-    /// 落库失败（存储抛错 / 写超时 / 总预算已耗尽）：只影响命中率，这次请求的响应照常交付。
-    /// </summary>
+    /// <summary>落库失败（存储抛错 / 写超时 / 总预算已耗尽）：只影响命中率，响应照常交付。</summary>
     internal static void CacheStoreFailed(AxiosConfig? config) => AddCacheCount(CacheStoreFailures, config);
 
-    /// <summary>
-    /// 条件请求拿到 304：正文来自缓存、请求确实发出去了。计数 +1，并在当前 span 上写
-    /// <c>axiosnet.cache.revalidated=true</c>（状态码 / 正文大小按交付给调用方的那一份记）。
-    /// </summary>
+    /// <summary>条件请求拿到 304：正文来自缓存、请求确实发出去了；计数 +1 并在当前 span 上写 <c>axiosnet.cache.revalidated=true</c>。</summary>
     internal static void CacheRevalidated(AxiosConfig? config, Activity? activity)
     {
         AddCacheCount(CacheRevalidations, config);
@@ -784,18 +722,16 @@ public static class AxiosTelemetry
         }
     }
 
-    /// <summary>累加缓存计数：本方法不在主路径的开关分支内，要自己判一次观测开关与计数器启用状态。</summary>
+    /// <summary>累加缓存计数：自行判一次观测开关与计数器启用状态。</summary>
     private static void AddCacheCount(Counter<long> counter, AxiosConfig? config)
     {
         try
         {
-            // 缓存观测不在主路径的开关分支内，必须自己判一次。
             if (!IsEnabled(config) || !counter.Enabled)
             {
                 return;
             }
 
-            // 无标签计数：单参数重载不构造 TagList，也不分配标签数组。
             counter.Add(1);
         }
         catch
@@ -803,10 +739,7 @@ public static class AxiosTelemetry
         }
     }
 
-    /// <summary>
-    /// 尝试审计是否值得运行：本次请求没关遥测，且至少有一个尝试事件订阅者。
-    /// 返回 <c>false</c> 时 <see cref="Attempt.Audit"/> 直接走下一环，不建状态机、不取时间戳。
-    /// </summary>
+    /// <summary>尝试审计是否值得运行：本次未关遥测，且至少有一个尝试事件订阅者；<c>false</c> 时 <see cref="Attempt.Audit"/> 直接走下一环。</summary>
     internal static bool IsAttemptAuditEnabled(AxiosConfig? config)
         => IsEnabled(config)
            && (Listener.IsEnabled(AttemptStopEventName) || Listener.IsEnabled(AttemptFailedEventName));
@@ -862,9 +795,7 @@ public static class AxiosTelemetry
         }
     }
 
-    /// <summary>
-    /// 发一条诊断事件；调用前必须先用 <see cref="DiagnosticListener.IsEnabled(string)"/> 判定，因为载荷对象有分配。
-    /// </summary>
+    /// <summary>发一条诊断事件；调用前必须先用 <see cref="DiagnosticListener.IsEnabled(string)"/> 判定（载荷有分配）。</summary>
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2026",
@@ -879,7 +810,7 @@ public static class AxiosTelemetry
         }
         catch
         {
-            // 订阅方回调抛异常不能影响请求（见类注释）
+            // 订阅方异常不影响请求。
         }
     }
 
@@ -899,9 +830,7 @@ public static class AxiosTelemetry
         }
     }
 
-    /// <summary>
-    /// <c>url.full</c> 的取值：完整 URL，去掉 userinfo；查询串默认不写（<paramref name="includeQuery"/> 为 <c>false</c>）。
-    /// </summary>
+    /// <summary><c>url.full</c> 取值：完整 URL，去掉 userinfo；<paramref name="includeQuery"/> 为 <c>false</c> 时不写查询串。</summary>
     private static string UrlForTelemetry(Uri uri, bool includeQuery)
     {
         if (uri.UserInfo.Length == 0 && includeQuery)
@@ -958,11 +887,7 @@ public static class AxiosTelemetry
         return (exception as AxiosException)?.Code ?? exception.GetType().Name;
     }
 
-    /// <summary>
-    /// <c>axiosnet.retry.reason</c> 的取值：有状态码统一报 <c>status</c>（具体码在 <c>error.type</c> 里），
-    /// 否则用库错误码（<c>ECONNABORTED</c> / <c>ERR_NETWORK</c> …），最后退到 <c>exception</c>。
-    /// 取值集合有界，后端可以安全地按它分面板。
-    /// </summary>
+    /// <summary><c>axiosnet.retry.reason</c> 取值：有状态码报 <c>status</c>，否则用库错误码，最后退到 <c>exception</c>；取值集合有界。</summary>
     internal static string RetryReasonOf(Exception exception, int? statusCode)
     {
         if (statusCode is not null)

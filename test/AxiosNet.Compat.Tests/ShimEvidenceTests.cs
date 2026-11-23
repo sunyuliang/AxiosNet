@@ -37,7 +37,7 @@ public sealed class ShimEvidenceTests
             () => _ = OldReadAsync(stream, buffer.AsMemory(), default).GetAwaiter().GetResult(),
             Iterations);
 
-        // 旧实现：每次读都 new byte[buffer.Length]。
+        // 基线：每次读都 new byte[buffer.Length]。
         Assert.True(oldBytes > 10L * 1024 * 1024, $"旧实现应分配 > 10MiB，实际 {oldBytes} 字节");
         // 新实现：底层是数组时直接转发。Release 下为 0；Debug 下 async 状态机是类，
         // 每次调用会分配一个约 120 字节的装箱状态机，但已与块大小无关。
@@ -203,7 +203,7 @@ public sealed class ShimEvidenceTests
         return stopwatch.ElapsedTicks;
     }
 
-    // ---- 以下三个方法是上一版 shim 写法的复刻，只作为 A/B 对照基线（不参与产品代码）----
+    // 以下三个方法是上一版 shim 写法的复刻，只作为 A/B 对照基线（不参与产品代码）
 
     private static async Task<int> OldReadAsync(Stream stream, Memory<byte> buffer, CancellationToken cancellationToken)
     {

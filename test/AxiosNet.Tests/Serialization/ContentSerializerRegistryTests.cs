@@ -292,9 +292,7 @@ public sealed class ContentSerializerRegistryTests
         Assert.Equal(1, first.Defaults.Serialization.BodySerializers.Count);
     }
 
-    // ------------------------------------------------------------------
-    // 测试辅助
-    // ------------------------------------------------------------------
+// 测试辅助
 
     private static string Body(TestRequest request) => Encoding.UTF8.GetString(request.Body);
 

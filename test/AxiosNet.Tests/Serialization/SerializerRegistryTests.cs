@@ -14,9 +14,7 @@ namespace AxiosNet.Tests.Serialization;
 [Collection(GlobalSerializationCollection.Name)]
 public sealed class SerializerRegistryTests
 {
-    // ------------------------------------------------------------------
-    // 第三方 MediaType 的错误分类 + 错误体 charset
-    // ------------------------------------------------------------------
+// 第三方 MediaType 的错误分类 + 错误体 charset
 
     [Fact]
     public async Task ThirdPartySerializer_MediaTypeWithControlChars_FailsBadOptionValue()
@@ -177,9 +175,7 @@ public sealed class SerializerRegistryTests
         }
     }
 
-    // ---------------------------------------------------------------
-    // 同一格式的常见别名：注册 application/xml 后，老服务端写 text/xml 也要命中
-    // ---------------------------------------------------------------
+// 同一格式的常见别名：注册 application/xml 后，老服务端写 text/xml 也要命中
 
     [Fact]
     public async Task TextXmlAlias_FallsBackToRegisteredApplicationXml_ForResponse()
@@ -237,9 +233,7 @@ public sealed class SerializerRegistryTests
         Assert.False(AxiosContent.Unregister("application/x-never-registered"));
     }
 
-    // ------------------------------------------------------------------
-    // 测试辅助
-    // ------------------------------------------------------------------
+// 测试辅助
 
     private static HttpResponseMessage JsonResponse()
         => new(HttpStatusCode.OK)

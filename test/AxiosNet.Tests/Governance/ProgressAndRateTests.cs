@@ -16,9 +16,7 @@ namespace AxiosNet.Tests.Governance;
 [Collection(TimingCollection.Name)]
 public sealed class ProgressAndRateTests
 {
-    // ------------------------------------------------------------------
-    // 上传进度：307 重定向会重发同一份正文，进度必须单调推进而不是掉回 0
-    // ------------------------------------------------------------------
+// 上传进度：307 重定向会重发同一份正文，进度必须单调推进而不是掉回 0
 
     [Fact]
     public async Task UploadProgress_AccumulatesAcrossRedirect()
@@ -63,9 +61,7 @@ public sealed class ProgressAndRateTests
         Assert.All(progresses, p => Assert.True(p is null or <= 1d));
     }
 
-    // ------------------------------------------------------------------
-    // 3) 进度回调的错误模型
-    // ------------------------------------------------------------------
+// 3) 进度回调的错误模型
 
     [Fact]
     public async Task DownloadProgressCallbackThrows_ReportsBadResponse()
@@ -170,9 +166,7 @@ public sealed class ProgressAndRateTests
         Assert.Equal(2L * size, events[^1]);
     }
 
-    // ---------------------------------------------------------------
-    // 进度事件：服务端未声明长度
-    // ---------------------------------------------------------------
+// 进度事件：服务端未声明长度
 
     [Fact]
     public async Task DownloadProgress_WithoutDeclaredLength_ReportsNullTotalAndProgress()

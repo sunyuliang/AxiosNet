@@ -83,7 +83,7 @@ internal sealed class SpecNode
     public IEnumerable<KeyValuePair<string, SpecNode>> Properties
         => _kind == Kind.Object ? ((IReadOnlyDictionary<string, SpecNode>)_value!) : Enumerable.Empty<KeyValuePair<string, SpecNode>>();
 
-    /// <summary>共享的空对象，避免非对象节点反复分配。</summary>
+    /// <summary>共享的空对象。</summary>
     private static readonly IReadOnlyDictionary<string, SpecNode> EmptyObject =
         new Dictionary<string, SpecNode>(StringComparer.Ordinal);
 

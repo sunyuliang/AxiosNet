@@ -27,10 +27,7 @@ internal static class QueryMap
             || TryGetAccessor(dictionary, out _)
             || MapTypes.GetOrAdd(dictionary.GetType(), static type => IsMapType(type));
 
-    /// <summary>
-    /// 是否能「不抛错地」按字典枚举：回收 / 遍历路径用它决定要不要下钻。
-    /// 与 <see cref="CanEnumerate"/> 的区别是不把「AOT 下靠反射才能枚举」算进来——那种形态 <see cref="Enumerate"/> 会显式失败。
-    /// </summary>
+    /// <summary>是否能「不抛错地」按字典枚举（回收 / 遍历路径用它决定要不要下钻）；AOT 下需反射的形态不计入。</summary>
     public static bool CanEnumerateBestEffort(object dictionary)
         => dictionary is IDictionary
             || dictionary is IDictionary<string, object?>
@@ -40,10 +37,8 @@ internal static class QueryMap
                 && RuntimeFeature.IsDynamicCodeSupported
                 && MapTypes.GetOrAdd(dictionary.GetType(), static type => IsMapType(type)));
 
-    /// <summary>
-    /// 取自定义字典的枚举访问器：先按具体类型查注册表，再沿接口查（声明为接口类型时生成器按接口注册）。
-    /// 结果按具体类型缓存；注册表新增映射时 <see cref="Invalidate"/> 推进纪元，旧结果（含「没有」）不再命中。
-    /// </summary>
+    /// <summary>取自定义字典的枚举访问器：按具体类型查注册表，再沿接口查；结果按具体类型缓存。</summary>
+    /// <remarks>注册表更新后 <see cref="Invalidate"/> 推进纪元，旧结果（含「没有」）不再命中。</remarks>
     public static bool TryGetAccessor(object dictionary, [NotNullWhen(true)] out MapAccessor? accessor)
     {
         var type = dictionary.GetType();
@@ -56,7 +51,7 @@ internal static class QueryMap
 
         accessor = ResolveAccessor(type);
 
-        // 解析期间注册表可能已更新：纪元变了就不回填，避免把旧结果（尤其是「没有」）写回缓存。
+        // 纪元变了就不回填旧结果。
         if (Volatile.Read(ref _epoch) == epoch)
         {
             ResolvedMaps[type] = new ResolvedMap(epoch, accessor);
@@ -68,7 +63,7 @@ internal static class QueryMap
     /// <summary>沿基类链找访问器：生成器按声明类型注册，运行时是派生实例也能命中。</summary>
     private static MapAccessor? ResolveAccessor(Type type)
     {
-        // 生成器按「声明类型」注册：声明是基类、运行时是派生实例时沿基类链命中（访问器委托对派生实例同样有效）。
+        // 生成器按声明类型注册，沿基类链命中。
         for (var current = type; current is not null; current = current.BaseType)
         {
             if (ShapeRegistry.TryGetMap(current, out var accessor))
@@ -77,7 +72,7 @@ internal static class QueryMap
             }
         }
 
-        // 自身已在基类链里查过，这里只查接口（含基类继承下来的接口）。
+        // 只查接口（含基类继承下来的）。
         foreach (var contract in EnumerateSelfAndInterfaces(type))
         {
             if (contract != type && ShapeRegistry.TryGetMap(contract, out var accessor))
@@ -89,7 +84,7 @@ internal static class QueryMap
         return null;
     }
 
-    /// <summary>注册表新增映射（手工注册可能晚于首次展平）：推进纪元并丢掉按类型缓存的结果。</summary>
+    /// <summary>注册表新增映射时推进纪元并丢掉按类型缓存的结果。</summary>
     public static void Invalidate()
     {
         Interlocked.Increment(ref _epoch);
@@ -104,7 +99,7 @@ internal static class QueryMap
             case IDictionary<string, object?> objectMap:
                 foreach (var entry in objectMap)
                 {
-                    // 键统一按「没有键就跳过」处理：坏实现的 null 键不能变成 "" 或空引用。
+                    // null 键跳过，不变成 "" 或空引用。
                     if (entry.Key is not null)
                     {
                         yield return entry;
@@ -127,7 +122,7 @@ internal static class QueryMap
             case IDictionary map:
                 foreach (DictionaryEntry entry in map)
                 {
-                    // ToString() 也可能返回 null（自定义键类型）：与访问器通道同样跳过。
+                    // ToString() 也可能返回 null，同样跳过。
                     if (entry.Key?.ToString() is { } key)
                     {
                         yield return new KeyValuePair<string, object?>(key, entry.Value);
@@ -143,7 +138,6 @@ internal static class QueryMap
                 {
                     foreach (var entry in accessor.Enumerate(dictionary))
                     {
-                        // 与 IDictionary 通道一致：没有键的项无法生成查询串，跳过而不是落到 ""[value]。
                         if (entry.Key is null)
                         {
                             continue;
@@ -155,10 +149,10 @@ internal static class QueryMap
                     break;
                 }
 
-                // 条件里必须是 RuntimeFeature.IsDynamicCodeSupported 本身：ILC 折成常量 false 后，这段反射实现才不可达并被裁掉。
+                // 必须判 RuntimeFeature.IsDynamicCodeSupported 本身：ILC 折成常量 false 后反射实现才被裁掉。
                 if (!RuntimeSupport.ForceNoDynamicCode && RuntimeFeature.IsDynamicCodeSupported)
                 {
-                    // 只实现 IReadOnlyDictionary<string,T> 的自定义字典：按 KeyValuePair 读取（反射回退）
+                    // 反射回退：按 KeyValuePair 读取。
                     foreach (var entry in QueryMapReflection.EnumeratePairs(dictionary))
                     {
                         yield return entry;
@@ -172,9 +166,7 @@ internal static class QueryMap
         }
     }
 
-    /// <summary>
-    /// 在类型自身与接口里找 <c>IDictionary&lt;string,T&gt;</c> / <c>IReadOnlyDictionary&lt;string,T&gt;</c>；<paramref name="valueType"/> 非 null 时还要求值类型相符。
-    /// </summary>
+    /// <summary>在类型自身与接口里找字符串键字典契约；<paramref name="valueType"/> 非 null 时还要求值类型相符。</summary>
     private static Type? FindStringKeyedPair(Type type, Type? valueType)
     {
         foreach (var candidate in EnumerateSelfAndInterfaces(type))
@@ -214,15 +206,15 @@ internal static class QueryMap
         }
     }
 
-    /// <summary>具体类型 → 注册表访问器（null 表示没有）。条目带纪元，注册表更新后旧条目（含「没有」）自动失效。</summary>
+    /// <summary>具体类型 → 注册表访问器（<c>null</c> 表示没有）；条目带纪元，注册表更新后自动失效。</summary>
     private static readonly ConcurrentDictionary<Type, ResolvedMap> ResolvedMaps = new();
 
-    // 注册表纪元：每次注册 +1，让缓存的「没有」也一并失效。
+    // 注册表纪元：每次注册 +1。
     private static int _epoch;
 
-    /// <summary>缓存条目：注册表纪元 + 该类型对应的访问器（null 表示「查过了，没有」）。</summary>
-    /// <param name="Epoch">写入时的注册表纪元，与当前纪元不符即视为过期。</param>
-    /// <param name="Accessor">访问器；null 表示该类型不是字符串键字典。</param>
+    /// <summary>缓存条目：写入时的注册表纪元 + 访问器（<c>null</c> 表示不是字符串键字典）。</summary>
+    /// <param name="Epoch">写入时的注册表纪元。</param>
+    /// <param name="Accessor">字典访问器；<c>null</c> 表示不是字符串键字典。</param>
     private readonly record struct ResolvedMap(int Epoch, MapAccessor? Accessor);
 
     /// <summary>类型是否「字符串键字典」的缓存：纯类型形状，与注册表无关。</summary>

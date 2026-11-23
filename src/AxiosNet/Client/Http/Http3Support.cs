@@ -18,8 +18,7 @@ public static class Http3Support
     static Http3Support()
     {
 #if NETSTANDARD2_0
-        // 兼容资产的 HttpClientHandler 既没有 QUIC 实现也没有 h3 开关，能力恒为 false。
-        // 放在这里而不是 Probe 里，避免同一方法里出现不可达代码。
+        // netstandard2.0 没有 QUIC 实现，能力恒为 false。
         IsSupported = false;
         UnsupportedReason = "netstandard2.0 兼容资产没有 SocketsHttpHandler / QUIC 实现，只支持 HTTP/1.1";
 #else
@@ -72,7 +71,7 @@ public static class Http3Support
         }
         catch
         {
-            // 探测失败：不下结论，reason 保持 null。
+            // 探测失败：不下结论。
         }
 
         // 只确认开关打开且 QUIC 未被否定。

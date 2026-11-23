@@ -13,9 +13,7 @@ namespace AxiosNet.Tests.Diagnostics;
 [Collection(TelemetryCollection.Name)]
 public sealed class AttemptAuditTests
 {
-    // ------------------------------------------------------------------
-    // 每次尝试一条
-    // ------------------------------------------------------------------
+// 每次尝试一条
 
     [Fact]
     public async Task Audit_EmitsOneEventPerAttempt()
@@ -58,9 +56,7 @@ public sealed class AttemptAuditTests
         Assert.Equal(new int?[] { 503, 503, 200 }, payloads.Select(p => p.Status));
     }
 
-    // ------------------------------------------------------------------
-    // 失败分支带状态码 / 错误码
-    // ------------------------------------------------------------------
+// 失败分支带状态码 / 错误码
 
     [Fact]
     public async Task Audit_FailedAttemptCarriesStatusAndErrorCode()
@@ -83,9 +79,7 @@ public sealed class AttemptAuditTests
         Assert.True(payload.Elapsed > TimeSpan.Zero);
     }
 
-    // ------------------------------------------------------------------
-    // 单次尝试耗时不含退避
-    // ------------------------------------------------------------------
+// 单次尝试耗时不含退避
 
     [Fact]
     public async Task Audit_ElapsedExcludesRetryDelay()
@@ -124,9 +118,7 @@ public sealed class AttemptAuditTests
             $"整请求耗时 {clock.Elapsed.TotalMilliseconds:0}ms 应包含退避");
     }
 
-    // ------------------------------------------------------------------
-    // 流式响应只到响应头
-    // ------------------------------------------------------------------
+// 流式响应只到响应头
 
     [Fact]
     public async Task Audit_StreamingAttempt_StopsAtResponseHeaders()
@@ -156,9 +148,7 @@ public sealed class AttemptAuditTests
         Assert.True(body.CanRead);
     }
 
-    // ------------------------------------------------------------------
-    // 覆盖范围：终端之前的拒绝不算一次尝试
-    // ------------------------------------------------------------------
+// 覆盖范围：终端之前的拒绝不算一次尝试
 
     [Fact]
     public async Task Audit_DoesNotCoverAttemptsRejectedBeforeTheTerminal()
@@ -183,9 +173,7 @@ public sealed class AttemptAuditTests
         Assert.Empty(server.Received);
     }
 
-    // ------------------------------------------------------------------
-    // 遥测关闭时审计是纯直通
-    // ------------------------------------------------------------------
+// 遥测关闭时审计是纯直通
 
     [Fact]
     public async Task Audit_TelemetryDisabled_DoesNotEmitAttempts()
@@ -206,9 +194,7 @@ public sealed class AttemptAuditTests
         Assert.Empty(AttemptEntries(probe));
     }
 
-    // ------------------------------------------------------------------
-    // 对冲：败者被收掉不算失败，只有胜者一条事件
-    // ------------------------------------------------------------------
+// 对冲：败者被收掉不算失败，只有胜者一条事件
 
     [Fact]
     public async Task Audit_HedgedRequest_DoesNotReportTheDiscardedBranchAsFailure()
@@ -246,9 +232,7 @@ public sealed class AttemptAuditTests
         Assert.Equal(0, payload.EndpointIndex);
     }
 
-    // ------------------------------------------------------------------
-    // 换端点：每个端点一条事件，尝试号相同、端点序号不同
-    // ------------------------------------------------------------------
+// 换端点：每个端点一条事件，尝试号相同、端点序号不同
 
     [Fact]
     public async Task Audit_Failover_ReportsTheEndpointIndex()

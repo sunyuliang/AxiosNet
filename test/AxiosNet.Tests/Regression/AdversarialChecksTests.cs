@@ -13,9 +13,7 @@ namespace AxiosNet.Tests.Regression;
 /// </summary>
 public sealed class AdversarialChecksTests
 {
-    // ---------------------------------------------------------------
-    // 攻击 1：Response 回填的归属与字段一致性
-    // ---------------------------------------------------------------
+// 攻击 1：Response 回填的归属与字段一致性
 
     /// <summary>重试全部失败：抛的是最后一次尝试，Response 的 status / headers / request / rawText 必须与异常自身一致。</summary>
     [Fact]
@@ -229,9 +227,7 @@ public sealed class AdversarialChecksTests
         Assert.NotEqual(second.Url + "y", reuse.Request?.RequestUri?.AbsoluteUri);
     }
 
-    // ---------------------------------------------------------------
-    // 攻击 2：回填实现本身（并发写 / 重复调用 / 复用）
-    // ---------------------------------------------------------------
+// 攻击 2：回填实现本身（并发写 / 重复调用 / 复用）
 
     /// <summary>对冲分支并发失败：每条分支各自一份异常与响应，不能出现「两条分支共享同一个 Response 对象」。</summary>
     [Fact]
@@ -265,9 +261,7 @@ public sealed class AdversarialChecksTests
         _ = body;
     }
 
-    // ---------------------------------------------------------------
-    // 攻击 3：HeaderIsolatedContent 的副作用
-    // ---------------------------------------------------------------
+// 攻击 3：HeaderIsolatedContent 的副作用
 
     /// <summary>已知长度正文：线上字节一致、Content-Length 保持、内容头隔离生效。</summary>
     [Fact]
@@ -437,9 +431,7 @@ public sealed class AdversarialChecksTests
         Assert.Equal(1, inner.DisposeCount);
     }
 
-    // ---------------------------------------------------------------
-    // 攻击 6：交叉影响（闸门槽位归还、TotalTimeout）
-    // ---------------------------------------------------------------
+// 攻击 6：交叉影响（闸门槽位归还、TotalTimeout）
 
     /// <summary>钩子失败时并发槽位必须归还：否则同实例的下一条请求会排到 QueueTimeout 超时。</summary>
     [Fact]

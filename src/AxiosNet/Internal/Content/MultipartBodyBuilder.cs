@@ -5,19 +5,14 @@ using AxiosNet.Metadata;
 
 namespace AxiosNet.Internal.Content;
 
-/// <summary>
-/// <c>multipart/form-data</c> 通道：标量 / 嵌套对象 → 普通字段，<see cref="FormFile"/> / Stream / byte[] / HttpContent → 文件部件，
-/// 数组 / 集合展开为同名重复部件；部件声明覆盖在文件部件装配处一次性应用。
-/// </summary>
+/// <summary><c>multipart/form-data</c> 通道：标量 / 嵌套对象 → 普通字段，<see cref="FormFile"/> / Stream / byte[] / HttpContent → 文件部件，数组展开为同名重复部件。</summary>
 internal static class MultipartBodyBuilder
 {
     // 文件部件的默认媒体类型（无显式 Content-Type 时用它）。
     private const string OctetStreamMediaType = AxiosContentType.OctetStream;
 
-    /// <summary>
-    /// 把数据装配成 multipart 正文；显式 boundary 沿用。失败时先释放已装部件：
-    /// 非法选项 / 环归一为 <c>ERR_BAD_OPTION_VALUE</c>，其余异常原样上抛。
-    /// </summary>
+    /// <summary>把数据装配成 multipart 正文；显式 boundary 沿用。</summary>
+    /// <remarks>失败时先释放已装部件；非法选项 / 环归一为 <c>ERR_BAD_OPTION_VALUE</c>，其余异常原样上抛。</remarks>
     public static HttpContent Create(
         object data,
         string mediaType,
@@ -43,25 +38,24 @@ internal static class MultipartBodyBuilder
         var path = new ObjectPath();
         try
         {
-            // claimed：本次装配已经用掉的流（同一份流只能挂一个部件，见 ClaimStream）。
+            // claimed：本次装配已用掉的流。
             CollectParts(null, data, content, encoding, config, ref path, claimed: new HashSet<Stream>(ReferenceEqualityComparer.Instance));
             return content;
         }
         catch (Exception ex)
         {
-            // 构建中途失败：已加入的部件（含已打开的 FileStream）必须释放。
+            // 构建中途失败：已加入的部件必须释放。
             content.Dispose();
 
-            // 再兜底释放数据里的流 / 自定义内容（可能含容器已覆盖的项，Dispose 可重复调用）。
+            // 再兜底释放数据里的流 / 自定义内容。
             MultipartOwnership.DisposeOwned(data);
 
-            // 字段名 / 声明值非法属于调用方选项错误，换成带配置上下文的 ERR_BAD_OPTION_VALUE。
+            // 字段名 / 声明值非法：换成带配置上下文的 ERR_BAD_OPTION_VALUE。
             if (ex is InvalidMultipartOptionException invalid)
             {
                 throw AxiosException.InvalidOption(invalid.Message, config, invalid);
             }
 
-            // 环检测：转成带配置的选项错误。
             if (ex is DataCycleException cycle)
             {
                 throw AxiosException.InvalidOption(cycle.Message, config, cycle);
@@ -87,7 +81,7 @@ internal static class MultipartBodyBuilder
         FormPartOverride partOverride = default,
         ValueFormat? memberFormat = null)
     {
-        // 字段名选择器从 config 读取（含实例默认值）。
+        // 字段名选择器从 config 读取。
         var nameSelector = config.SerializationOrNull?.FormFieldName;
         switch (value)
         {
@@ -95,7 +89,7 @@ internal static class MultipartBodyBuilder
                 return;
 
             case FormFile file:
-                // 值自带的声明是默认值，声明覆盖压过它；流所有权随即转给 StreamContent。
+                // 值自带的声明是默认值，声明覆盖压过它。
                 ClaimStream(file.Content, claimed);
                 AddFilePart(
                     content,
@@ -110,7 +104,7 @@ internal static class MultipartBodyBuilder
 
             case HttpContent part:
             {
-                // 调用方自带部件：只补缺失的 Name，其余（尤其 filename）原样保留。
+                // 调用方自带部件：只补缺失的 Name，其余原样保留。
                 string field;
                 try
                 {
@@ -118,7 +112,7 @@ internal static class MultipartBodyBuilder
                 }
                 catch
                 {
-                    // 内容按「随请求释放」处理，装配失败也要释放。
+                    // 装配失败也要释放。
                     part.Dispose();
                     throw;
                 }
@@ -165,7 +159,7 @@ internal static class MultipartBodyBuilder
 
             case IDictionary<string, object?> genericDictionary:
             {
-                // 含 ExpandoObject（dynamic）；调用方登记的覆盖按字段名随值一起下传
+                // 含 ExpandoObject（dynamic）；覆盖与格式化按字段名下传。
                 var overrides = (genericDictionary as FormData)?.Overrides;
                 var formats = (genericDictionary as FormData)?.Formats;
                 path.Enter(genericDictionary);
@@ -200,7 +194,7 @@ internal static class MultipartBodyBuilder
                 return;
             }
 
-            // 只实现 IReadOnlyDictionary 的字典要单独处理，不走 POCO 反射。
+            // 只实现 IReadOnlyDictionary 的字典单独处理，不走 POCO 反射。
             case IReadOnlyDictionary<string, object?> readOnlyDictionary:
             {
                 path.Enter(readOnlyDictionary);
@@ -268,7 +262,7 @@ internal static class MultipartBodyBuilder
             return;
         }
 
-        // 只实现 IDictionary<string,T> 的自定义字典（T 不是 object）或值类型字典：按键值对展开。
+        // 只实现 IDictionary<string,T> 的自定义字典。
         if (value is IEnumerable mapValue && QueryMap.CanEnumerate(mapValue))
         {
             path.Enter(mapValue);
@@ -302,7 +296,7 @@ internal static class MultipartBodyBuilder
             {
                 foreach (var item in enumerable)
                 {
-                    // 集合逐项应用同一份声明（同名重复部件）
+                    // 集合逐项应用同一份声明。
                     CollectParts(name, item, content, encoding, config, ref path, claimed, partOverride, memberFormat);
                 }
             }
@@ -314,7 +308,7 @@ internal static class MultipartBodyBuilder
             return;
         }
 
-        // 嵌套 POCO：成员清单来自对象形状，命名只看 [JsonPropertyName] 与属性名，忽略看 [JsonIgnore]。
+        // 嵌套 POCO：成员清单来自对象形状。
         path.Enter(value);
         try
         {
@@ -363,9 +357,7 @@ internal static class MultipartBodyBuilder
         // 数组沿用父名：同名重复部件。
         public string? ArrayItemName(string? prefix, int index) => prefix;
 
-        /// <summary>标量叶子加成同名文本部件（multipart 的数组语义是同名重复部件，见 <see cref="ArrayItemName"/>）。</summary>
-        /// <param name="name">部件名；<c>null</c> 时由 <see cref="RequireName"/> 报错。</param>
-        /// <param name="value">叶子值，按 multipart 通道格式化。</param>
+        /// <summary>标量叶子加成同名文本部件。</summary>
         public void Leaf(string? name, JsonElement value)
             => _content.Add(
                 new StringContent(
@@ -374,17 +366,13 @@ internal static class MultipartBodyBuilder
                 RequireName(name));
     }
 
-    /// <summary>
-    /// 登记「这个流已经归某个部件所有」：同一份流挂到两个部件上时第二个只能发出空内容 ——
-    /// <see cref="StreamContent"/> 的长度是序列化时按 <c>Length - Position</c> 现算的，
-    /// 第一个部件读完后游标已在末尾，第二个部件的长度就是 0。
-    /// </summary>
+    /// <summary>登记「这个流已归某个部件所有」：同一份流挂到两个部件上时第二个只能发出空内容。</summary>
     /// <remarks>常见来源：<c>new[] { file, file }</c>，或同一个 <see cref="FormFile"/> 挂到两个字段上。</remarks>
     private static void ClaimStream(Stream stream, HashSet<Stream> claimed)
     {
         if (!claimed.Add(stream))
         {
-            // 与「字段名非法」同属配置错误：上层统一转成 ERR_BAD_OPTION_VALUE。
+            // 与「字段名非法」同属配置错误。
             throw new InvalidMultipartOptionException(
                 "同一个流（FormFile.Content 或裸 Stream）被多个 multipart 部件引用：流的读取是单向的，"
                 + "第一个部件读完后游标已在末尾，第二个部件只会发出空内容。"
@@ -392,10 +380,7 @@ internal static class MultipartBodyBuilder
         }
     }
 
-    /// <summary>
-    /// 把一个文件类值加入容器：字段名 / 文件名 / Content-Type 按「声明覆盖 &gt; 值自带 &gt; 默认值」解析。
-    /// </summary>
-    /// <remarks>名字校验必须在部件交出所有权之前完成，否则容器的 Dispose 覆盖不到它。</remarks>
+    /// <summary>把一个文件类值加入容器：字段名 / 文件名 / Content-Type 按「声明覆盖 &gt; 值自带 &gt; 默认值」解析。</summary>
     private static void AddFilePart(
         MultipartFormDataContent content,
         string? name,
@@ -408,14 +393,14 @@ internal static class MultipartBodyBuilder
     {
         try
         {
-            // 名字优先级：显式声明 > 值自带 > 字段名（[JsonPropertyName] / 属性名，再经 FormFieldNameSelector）
+            // 名字优先级：显式声明 > 值自带 > 字段名。
             var field = RequireName(partOverride.HasExplicitName ? name : valueFieldName ?? name);
             var fileName = partOverride.FileName ?? valueFileName ?? field;
             var contentType = partOverride.ContentType ?? valueContentType ?? OctetStreamMediaType;
 
             ValidateDeclaredValue(partOverride);
 
-            // 统一入口再校验一次控制字符（第三方头值不可信）。
+            // 统一入口再校验一次控制字符。
             RequestContentType.Set(part, contentType, config);
             content.Add(part, field, fileName);
         }
@@ -426,9 +411,7 @@ internal static class MultipartBodyBuilder
         }
     }
 
-    /// <summary>
-    /// 校验调用方传入的文件名 / Content-Type，非法时换成 <see cref="InvalidMultipartOptionException"/>。
-    /// </summary>
+    /// <summary>校验调用方传入的文件名 / Content-Type，非法时换成 <see cref="InvalidMultipartOptionException"/>。</summary>
     private static void ValidateDeclaredValue(FormPartOverride partOverride)
     {
         try
@@ -457,10 +440,7 @@ internal static class MultipartBodyBuilder
     private static InvalidMultipartOptionException DeclaredValueError(ArgumentException ex) =>
         new($"部件声明的字段名 / 文件名 / Content-Type 非法：{ex.Message}", ex);
 
-    /// <summary>
-    /// 加入调用方自带的部件：已有 Content-Disposition 时只补缺失的 Name，否则交给
-    /// <see cref="MultipartFormDataContent"/> 按 name 生成。
-    /// </summary>
+    /// <summary>加入调用方自带的部件：已有 Content-Disposition 时只补缺失的 Name。</summary>
     private static void AddUserPart(MultipartFormDataContent content, HttpContent part, string name)
     {
         var disposition = part.Headers.ContentDisposition;
@@ -483,7 +463,7 @@ internal static class MultipartBodyBuilder
     {
         if (string.IsNullOrEmpty(name))
         {
-            // 与「名字含非法字符」同属配置错误，上层统一转成 ERR_BAD_OPTION_VALUE。
+            // 与「名字含非法字符」同属配置错误。
             throw new InvalidMultipartOptionException("multipart 数据项缺少字段名：根节点不能是标量，请把内容放进对象/字典字段，或对 FormFile 设置 FieldName。");
         }
 

@@ -93,7 +93,7 @@ public sealed class ResponseContentTypeTests
         Assert.Null(info.CharSet);
     }
 
-    /// <summary>端到端：媒体类型与字符集从原始头值里拆出来，和以前一样挂在 <c>Config.Response</c> 上。</summary>
+    /// <summary>端到端：媒体类型与字符集从原始头值里拆出来，挂在 <c>Config.Response</c> 上。</summary>
     [Fact]
     public async Task Response_ExposesMediaTypeAndCharSetThroughConfig()
     {

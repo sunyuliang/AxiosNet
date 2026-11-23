@@ -6,10 +6,7 @@ using System.Text;
 
 namespace AxiosNet;
 
-/// <summary>
-/// 三目标共用的 BCL 小能力入口：源码统一调用这里，具体实现对 netstandard2.0 兼容资产做等价降级。
-/// 这样业务代码不需要为「某 API 只在 net6+ 存在」到处写 #if，行为差异集中在一处可审计。
-/// </summary>
+/// <summary>三目标共用的 BCL 小能力入口：源码统一调用这里，兼容资产做等价降级。</summary>
 internal static class PlatformCompat
 {
     /// <summary>数组的最大长度（与 BCL 的 <c>Array.MaxLength</c> 同值）。</summary>
@@ -31,8 +28,9 @@ internal static class PlatformCompat
         Encoding.Latin1;
 #endif
 
-    // 兼容资产没有 Random.Shared；用一把小锁保证多线程下 NextDouble 不退化。
+    /// <summary>抖动随机源；非线程安全，需配合 <see cref="JitterRandomGate"/> 使用。</summary>
     private static readonly Random JitterRandomSource = new Random();
+    /// <summary>保护 <see cref="JitterRandomSource"/> 的锁。</summary>
     private static readonly object JitterRandomGate = new object();
 
     /// <summary>取 [0,1) 的抖动随机数（线程安全，语义对齐 Random.Shared.NextDouble）。</summary>
@@ -49,16 +47,12 @@ internal static class PlatformCompat
 #endif
     }
 
-    /// <summary>单调毫秒计数；netstandard2.0 没有 Environment.TickCount64，用高精度计时器换算。</summary>
-    /// <returns>系统开机以来的毫秒数（不回绕；与 Environment.TickCount64 同口径）。</returns>
+    /// <summary>单调毫秒计数；兼容资产用高精度计时器换算。</summary>
+    /// <returns>开机以来的毫秒数（不回绕，与 Environment.TickCount64 同口径）。</returns>
     internal static long TickCount64()
     {
 #if NETSTANDARD2_0
-        // 不能写「GetTimestamp() * 1000L / Frequency」：先乘后除会溢出。
-        // Linux / macOS 的 Stopwatch.Frequency 恒为 10^9（clock_gettime 纳秒口径，Windows QPC 才是 10^7），
-        // 而 CLOCK_MONOTONIC 从开机起算，开机约 106.8 天后 ts * 1000L 就超过 long.MaxValue，回绕成错误值，
-        // 会让 MemoryCacheStore 的 TTL 判定整体失真。改用 double 常数因子：ts 上限约 3e19 ns，
-        // double 相对误差 2^-52，换算到毫秒误差远小于 1µs，且任意开机时长都不会溢出。
+        // 先乘后除会溢出，改用 double 常数因子。
         return (long)(System.Diagnostics.Stopwatch.GetTimestamp() * (1000.0 / System.Diagnostics.Stopwatch.Frequency));
 #else
         return Environment.TickCount64;
@@ -82,10 +76,7 @@ internal static class PlatformCompat
     internal static bool IsByRefLike(Type type)
     {
 #if NETSTANDARD2_0
-        // netstandard2.0 的 Type 契约里没有该属性：运行时若自带（.NET Core 3.x+）就反射取值；
-        // .NET Framework 4.7.2+ 没有该属性，退到元数据上的 [IsByRefLike] 标记。
-        // 这里的检查按成员逐个调用（ObjectShapeReflection / InterfaceDeclaration）：把属性 getter 直接绑定成
-        // 强类型委托只做一次，之后是普通委托调用；PropertyInfo.GetValue 每次都会装箱返回值且走反射调度。
+        // 运行时自带该属性就反射取值，否则退到元数据上的 [IsByRefLike] 标记。
         if (ByRefLikeGetter is { } getter)
         {
             return getter(type);
@@ -96,10 +87,7 @@ internal static class PlatformCompat
             return property.GetValue(type) is bool value && value;
         }
 
-        // .NET Framework 4.7.2+：Type 没有 IsByRefLike 属性，ref struct 只能靠元数据上的
-        // [IsByRefLike] 标记识别。不能按 Type 身份匹配——System.Memory 等程序集在编译期
-        // 内嵌了自己的 IsByRefLikeAttribute 副本，mscorlib 的同名特性 IsDefined 实测返回 false，
-        // 因此按完整类型名匹配（读 CustomAttributeData，不实例化特性对象）。
+        // .NET Framework 4.7.2+ 只能按完整类型名识别（编译期内嵌的特性副本程序集不同，按 Type 身份匹配不可靠）。
         foreach (var attribute in CustomAttributeData.GetCustomAttributes(type))
         {
             if (attribute.AttributeType.FullName == IsByRefLikeAttributeFullName)
@@ -123,10 +111,7 @@ internal static class PlatformCompat
 
     private static readonly Func<Type, bool>? ByRefLikeGetter = CreateByRefLikeGetter();
 
-    /// <summary>
-    /// 反射取 <c>Type.IsByRefLike</c> 并编译成委托；属性缺失或签名不符时返回 <c>null</c>，
-    /// 调用方据此退化到「按名字找 [IsByRefLike] 特性」的老路径。只在兼容资产上编译一次。
-    /// </summary>
+    /// <summary>反射取 <c>Type.IsByRefLike</c> 并编译成委托；属性缺失或签名不符时返回 <c>null</c>。</summary>
     /// <returns>可复用的取值委托；不可用时为 <c>null</c>。</returns>
     private static Func<Type, bool>? CreateByRefLikeGetter()
     {
@@ -138,7 +123,7 @@ internal static class PlatformCompat
 
         try
         {
-            // 开放实例方法：第一个参数就是 Type（即属性 getter 的 this）。
+            // 开放实例方法：第一个参数就是 Type。
             return (Func<Type, bool>)getter.CreateDelegate(typeof(Func<Type, bool>));
         }
         catch (ArgumentException)

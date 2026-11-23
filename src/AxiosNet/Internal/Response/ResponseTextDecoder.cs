@@ -2,10 +2,7 @@ using System.Runtime.CompilerServices;
 
 namespace AxiosNet.Internal.Response;
 
-/// <summary>
-/// 把响应原始字节解码为文本。优先级：显式 <see cref="AxiosConfig.SerializationSettings.TextEncoding"/>
-/// → Content-Type charset → BOM → UTF-8；未知 charset 不抛异常，回落到 BOM / UTF-8。
-/// </summary>
+/// <summary>把响应原始字节解码为文本。优先级：显式 <see cref="AxiosConfig.SerializationSettings.TextEncoding"/> → charset → BOM → UTF-8；未知 charset 回落到 BOM / UTF-8。</summary>
 internal static class ResponseTextDecoder
 {
     /// <summary>字节数组入口：按 <c>forced → charset → BOM → UTF-8</c> 解析编码并剥离匹配的 BOM。</summary>
@@ -30,9 +27,7 @@ internal static class ResponseTextDecoder
         return encoding.GetString(bytes[bomLength..]);
     }
 
-    /// <summary>
-    /// 已解析编码的解码（流式分帧用，编码解析一次后逐行复用）；<paramref name="resolved"/> 为 <c>null</c> 时按 BOM → UTF-8 兜底。
-    /// </summary>
+    /// <summary>已解析编码的解码（流式分帧用）；<paramref name="resolved"/> 为 <c>null</c> 时按 BOM → UTF-8 兜底。</summary>
     public static string DecodeResolved(ReadOnlySpan<byte> bytes, Encoding? resolved)
     {
         if (bytes.Length == 0)
@@ -45,9 +40,7 @@ internal static class ResponseTextDecoder
         return encoding.GetString(bytes[bomLength..]);
     }
 
-    /// <summary>
-    /// charset 能否用于按字节找 <c>0x0A</c> 的流式分帧：ASCII 兼容编码为 <c>true</c>，UTF-16 / UTF-32 为 <c>false</c>，空 / 未知 charset 为 <c>true</c>。
-    /// </summary>
+    /// <summary>charset 能否按字节找 <c>0x0A</c> 做流式分帧：UTF-16 / UTF-32 为 <c>false</c>，其余为 <c>true</c>。</summary>
     public static bool IsAsciiCompatible(string? charSet) => IsAsciiCompatible(ResolveFromCharset(charSet));
 
     /// <summary>已解析编码的版本：<c>null</c> 表示未指定（按 UTF-8），返回 <c>true</c>。</summary>
@@ -63,13 +56,10 @@ internal static class ResponseTextDecoder
         return written == 2 && probe[0] == (byte)'A' && probe[1] == (byte)'\n';
     }
 
-    /// <summary>严格 UTF-8（不允许非法字节）：只用于判合法性，不产出字符串。</summary>
+    /// <summary>严格 UTF-8（非法字节抛异常），只用于判合法性。</summary>
     private static readonly Encoding StrictUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
-    /// <summary>
-    /// 字节是否为合法 UTF-8（不分配）。按字节解析 JSON 时 <see cref="System.Text.Json.JsonDocument"/> 不校验字符串内容，
-    /// 坏字节要到取值时才抛，所以交给调用方之前先判一次。
-    /// </summary>
+    /// <summary>字节是否为合法 UTF-8（不分配）。</summary>
     public static bool IsValidUtf8(ReadOnlySpan<byte> bytes)
     {
         try
@@ -83,10 +73,7 @@ internal static class ResponseTextDecoder
         }
     }
 
-    /// <summary>
-    /// 字节能否直接按 UTF-8 解析（不做解码中转）：未强制其它编码，且 charset 未声明或声明为 UTF-8。
-    /// 未知 charset 与 <c>Decode</c> 同口径（回落到 BOM / UTF-8）。
-    /// </summary>
+    /// <summary>字节能否直接按 UTF-8 解析：未强制其它编码，且 charset 未声明或为 UTF-8。</summary>
     public static bool IsUtf8(string? charSet, Encoding? forced)
     {
         if (forced is not null)
@@ -104,7 +91,7 @@ internal static class ResponseTextDecoder
     /// <summary>按 BOM 识别编码：UTF-8 / UTF-32（BE、LE）/ UTF-16（BE、LE）；无 BOM 返回 <c>null</c>。</summary>
     internal static Encoding? DetectFromBom(ReadOnlySpan<byte> bytes)
     {
-        // 顺序不能换：FF FE 00 00 是 UTF-32LE，若先判两字节的 FF FE 会把它误认成 UTF-16LE。
+        // 顺序不能换：FF FE 00 00 是 UTF-32LE。
         if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
         {
             return Encoding.UTF8;
@@ -135,7 +122,7 @@ internal static class ResponseTextDecoder
         return null;
     }
 
-    // GetPreamble() 每次调用都新建数组，按编码实例缓存。
+    // GetPreamble() 每次新建数组，按编码实例缓存。
     private static readonly ConditionalWeakTable<Encoding, byte[]> Preambles = new();
 
     /// <summary>取编码的 BOM 字节；<c>GetPreamble()</c> 每次都新建数组，这里按编码实例缓存一份。</summary>

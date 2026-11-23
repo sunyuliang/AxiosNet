@@ -1,15 +1,10 @@
 
 namespace AxiosNet;
 
-/// <summary>
-/// 凭据来源的唯一槽位（<see cref="AxiosConfig.TransportSettings.Auth"/>）：静态 Basic、静态令牌、完整头值，
-/// 或每请求调用一次的提供方。一个请求只能配一种形态。
-/// </summary>
+/// <summary>凭据来源的唯一槽位（<see cref="AxiosConfig.TransportSettings.Auth"/>）：静态 Basic、静态令牌、完整头值或每请求调用一次的提供方。</summary>
 /// <remarks>
-/// <para>对应 axios 的 <c>auth</c>。显式 <c>Headers.Authorization</c> 与本槽位同时设置视为配置冲突，发出前报
-/// <c>ERR_BAD_OPTION_VALUE</c>；只设其一时按该来源落头。</para>
-/// <para>凭据 → <c>Authorization</c> 头的映射只由内核实现；WebAPI 的声明式提供方仅作为适配器包成
-/// <see cref="IAxiosCredentialProvider"/>，不自己拼头。</para>
+/// 对应 axios 的 <c>auth</c>；一个请求只能配一种形态，与显式 <c>Headers.Authorization</c> 同时设置时发出前报
+/// <c>ERR_BAD_OPTION_VALUE</c>。凭据到 <c>Authorization</c> 头只由内核映射，声明式提供方经适配器包装成 <see cref="IAxiosCredentialProvider"/>。
 /// </remarks>
 public sealed class AxiosCredential
 {
@@ -28,7 +23,7 @@ public sealed class AxiosCredential
     private readonly string? _headerValue;
     private readonly IAxiosCredentialProvider? _provider;
 
-    // 静态形态的头值只由自身字段决定：算过一次就复用（对象不可变，缓存是幂等的；并发下重复计算也只会得到同值）。
+    // 静态形态的头值由字段唯一确定，算过一次就复用（重复计算同值）。
     private string? _resolvedHeaderValue;
 
     private AxiosCredential(Form form, AxiosAuth? basic = null, string? token = null, string? scheme = null, string? headerValue = null, IAxiosCredentialProvider? provider = null)
@@ -109,10 +104,7 @@ public sealed class AxiosCredential
     internal bool IsHeaderFor(string value)
         => _form == Form.Header && string.Equals(_headerValue, value, StringComparison.Ordinal);
 
-    /// <summary>
-    /// 静态形态的认证方案名（Basic 固定 <c>Basic</c>，令牌用显式 scheme 或默认 <c>Bearer</c>，
-    /// 完整头值取第一段）；提供方形态返回 <c>null</c>，由提供方在解析后决定。
-    /// </summary>
+    /// <summary>静态形态的认证方案名：Basic 固定 <c>Basic</c>，令牌用显式 scheme 或默认 <c>Bearer</c>，完整头值取第一段；提供方形态为 <c>null</c>。</summary>
     internal string? Scheme
         => _form switch
         {
@@ -157,7 +149,7 @@ public sealed class AxiosCredential
 
         if (value is not null)
         {
-            // 统一入口拦 CR/LF 等控制字符：显式头走 AxiosHeaders.Set 的校验，凭据槽位不能绕过。
+            // 校验 CR/LF 等控制字符，与显式头同一入口。
             AxiosHeaders.ValidateHeaderValue(AuthorizationHeader.Name, value);
             _resolvedHeaderValue = value;
         }

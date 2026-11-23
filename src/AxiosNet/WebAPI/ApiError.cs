@@ -36,8 +36,7 @@ public sealed class ApiErrorContext
     /// <summary>HTTP 状态码。</summary>
     public int Status => Response.Status;
 
-    /// <summary>错误响应正文原文：<see cref="AxiosResponse.RawText"/> 优先，其次按 <see cref="AxiosResponse.Data"/> 的实际形态取文本。
-    /// byte[] 按响应 charset / 强制 ResponseEncoding 解码；都不适用时为 <c>null</c>。</summary>
+    /// <summary>错误响应正文原文：<see cref="AxiosResponse.RawText"/> 优先，其次按 <see cref="AxiosResponse.Data"/> 的实际形态取文本（byte[] 按 charset 解码）；都不适用时为 <c>null</c>。</summary>
     public string? Body => Response.RawText ?? Response.Data switch
     {
         null => null,
@@ -77,15 +76,12 @@ public sealed class ApiErrorContext
 }
 
 /// <summary>
-/// 内置的强类型错误异常：携带反序列化后的错误体与原始 <see cref="AxiosException"/>。
-/// 它本身也是 <see cref="AxiosException"/>，因此 <c>catch (AxiosException)</c> 与 <c>catch (ApiError&lt;T&gt;)</c> 都能接住。
+/// 内置的强类型错误异常：携带反序列化后的错误体与原始 <see cref="AxiosException"/>；本身也是 <see cref="AxiosException"/>，两种 catch 都能接住。
 /// </summary>
 /// <typeparam name="TError">错误体模型（如 RFC 7807 的 ProblemDetails）。</typeparam>
 public sealed class ApiError<TError> : AxiosException
 {
-    /// <summary>按错误上下文构造异常（自定义工厂里也可用它 / 或自己继承 <see cref="Exception"/>）。</summary>
-    /// <param name="error">已反序列化的错误体；解析失败时为 <c>null</c>。</param>
-    /// <param name="context">错误上下文。</param>
+    /// <summary>按错误上下文构造异常；<paramref name="error"/> 为解析失败时的 <c>null</c>。</summary>
     public ApiError(TError? error, ApiErrorContext context)
         : base(
             Ensure(context).Error.Message,

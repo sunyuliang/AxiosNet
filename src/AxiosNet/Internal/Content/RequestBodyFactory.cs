@@ -3,16 +3,8 @@ using AxiosNet.Serialization;
 
 namespace AxiosNet.Internal.Content;
 
-/// <summary>
-/// 按 <see cref="AxiosConfig.Body"/> 的形态与生效 Content-Type 产出请求正文（没有正文返回 <c>null</c>）。
-/// 未显式设置 Content-Type 时用生效序列化器的 <see cref="IContentSerializer.MediaType"/>。
-/// </summary>
-/// <remarks>
-/// <c>string</c> / <c>byte[]</c> / <c>Memory</c> / <c>ArraySegment</c> / <c>Stream</c> 原样发送；
-/// <see cref="HttpContent"/> 原样透传（仅在自身没有 Content-Type 且配置显式设过时补）；
-/// <c>IAsyncEnumerable</c> 按块流式发送（长度未知）；基础类型直接取文本，不经序列化器；
-/// 结构化数据按 json / form-urlencoded（<see cref="FormBodyEncoder"/>）/ multipart（<see cref="MultipartBodyBuilder"/>）分派。
-/// </remarks>
+/// <summary>按 <see cref="AxiosConfig.Body"/> 的形态与生效 Content-Type 产出请求正文（没有正文返回 <c>null</c>）。</summary>
+/// <remarks>原始内容（string / byte[] / Memory / Stream / IAsyncEnumerable）原样发送；<see cref="HttpContent"/> 透传；结构化数据按 json / form-urlencoded / multipart 分派；基础类型直接取文本。</remarks>
 internal static class RequestBodyFactory
 {
     // multipart 表单的媒体类型；boundary 由 builder 追加，这里不带参数。
@@ -27,7 +19,7 @@ internal static class RequestBodyFactory
         var appendCharset = requestEncoding is not null;
         var mediaType = config.ContentType;
 
-        // 显式声明的 charset 优先于 RequestEncoding，只对文本正文生效；两者矛盾时直接拦下。
+        // 显式声明的 charset 优先于 RequestEncoding，只对文本正文生效；矛盾时拦下。
         if (data is not null
             && EncodesText(data)
             && RequestContentType.ResolveCharset(mediaType, config) is { } declared)
@@ -42,7 +34,7 @@ internal static class RequestBodyFactory
             encoding = declared;
         }
 
-        // 请求头里的 Content-Type 若带 charset，必须与正文实际编码一致（multipart 不参与）。
+        // 请求头里的 Content-Type 带 charset 时必须与正文实际编码一致（multipart 不参与）。
         if (data is not null
             && EncodesText(data)
             && !MediaTypes.Is(mediaType, MultipartMediaType)
@@ -57,7 +49,7 @@ internal static class RequestBodyFactory
                 + "（它的 charset 会驱动正文编码），或去掉请求头里的 charset。", config);
         }
 
-        // 请求体压缩只覆盖库自己缓冲出来的正文：流式 / 自带内容没有可压缩的完整字节。
+        // 请求体压缩只覆盖库自己缓冲出来的正文。
         if (data is not null && Compression.IsEnabled(config))
         {
             EnsureCompressible(data, mediaType, config);
@@ -81,13 +73,13 @@ internal static class RequestBodyFactory
                 return null;
 
             case HttpContent existing:
-                // 已构造好的内容原样透传；仅当内容没有 Content-Type 且用户显式配置过时才补头部。
+                // 内容原样透传；仅当内容没有 Content-Type 且用户显式配置过时才补头部。
                 if (config.ContentTypeSet && existing.Headers.ContentType is null)
                 {
                     RequestContentType.Set(existing, mediaType, config);
                 }
 
-                // multipart 没有 boundary 服务端必然解析失败，这里拦下。
+                // multipart 没有 boundary 必然解析失败。
                 if (existing.Headers.ContentType?.MediaType is { } existingMediaType
                     && existingMediaType.StartsWith("multipart/", StringComparison.OrdinalIgnoreCase)
                     && !RequestContentType.HasMultipartBoundary(existing.Headers.ContentType))
@@ -119,14 +111,14 @@ internal static class RequestBodyFactory
                 RequestContentType.Set(streamContent, mediaType, config);
                 return streamContent;
 
-            // 流式正文：按块写出、不缓冲；长度未知，传输层走 chunked / DATA 帧。
+            // 流式正文：按块写出、不缓冲，长度未知。
             case IAsyncEnumerable<byte[]> chunks:
                 return CreateStreaming(AsyncEnumerableBodyContent.FromByteChunks(chunks), mediaType, config);
 
             case IAsyncEnumerable<ReadOnlyMemory<byte>> chunks:
                 return CreateStreaming(AsyncEnumerableBodyContent.FromMemoryChunks(chunks), mediaType, config);
 
-            // 声明式 API 的默认正文：未标注成员按键名聚合成的对象，按 Content-Type 选 JSON / 表单。
+            // 声明式 API 的默认正文：未标注成员按键名聚合，按 Content-Type 选 JSON / 表单。
             case AggregateBody aggregate:
                 return CreateAggregate(aggregate, config, mediaType, encoding, appendCharset);
         }
@@ -151,16 +143,15 @@ internal static class RequestBodyFactory
         return content;
     }
 
-    /// <summary>文本正文：按生效编码取字节，按需压缩并写 Content-Type（charset 只随显式 RequestEncoding 补）。</summary>
+    /// <summary>文本正文：按生效编码取字节，按需压缩并写 Content-Type。</summary>
     private static HttpContent CreateText(string text, string mediaType, Encoding encoding, bool appendCharset, AxiosConfig config)
     {
-        // 用 ByteArrayContent 保证携带 Content-Length。
         var content = Compression.WrapBytes(encoding.GetBytes(text), config);
         RequestContentType.Set(content, RequestContentType.Compose(mediaType, encoding, appendCharset), config);
         return content;
     }
 
-    /// <summary>字节正文：按配置压缩后挂上 <c>Content-Type</c>；字节数组自带长度，能带 <c>Content-Length</c>。</summary>
+    /// <summary>字节正文：按配置压缩后挂上 <c>Content-Type</c>。</summary>
     private static HttpContent CreateBinary(byte[] bytes, string mediaType, AxiosConfig config)
     {
         var content = Compression.WrapBytes(bytes, config);
@@ -185,10 +176,7 @@ internal static class RequestBodyFactory
         return content;
     }
 
-    /// <summary>
-    /// 默认正文的分派：form-urlencoded 展平；JSON 由 <see cref="SystemTextJsonSerializer"/> 按成员声明类型写出；
-    /// multipart 与其它序列化器第一阶段明确报错，提示改用 [Multipart] / 显式 [RootBody]。
-    /// </summary>
+    /// <summary>默认正文的分派：form-urlencoded 展平；JSON 按成员声明类型写出；multipart 与其它序列化器报错。</summary>
     private static HttpContent CreateAggregate(
         AggregateBody body,
         AxiosConfig config,
@@ -225,7 +213,7 @@ internal static class RequestBodyFactory
 
         try
         {
-            // UTF-8 直接出字节：省一次文本中转；其它编码由文本入口负责编码与 charset 头。
+            // UTF-8 直接出字节。
             if (SystemTextJsonSerializer.EmitsUtf8(config))
             {
                 return CreateBinary(SystemTextJsonSerializer.SerializeAggregate(body, config), mediaType, config);
@@ -242,7 +230,7 @@ internal static class RequestBodyFactory
         }
         catch
         {
-            // 正文不再产出：成员里的流 / 文件内容按 FormFile 契约回收（与表单通道的异常路径同一口径）。
+            // 正文不再产出：成员里的流 / 文件内容按 FormFile 契约回收。
             body.DisposeOwned();
             throw;
         }
@@ -268,14 +256,14 @@ internal static class RequestBodyFactory
 
         var type = data.GetType();
 
-        // 未显式设置 ContentType 时采用序列化器自报的媒体类型（标量同样适用）。
+        // 未显式设置 ContentType 时采用序列化器自报的媒体类型。
         var serializer = AxiosContent.Get(config, mediaType);
         if (!config.ContentTypeSet && serializer.MediaType is { } declared && !string.IsNullOrWhiteSpace(declared))
         {
             mediaType = declared.Trim();
         }
 
-        // 已定型的裸标量：文本由调用方产出，媒体类型与下面的标量分支完全一致。
+        // 已定型的裸标量：文本由调用方产出。
         if (data is PreformattedValue formatted)
         {
             var formattedContent = CreateText(formatted.Text, mediaType, encoding, appendCharset, config);
@@ -286,7 +274,7 @@ internal static class RequestBodyFactory
         // 基础类型不经过序列化器，直接取文本。
         if (ScalarTypes.IsScalarType(type))
         {
-            // 标量正文同一条规则（钩子 > 通道默认）：已定型的正文走上面的 PreformattedValue 分支，不会再被问一次。
+            // 标量正文：钩子 > 通道默认。
             var scalar = CreateText(
                 ValueText.Format(data, ValueTextChannel.ScalarBody, memberFormat: null, config.SerializationOrNull?.ValueText)!,
                 mediaType,
@@ -303,15 +291,13 @@ internal static class RequestBodyFactory
             return CreateBinary(bytes, mediaType, config);
         }
 
-        // Serialize 可能往 config.Headers 写 Content-Type（含 charset）：产出之后再校验
+        // Serialize 可能写 Content-Type，产出之后再校验。
         var text = CreateText(serializer.Serialize(data, type, config), mediaType, encoding, appendCharset, config);
         ValidateDeclaredCharset(text, config, encoding);
         return text;
     }
 
-    /// <summary>
-    /// 正文产出后校验最终 Content-Type 的 charset 与正文编码一致（请求头优先）。
-    /// </summary>
+    /// <summary>正文产出后校验最终 Content-Type 的 charset 与正文编码一致（请求头优先）。</summary>
     private static void ValidateDeclaredCharset(HttpContent content, AxiosConfig config, Encoding bodyEncoding)
     {
         var finalType = config.HasHeaders && config.Headers.Get("Content-Type") is { Length: > 0 } headerType
@@ -373,7 +359,7 @@ internal static class RequestBodyFactory
     /// <summary>正文是否由本库按 <see cref="Encoding"/> 编成文本（string / 已定型的标量 / 结构化数据）。</summary>
     private static bool EncodesText(object data)
         => data is string
-            // 兜底条件对它已返回 true；这里显式列出，避免将来收紧兜底时把它误判成二进制。
+            // 兜底条件已覆盖它，这里显式列出。
             || data is PreformattedValue
             || (data is not HttpContent
                 && data is not byte[]

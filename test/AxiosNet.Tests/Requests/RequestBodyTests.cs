@@ -269,9 +269,7 @@ public sealed class RequestBodyTests
         Assert.Equal("hello", Encoding.UTF8.GetString(server.Received[0].Body));
     }
 
-    // ---------------------------------------------------------------
-    // 进度包装不得丢内容头
-    // ---------------------------------------------------------------
+// 进度包装不得丢内容头
 
     [Fact]
     public async Task MaxRequestBytes_WithUploadProgressWrapper_IsStillEnforced()
@@ -326,9 +324,7 @@ public sealed class RequestBodyTests
         Assert.Equal("application/xml", server.Received[0].Headers["content-type"]);
     }
 
-    // ---------------------------------------------------------------
-    // 上限边界值：恰好等于上限必须放行，超一字节必须拒绝
-    // ---------------------------------------------------------------
+// 上限边界值：恰好等于上限必须放行，超一字节必须拒绝
 
     [Fact]
     public async Task MaxRequestBytes_ExactlyAtLimit_SendsBody()
@@ -360,9 +356,7 @@ public sealed class RequestBodyTests
         Assert.Empty(server.Received);
     }
 
-    // ------------------------------------------------------------------
-    // 无正文时的 Content-* 头
-    // ------------------------------------------------------------------
+// 无正文时的 Content-* 头
 
     [Fact]
     public async Task ContentTypeHeader_WithoutBody_StillReachesTheServer()
@@ -426,9 +420,7 @@ public sealed class RequestBodyTests
         Assert.Equal("payload", Encoding.UTF8.GetString(request.Body));
     }
 
-    // ------------------------------------------------------------------
-    // 手写 Content-Length
-    // ------------------------------------------------------------------
+// 手写 Content-Length
 
     [Fact]
     public async Task ContentLengthHeader_MismatchingBody_ThrowsBadOptionValue()
@@ -510,9 +502,7 @@ public sealed class RequestBodyTests
         Assert.Equal("""{"name":"bob"}""", Encoding.UTF8.GetString(server.Received[0].Body));
     }
 
-    // ------------------------------------------------------------------
-    // L7：Memory<byte> / ArraySegment<byte> / ReadOnlyMemory<byte> 请求体
-    // ------------------------------------------------------------------
+// L7：Memory<byte> / ArraySegment<byte> / ReadOnlyMemory<byte> 请求体
 
     [Fact]
     public async Task MemoryByte_RequestBody_IsSentAsRawBytes()
@@ -1051,9 +1041,7 @@ public sealed class RequestBodyTests
         }
     }
 
-    // ------------------------------------------------------------------
-    // 辅助
-    // ------------------------------------------------------------------
+// 辅助
 
 
     private static async Task DrainAsync<T>(IAsyncEnumerable<T>? source)

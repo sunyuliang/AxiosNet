@@ -18,8 +18,7 @@ internal sealed class BindingAccumulator
     private readonly List<(string Name, IValueSource Source)> _queryMaps = [];
     private readonly List<(string Name, IValueSource Source)> _headers = [];
     private readonly List<IValueSource> _headerCollections = [];
-    // 未标注成员：默认通道由 Build 按 HTTP 方法决定（body 方法 → 聚合正文，其余 → Query）。
-    // Order 是声明顺序：正文合并后按键输出时保持「声明顺序即输出顺序」。
+    // 未标注成员：默认通道由 Build 按 HTTP 方法决定；Order 即声明顺序。
     private readonly List<(int Order, IValueSource Source, string FieldName, bool NameFromAttribute)> _unannotated = [];
     private readonly List<(string Name, string? Value)> _staticHeaders = [];
     // 显式 [Body]：作为请求体对象的键，可多个；键名重复在构建期报错。
@@ -107,10 +106,6 @@ internal sealed class BindingAccumulator
     }
 
     /// <summary><see cref="BodyAttribute"/>：登记为请求体对象的一个键；键名重复在 <see cref="Build"/> 报错。</summary>
-    /// <param name="source">取值来源。</param>
-    /// <param name="fieldName">回退键名（<c>[JsonPropertyName]</c> 优先，否则成员名）。</param>
-    /// <param name="explicitName"><c>[Body]</c> 显式声明的键名；null 或空白表示回退 <paramref name="fieldName"/>。</param>
-    /// <param name="nameFromAttribute">键名是否已显式确定（是则不套 JSON 命名策略）。</param>
     public void AddBody(IValueSource source, string fieldName, string? explicitName, bool nameFromAttribute)
     {
         if (source.Format is not null)
@@ -130,9 +125,6 @@ internal sealed class BindingAccumulator
     }
 
     /// <summary><see cref="RootBodyAttribute"/>：整个请求体的一个来源；多个时合并到同一层。</summary>
-    /// <param name="source">取值来源。</param>
-    /// <param name="fieldName">标量贡献的键名（<c>[JsonPropertyName]</c> 优先，否则成员名）。</param>
-    /// <param name="nameFromAttribute">键名是否来自 <c>[JsonPropertyName]</c>（是则不套 JSON 命名策略）。</param>
     public void AddRootBody(IValueSource source, string fieldName, bool nameFromAttribute)
     {
         if (source.Format is not null)
@@ -152,9 +144,6 @@ internal sealed class BindingAccumulator
     }
 
     /// <summary>未标注任何参数特性的成员：先按 Query 登记；Build 时 body 方法（且无 [RootBody]）会整体改道成聚合正文。</summary>
-    /// <param name="source">取值来源。</param>
-    /// <param name="fieldName">聚合正文的键名（<c>[JsonPropertyName]</c> 优先，否则成员名）。</param>
-    /// <param name="nameFromAttribute">键名是否来自 <c>[JsonPropertyName]</c>（是则不套 JSON 命名策略）。</param>
     public void AddUnannotated(IValueSource source, string fieldName, bool nameFromAttribute)
     {
         EnsureFormat(source, "Query");
@@ -224,17 +213,12 @@ internal sealed class BindingAccumulator
         }
     }
 
-    /// <summary>完成校验并生成计划：正文来源互斥 → 正文归并（RootBody / Body + 未标注）→ 平铺映射去重 → 路径模板核对 → 标量护栏。</summary>
-    /// <param name="method">约定的 HTTP 方法。</param>
-    /// <param name="pathTemplate">路径模板。</param>
-    /// <param name="allowDefaultBody">是否允许未标注成员改道成聚合正文（multipart 模型为 <c>false</c>）。</param>
-    /// <param name="contentType">正文媒体类型；<c>null</c> 表示未声明，按库默认的 JSON 处理。</param>
+    /// <summary>完成校验并生成计划：正文来源互斥 → 正文归并 → 平铺映射去重 → 路径模板核对 → 标量护栏。</summary>
     public BindingPlan Build(HttpMethod method, string pathTemplate, bool allowDefaultBody, string? contentType)
     {
         ValidateBodySources();
 
-        // 显式 [Body] 在任何方法上都进正文；body 方法上的未标注成员只看方法就并入正文，
-        // 不因是否已有 [RootBody] 而改道 Query——默认通道只由 HTTP 方法决定。
+        // 显式 [Body] 在任何方法上都进正文；body 方法上的未标注成员按方法并入正文，默认通道只由 HTTP 方法决定。
         var entries = new List<BodyEntry>(_bodyMembers.Count + _unannotated.Count + _rootBodies.Count);
 
         foreach (var member in _bodyMembers)
@@ -307,8 +291,6 @@ internal sealed class BindingAccumulator
     }
 
     /// <summary>正文合并的构建期校验：同层键名唯一、聚合正文装不下文件部件。</summary>
-    /// <param name="entries">按声明顺序排好的正文来源。</param>
-    /// <param name="guardCaseInsensitive">是否额外拒绝仅大小写不同的键名（只对 JSON 通道成立）。</param>
     private void ValidateBodyEntries(List<BodyEntry> entries, bool guardCaseInsensitive)
     {
         // 结构化 [RootBody] 的属性名要等序列化才知道，这里只查能确定的键（[Body] / 未标注 / 标量 [RootBody]）。
@@ -471,8 +453,7 @@ internal sealed class BindingAccumulator
 
         var type = Nullable.GetUnderlyingType(source.ValueType) ?? source.ValueType;
 
-        // 集合 / 字典部件都可能逐元素、逐值装配成文件（同名重复部件）：文件形态没有文本格式，
-        // 否则 [Format] 在运行期会被文件分支静默跳过。
+        // 集合 / 字典部件都可能装配成文件（同名重复部件）：文件形态没有文本格式。
         var fileType = FindFilePartType(type, depth: 0);
 
         if (fileType is not null)

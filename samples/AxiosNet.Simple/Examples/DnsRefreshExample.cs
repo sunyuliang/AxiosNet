@@ -28,7 +28,7 @@ public sealed class DnsRefreshExample : IExample
         Console.WriteLine($"  模拟 DNS：dns-demo.local -> 127.0.0.1:{oldServer.Port}（旧）");
         Console.WriteLine($"  备用地址：127.0.0.1:{newServer.Port}（新，切换后用）");
 
-        // ---- 场景一：靠 PooledConnectionLifetime 自然收敛 ----
+        // 场景一：靠 PooledConnectionLifetime 自然收敛
         Console.WriteLine();
         Console.WriteLine("  [1] PooledConnectionLifetime = 2s：过期后下一次请求换新连接并重新解析");
 
@@ -53,7 +53,7 @@ public sealed class DnsRefreshExample : IExample
         Console.WriteLine($"      PooledConnectionLifetime 到期后再请求 -> 命中端口 {await RequestAsync(client)}（新连接重新解析 DNS）");
         Console.WriteLine($"      新地址已接受 TCP 连接数 = {newServer.TotalConnections}");
 
-        // ---- 场景二：不想等生命周期，手动清池立即收敛 ----
+        // 场景二：不想等生命周期，手动清池立即收敛
         Console.WriteLine();
         Console.WriteLine("  [2] 长生命周期（10 分钟）下，用 pool.Clear() 立即失效");
 
@@ -69,7 +69,7 @@ public sealed class DnsRefreshExample : IExample
         Console.WriteLine("      >>> pool.Clear()");
         Console.WriteLine($"      清池后请求 -> 命中端口 {await RequestAsync(frozenClient)}（立即收敛到当前 DNS）");
 
-        // ---- 小结 ----
+        // 小结
         Console.WriteLine();
         Console.WriteLine("  要点：");
         Console.WriteLine("    · PooledConnectionLifetime 控制「一条连接最多还能被复用多久」，到期后下一次取用时换新连接并重新解析 DNS");

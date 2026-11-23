@@ -6,7 +6,6 @@ namespace AxiosNet.Internal.Headers;
 
 /// <summary>
 /// 请求侧 <c>Content-Type</c> 的组装与解析：写头、按需补 charset、读取 boundary。
-/// <see cref="Set"/> 是库内写 Content-Type 的唯一入口，统一在这里拦控制字符。
 /// </summary>
 internal static class RequestContentType
 {
@@ -26,9 +25,7 @@ internal static class RequestContentType
         content.Headers.TryAddWithoutValidation("Content-Type", mediaType);
     }
 
-    /// <summary>
-    /// 组合实际写入的 Content-Type：已自带 charset 时保留用户设置，文本类型在显式设置 RequestEncoding 时补 charset。
-    /// </summary>
+    /// <summary>组合实际写入的 Content-Type：已带 charset 时保留原值，仅文本类型在显式设置 RequestEncoding 时补 charset。</summary>
     public static string Compose(string mediaType, Encoding encoding, bool appendCharset)
     {
         if (!appendCharset
@@ -44,7 +41,7 @@ internal static class RequestContentType
     /// <summary>媒体类型是否已声明 charset（按标准解析，容忍 <c>charset = utf-8</c> / 带引号等写法）。</summary>
     private static bool HasCharsetParameter(string mediaType)
     {
-        // 快速排除：没有 "charset" 字样时直接返回。
+        // 不含 "charset" 字样时直接返回。
         if (!SpanComparisons.ContainsIgnoreCase(mediaType, "charset"))
         {
             return false;
@@ -61,19 +58,14 @@ internal static class RequestContentType
             }
         }
 
-        // 解析不出来时退回朴素查找，避免写出重复 charset。
+        // 解析失败时退回朴素查找。
         return SpanComparisons.ContainsIgnoreCase(mediaType, "charset=");
     }
 
     /// <summary>
-    /// 取媒体类型里显式声明的 charset，供「正文要按它编码 / 要与头判定一致」的调用点使用：
-    /// 没有声明 charset 时为 <c>null</c>，声明了但当前平台解析不出来时抛 <c>ERR_BAD_OPTION_VALUE</c>。
+    /// 取媒体类型里声明的 charset：未声明返回 <c>null</c>，声明了但当前平台解析不出来时抛 <c>ERR_BAD_OPTION_VALUE</c>。
     /// </summary>
-    /// <remarks>
-    /// 解析不出来的名字**必须**是错误而不是 <c>null</c>：库零依赖、不注册 <c>CodePagesEncodingProvider</c>，
-    /// <c>charset=gbk</c> / <c>windows-1252</c> 在默认 .NET 上本来就解析不出来；调用点再把它当「没声明」，
-    /// 正文就会按 UTF-8 编码、头里却留着 gbk，服务端按头解出乱码且没有任何报错。
-    /// </remarks>
+    /// <remarks>库零依赖、不注册 <c>CodePagesEncodingProvider</c>，<c>gbk</c> 之类的名字在默认 .NET 上解析不出来；此时报错而非返回 <c>null</c>，以免正文按 UTF-8 编码却按别的编码标注。</remarks>
     public static Encoding? ResolveCharset(string mediaType, AxiosConfig? config)
     {
         if (ParseCharset(mediaType, out var unresolved) is { } encoding)
@@ -94,7 +86,7 @@ internal static class RequestContentType
             config);
     }
 
-    /// <summary>解析 charset 参数：返回编码；解析不出来时由 <paramref name="unresolvedName"/> 带回声明的名字（不判定对错）。</summary>
+    /// <summary>解析 charset 参数；解析不出来时由 <paramref name="unresolvedName"/> 带回声明的名字。</summary>
     private static Encoding? ParseCharset(string mediaType, out string? unresolvedName)
     {
         unresolvedName = null;
@@ -110,7 +102,7 @@ internal static class RequestContentType
                 continue;
             }
 
-            // 参数值可能带引号（charset="utf-8"）；charset 名本身不含引号，直接剥
+            // 参数值可能带引号；剥掉后再解析。
             var name = parameter.Value?.Trim().Trim('"');
             if (string.IsNullOrEmpty(name))
             {
@@ -120,7 +112,7 @@ internal static class RequestContentType
             var resolved = EncodingResolver.TryResolve(name);
             if (resolved is null)
             {
-                // 平台不识别的 charset 名不在此判定：要不要报错由调用点（ResolveCharset）决定。
+                // 不识别的名字只带回，不在此判定对错。
                 unresolvedName = name;
             }
 
@@ -131,13 +123,11 @@ internal static class RequestContentType
     }
 
     /// <summary>
-    /// 从媒体类型参数里取 boundary；没有则返回 <c>null</c>。
-    /// 统一走 <see cref="MediaTypeHeaderValue.TryParse"/>：参数顺序、<c>boundary = abc</c> 的空格、引号都按 RFC 规则处理，
-    /// 不用字符串查找，避免「声明了边界却按没有处理」的静默替换。
+    /// 从媒体类型参数里取 boundary；没有或解析不出来则返回 <c>null</c>。参数顺序、空格、引号按 RFC 规则处理。
     /// </summary>
     public static string? ExtractBoundary(string mediaType)
     {
-        // 无法解析的媒体类型按「没有声明 boundary」处理：是否合法由写头 / 构建内容处决定。
+        // 无法解析的媒体类型按「没有声明 boundary」处理。
         if (!MediaTypeHeaderValue.TryParse(mediaType, out var parsed))
         {
             return null;
@@ -156,7 +146,7 @@ internal static class RequestContentType
                 return null;
             }
 
-            // 引号包裹的边界：引号本身不进 boundary；未闭合的引号视为没有声明。
+            // 引号包裹的边界剥掉引号；未闭合的引号视为没有声明。
             if (value[0] == '"')
             {
                 if (value.Length < 2 || value[^1] != '"')

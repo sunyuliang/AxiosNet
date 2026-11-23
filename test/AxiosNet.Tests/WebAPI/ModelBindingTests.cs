@@ -463,9 +463,7 @@ public sealed class ModelBindingTests
         Assert.Contains("[Multipart]", file.Message, StringComparison.Ordinal);
     }
 
-    // ------------------------------------------------------------------
-    // 2) 声明式头绑定的 fail-fast（异常类型沿用 AxiosHeaders.Set 的公开契约）
-    // ------------------------------------------------------------------
+// 2) 声明式头绑定的 fail-fast（异常类型沿用 AxiosHeaders.Set 的公开契约）
 
     [Fact]
     public async Task DeclarativeHeader_InvalidName_FailsFastBeforeSend()
@@ -523,7 +521,7 @@ public sealed class ModelBindingTests
         Assert.Contains("When=2026-10-22T08%3A30%3A00.000Z", received.Query);
     }
 
-    // ---- 路径绑定 ----
+    // 路径绑定
 
     [Fact]
     public async Task Get_PathTokenMatchesBindingCaseInsensitively()
@@ -582,7 +580,7 @@ public sealed class ModelBindingTests
         Assert.Equal("/records/3", received.Path);
     }
 
-    // ---- 默认正文边界：成员值为 null 也发送对象 ----
+    // 默认正文边界：成员值为 null 也发送对象
 
     [Fact]
     public async Task Post_DefaultBodyNullValue_SendsNullMember()
@@ -631,7 +629,7 @@ public sealed class ModelBindingTests
         Assert.Contains("Name=carol", Encoding.UTF8.GetString(received.Body));
     }
 
-    // ---- fail-fast：非法值在发出前被拦下 ----
+    // fail-fast：非法值在发出前被拦下
 
     [Fact]
     public async Task Header_ValueWithControlChars_FailsFastBeforeSend()
@@ -649,7 +647,7 @@ public sealed class ModelBindingTests
         Assert.Empty(server.Received);
     }
 
-    // ---- 原始响应形态 ----
+    // 原始响应形态
 
     [Fact]
     public async Task Get_ByteArrayResponse_ReceivesRawBytes()
@@ -684,7 +682,7 @@ public sealed class ModelBindingTests
         Assert.Equal(payload, ms.ToArray());
     }
 
-    // ---- 连接复用与门面守卫 ----
+    // 连接复用与门面守卫
 
     [Fact]
     public async Task TwoSequentialRequests_ReuseSingleConnection()
@@ -701,7 +699,7 @@ public sealed class ModelBindingTests
         Assert.Equal(1, server.TotalConnections);
     }
 
-    // ---- 自定义谓词：HttpApiAttribute 直接引用 HttpMethod ----
+    // 自定义谓词：HttpApiAttribute 直接引用 HttpMethod
 
     [Fact]
     public async Task PropFind_CustomVerbViaHttpMethodInstance_PassesThrough()
@@ -719,7 +717,7 @@ public sealed class ModelBindingTests
         Assert.Equal("/calendar/event", received.Path);
     }
 
-    // ---- 直用 HttpApiAttribute（字符串方法名）----
+    // 直用 HttpApiAttribute（字符串方法名）
 
     [Fact]
     public async Task DirectHttpApi_LowercaseMethod_NormalizedOnWire()
@@ -1026,7 +1024,7 @@ public sealed class ModelBindingTests
         Assert.Equal(404, ex.Status);
     }
 
-    // ---- 默认正文：POST/PUT/PATCH 上全部未标注成员按键名聚合成一个对象 ----
+    // 默认正文：POST/PUT/PATCH 上全部未标注成员按键名聚合成一个对象
 
     [Fact]
     public async Task Post_SingleUnannotatedComplexProperty_DefaultsToBody()
@@ -1161,7 +1159,7 @@ public sealed class ModelBindingTests
         Assert.Empty(received.Body);
     }
 
-    // ---- [ApiIgnore]：属性从绑定中完全排除 ----
+    // [ApiIgnore]：属性从绑定中完全排除
 
     [Fact]
     public async Task Get_IgnoredProperty_IsNotSentAnywhere()
@@ -1213,7 +1211,7 @@ public sealed class ModelBindingTests
         Assert.Contains("二义性", ex.Message);
     }
 
-    // ---- 多特性并存：同一属性绑定到多处 ----
+    // 多特性并存：同一属性绑定到多处
 
     [Fact]
     public async Task Get_PropertyInPathAndHeader_BindsBoth()
@@ -1303,9 +1301,7 @@ public sealed class ModelBindingTests
         Assert.Contains("不是标量", ex.Message);
     }
 
-    // ------------------------------------------------------------------
-    // B1：未标注的平铺字典在 POST 上按成员键聚合进默认 Body
-    // ------------------------------------------------------------------
+// B1：未标注的平铺字典在 POST 上按成员键聚合进默认 Body
 
     [Fact]
     public async Task B1_UnannotatedFlatMap_OnPost_BecomesBodyMember()
@@ -1332,9 +1328,7 @@ public sealed class ModelBindingTests
         Assert.Equal("2", json.GetProperty("filters").GetProperty("page").GetString());
     }
 
-    // ------------------------------------------------------------------
-    // B4：平铺字典不产生具名参数，不能占用「同名查询绑定」的唯一名额
-    // ------------------------------------------------------------------
+// B4：平铺字典不产生具名参数，不能占用「同名查询绑定」的唯一名额
 
     [Fact]
     public void B4_FlatMap_DoesNotConflictWithNamedQueryBinding()
@@ -1434,9 +1428,7 @@ public sealed class ModelBindingTests
     private static ApiClient CreateClient_ApiClientRequest(TestHttpServer server)
         => new(server.Url);
 
-    // ------------------------------------------------------------------
-    // 测试模型
-    // ------------------------------------------------------------------
+// 测试模型
 
     [Post("search")]
     private sealed class FlatMapOnlyPostRequest : IApiRequest<Person>
@@ -1738,9 +1730,7 @@ public sealed class ModelBindingTests
     }
 
 
-    // ------------------------------------------------------------------
-    // 测试替身
-    // ------------------------------------------------------------------
+// 测试替身
 
 
     /// <summary>预置分块的响应流；可为每个分块指定读取前的延迟，读完后挂起。</summary>
@@ -1829,9 +1819,7 @@ public sealed class ModelBindingTests
     }
 
 
-    // ---------------------------------------------------------------
-    // 辅助
-    // ---------------------------------------------------------------
+// 辅助
 
 
     /// <summary>预置正文的流式响应，Content-Type 可配置（验证非 UTF-8 charset 的逐行解码）。</summary>

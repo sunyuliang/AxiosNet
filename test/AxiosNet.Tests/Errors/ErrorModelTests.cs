@@ -135,9 +135,7 @@ public sealed class ErrorModelTests
         Assert.Equal("application/json", ex.Response.GetHeader("Content-Type")?.Split(';')[0]);
     }
 
-    // ------------------------------------------------------------------
-    // validateStatus 只判定一次
-    // ------------------------------------------------------------------
+// validateStatus 只判定一次
 
     [Fact]
     public async Task ValidateStatus_IsInvokedExactlyOncePerRequest()
@@ -173,9 +171,7 @@ public sealed class ErrorModelTests
         Assert.Equal(1, calls);
     }
 
-    // ------------------------------------------------------------------
-    // 池级错误也带 Config
-    // ------------------------------------------------------------------
+// 池级错误也带 Config
 
     [Fact]
     public async Task PoolCapacityError_FromRequest_CarriesConfig()
@@ -201,9 +197,7 @@ public sealed class ErrorModelTests
         Assert.Empty(server.Received);
     }
 
-    // ------------------------------------------------------------------
-    // 超长 URL 的异常消息
-    // ------------------------------------------------------------------
+// 超长 URL 的异常消息
 
     [Fact]
     public void InvalidUrl_WithHugeQuery_DoesNotEmbedWholeUrlInMessage()
@@ -245,9 +239,7 @@ public sealed class ErrorModelTests
         Assert.Contains("404", ex.Message);
     }
 
-    // ------------------------------------------------------------------
-    // 错误消息里的响应正文片段：状态被拒 / 解析失败时，日志应能直接看到服务端原因
-    // ------------------------------------------------------------------
+// 错误消息里的响应正文片段：状态被拒 / 解析失败时，日志应能直接看到服务端原因
 
     [Fact]
     public async Task Status404_MessageAndResponseBody_CarryServerReason()
@@ -639,9 +631,7 @@ public sealed class ErrorModelTests
         Assert.Equal("{\"ok\":true}", await reader.ReadToEndAsync());
     }
 
-    // ------------------------------------------------------------------
-    // L11：ERR_INVALID_URL / ERR_BAD_OPTION_VALUE 携带 Config
-    // ------------------------------------------------------------------
+// L11：ERR_INVALID_URL / ERR_BAD_OPTION_VALUE 携带 Config
 
     [Fact]
     public async Task InvalidUrl_ErrorCarriesConfig()
@@ -685,9 +675,7 @@ public sealed class ErrorModelTests
         Assert.Same(defaults, ex.Config);
     }
 
-    // ------------------------------------------------------------------
-    // 测试辅助
-    // ------------------------------------------------------------------
+// 测试辅助
 
 
     /// <summary>固定应答的离线 Handler（回放语义用例只需要一条稳定的响应）。</summary>

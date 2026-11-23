@@ -4,10 +4,8 @@ namespace AxiosNet;
 /// 对应 axios 的 AxiosError：携带 code / config / request / response，错误码与 axios 对齐。
 /// </summary>
 /// <remarks>
-/// <b>请求失败</b>一律是本类型（派生类型同样如此，<c>catch (AxiosException)</c> 全都接得住）；
-/// 调用方传参非法（头名不是合法 token、用户名含冒号、<c>ContentType</c> 为空白等）仍抛 BCL 的 <see cref="ArgumentException"/>。
-/// 状态码被拒绝时，<see cref="Exception.Message"/> 会附上服务端响应正文的片段（最多 512 字符），
-/// 日志里能直接看到服务端给出的原因；完整原文见 <see cref="ResponseBody"/>。
+/// 请求失败一律是本类型；调用方传参非法（头名不是合法 token、用户名含冒号、<c>ContentType</c> 为空白等）抛 BCL 的 <see cref="ArgumentException"/>。
+/// 状态码被拒绝时消息附服务端正文片段（最多 512 字符），完整原文见 <see cref="ResponseBody"/>。
 /// </remarks>
 public class AxiosException : Exception
 {
@@ -17,7 +15,7 @@ public class AxiosException : Exception
     /// <summary>服务端 5xx，或响应体无法按目标类型解析、超出 maxContentLength。</summary>
     public const string ErrBadResponse = "ERR_BAD_RESPONSE";
 
-    /// <summary>请求超时（<see cref="AxiosConfig.Timeout"/>）；总预算 <see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/> 在本次尝试发出前耗尽时也用它，靠 <see cref="IsTotalTimeoutExceeded"/> 区分。</summary>
+    /// <summary>请求超时（<see cref="AxiosConfig.Timeout"/>）；总预算在发送前耗尽时也用它，靠 <see cref="IsTotalTimeoutExceeded"/> 区分。</summary>
     public const string ErrConnAborted = "ECONNABORTED";
 
     /// <summary>网络层失败（连接被拒、DNS 失败等）。</summary>
@@ -32,46 +30,36 @@ public class AxiosException : Exception
     /// <summary>配置项非法或无法按请求生效（例如按请求设置代理）。</summary>
     public const string ErrBadOptionValue = "ERR_BAD_OPTION_VALUE";
 
-    /// <summary>
-    /// 并发闸门排队超时：等不到空闲槽位（<c>AxiosClientOptions.MaxInFlight</c> +
-    /// <c>Resilience.Concurrency.QueueTimeout</c>），请求没有发出去。
-    /// </summary>
+    /// <summary>并发闸门排队超时：等不到空闲槽位，请求没有发出去。</summary>
     public const string ErrQueueTimeout = "ERR_QUEUE_TIMEOUT";
 
-    /// <summary>
-    /// 并发闸门的排队队列已满（<c>AxiosClientOptions.MaxQueue</c>）：请求<b>没有发出</b>，
-    /// 与 <see cref="ErrQueueTimeout"/> 的区别是「连排队名额都没有」。
-    /// </summary>
+    /// <summary>并发闸门的排队队列已满（<c>AxiosClientOptions.MaxQueue</c>）：请求没有发出。</summary>
     public const string ErrQueueFull = "ERR_QUEUE_FULL";
 
     /// <summary>熔断打开：请求<b>没有发出</b>（<see cref="AxiosConfig.ResilienceSettings.Circuit"/>）。</summary>
     public const string ErrCircuitOpen = "ERR_CIRCUIT_OPEN";
 
-    /// <summary>
-    /// 连接池 origin 基数饱和（<see cref="AxiosNet.Pooling.ConnectionPoolOptions.MaxEndpointCount"/>）：同时「在途」的
-    /// 不同 host:port 数量达上限且无可驱逐的空闲节点，请求没有发出。
-    /// </summary>
+    /// <summary>连接池 origin 基数饱和（<see cref="AxiosNet.Pooling.ConnectionPoolOptions.MaxEndpointCount"/>）：请求没有发出。</summary>
     public const string ErrPoolExhausted = "ERR_POOL_EXHAUSTED";
 
     /// <summary>
-    /// 重定向次数用尽：服务端仍返回 3xx + <c>Location</c>，但已跟随到 <c>AxiosClientOptions.MaxRedirects</c> 上限。
-    /// 与 <c>MaxRedirects = 0</c>（主动关闭跟随，仍报 <see cref="ErrBadRequest"/>）用错误码与文案双向区分。
+    /// 重定向次数用尽：服务端仍返回 3xx + <c>Location</c>，已跟随到 <c>AxiosClientOptions.MaxRedirects</c> 上限。
+    /// 与 <c>MaxRedirects = 0</c>（关闭跟随，报 <see cref="ErrBadRequest"/>）用错误码区分。
     /// </summary>
     public const string ErrTooManyRedirects = "ERR_TOO_MANY_REDIRECTS";
 
-    /// <summary>对应 axios 的 <c>isAxiosError</c>：这个类型本身就是「axios 错误」，恒为 <c>true</c>，供跨语言对照与统一判型。</summary>
+    /// <summary>对应 axios 的 <c>isAxiosError</c>：恒为 <c>true</c>。</summary>
     public bool IsAxiosError => true;
 
-    /// <summary>错误码，取值见 <see cref="ErrBadRequest"/> 等常量（与 axios 对齐）；分支判断用它，别解析消息文本。</summary>
+    /// <summary>错误码，取值见 <see cref="ErrBadRequest"/> 等常量；分支判断用它，别解析消息文本。</summary>
     public string? Code { get; }
 
     /// <summary>
-    /// <see cref="Code"/> 的枚举形式：值相同时可直接 <c>switch</c> 穷举；<see cref="Code"/> 不是内置常量时为
-    /// <see cref="AxiosErrorCode.Unknown"/>（例如派生类写入的自定义码）。
+    /// <see cref="Code"/> 的枚举形式：值相同时可直接 <c>switch</c> 穷举；不是内置常量时为 <see cref="AxiosErrorCode.Unknown"/>。
     /// </summary>
     public AxiosErrorCode ErrorCode => AxiosErrorCodes.FromString(Code);
 
-    /// <summary>触发本次错误的请求配置（该请求的生效值）。想在错误里复盘「当时用了什么参数」看这里。</summary>
+    /// <summary>触发本次错误的请求配置（该请求的生效值）。</summary>
     public AxiosConfig? Config { get; }
 
     /// <summary>触发本次错误的请求。请求结束后 <c>Content</c> 已释放，需要结构化快照请用 <see cref="ToJson"/>。</summary>
@@ -83,13 +71,8 @@ public class AxiosException : Exception
     /// <summary>HTTP 状态码（有响应时可用，等价于 <c>Response.Status</c>）。</summary>
     public int? Status => Response?.Status;
 
-    /// <summary>
-    /// 失败响应的正文原文（等价于 <c>Response.RawText</c>），供直接读日志 / 排查用，不必再穿透到响应对象。
-    /// </summary>
-    /// <remarks>
-    /// 与 <see cref="AxiosResponse.RawText"/> 同一口径：状态码被拒绝、响应装配失败时保留；二进制响应、流式成功响应为 <c>null</c>。
-    /// 消息里的正文片段有长度上限，需要完整正文时用本属性。
-    /// </remarks>
+    /// <summary>失败响应的正文原文（等价于 <c>Response.RawText</c>）。</summary>
+    /// <remarks>状态码被拒绝、响应装配失败时保留；二进制响应、流式成功响应为 <c>null</c>。</remarks>
     public string? ResponseBody => Response?.RawText;
 
     /// <summary>熔断拒绝时的建议等待时间（只有 <see cref="ErrCircuitOpen"/> 才可能有值，库不会据此自动重试）。</summary>
@@ -99,24 +82,21 @@ public class AxiosException : Exception
     public Exception? Cause => InnerException;
 
     /// <summary>
-    /// 是否属于「<see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/> 在请求<b>发出之前</b>就已耗尽」——<c>ECONNABORTED</c> 的一个子集，
-    /// 与「发出之后超时」区分开。
+    /// 是否属于「总预算在请求发出之前就已耗尽」——<c>ECONNABORTED</c> 的一个子集，与「发出之后超时」区分开。
     /// </summary>
-    /// <remarks>库内按同一口径分流：不计入熔断失败、不重试、不换端点。</remarks>
     public bool IsTotalTimeoutExceeded { get; private init; }
 
     /// <summary>本次超时的上限取自剩余总预算（被 <see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/> 压小）。</summary>
     internal bool TimedOutOnTotalBudget { get; private init; }
 
     /// <summary>
-    /// 是否属于「请求构造阶段失败」（默认查询串展平时的取值 / 格式化抛错）。这是与具体 API 分层无关的中性分类：
+    /// 是否属于「请求构造阶段失败」（默认查询串展平时的取值 / 格式化抛错）。
     /// 核心直调保持 <c>ERR_BAD_OPTION_VALUE</c>，外层可以据此改判自己的错误码。
     /// </summary>
     public bool IsRequestConstructionFailure { get; private init; }
 
     /// <summary>
-    /// 供派生类型构造异常；调用方应当读取库抛出的实例，而不是自己创建。
-    /// <paramref name="code"/> 决定 <see cref="ErrorCode"/>，取值请用 <see cref="ErrBadRequest"/> 等常量。
+    /// 供派生类型构造异常；调用方应当读取库抛出的实例，而不是自己创建。<paramref name="code"/> 取值请用 <see cref="ErrBadRequest"/> 等常量。
     /// </summary>
     protected AxiosException(
         string message,
@@ -136,10 +116,7 @@ public class AxiosException : Exception
     }
 
     /// <summary>对应 axios <c>error.toJSON()</c>：可直接序列化进日志的结构化快照。</summary>
-    /// <remarks>
-    /// 比 axios 多一项 <c>responseBody</c>：失败响应的正文片段（与消息同一口径，最多 512 字符）。
-    /// 结构化日志里通常只看 message，把服务端原因一并带上才不用再回头翻响应。
-    /// </remarks>
+    /// <remarks>比 axios 多一项 <c>responseBody</c>：失败响应的正文片段（最多 512 字符）。</remarks>
     public IReadOnlyDictionary<string, object?> ToJson()
     {
         var request = Request;
@@ -157,9 +134,7 @@ public class AxiosException : Exception
         };
     }
 
-    /// <summary>
-    /// 单次尝试超时。<paramref name="effectiveTimeout"/> 只在被总预算压小时传入，用于在消息里写明真实上限。
-    /// </summary>
+    /// <summary>单次尝试超时。<paramref name="effectiveTimeout"/> 只在被总预算压小时传入，用于在消息里写明真实上限。</summary>
     internal static AxiosException Timeout(
         AxiosConfig config,
         HttpRequestMessage request,
@@ -174,7 +149,7 @@ public class AxiosException : Exception
         }
         else if (effectiveTimeout is { } effective)
         {
-            // 「没设 Timeout」不能写成 0ms：0 在库里的含义是「不限时」，写成 0ms 会被读成「给了一个极小的上限」。
+            // 0 在库里的含义是「不限时」，消息里写 unset。
             var configured = config.Timeout > TimeSpan.Zero
                 ? $"{config.Timeout.TotalMilliseconds:0}ms"
                 : "unset";
@@ -194,14 +169,13 @@ public class AxiosException : Exception
     }
 
     /// <summary>
-    /// 总预算（<see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/>）已耗尽，本次尝试<b>根本没有发出</b>：错误码与超时一致（<c>ECONNABORTED</c>），
-    /// 消息指明是第几次尝试、总预算多少。
+    /// 总预算已耗尽，本次尝试<b>根本没有发出</b>：错误码与超时一致（<c>ECONNABORTED</c>），消息指明第几次尝试与总预算。
     /// </summary>
     /// <param name="config">本次请求的生效配置（错误码、回调文案与超时消息都取自它）。</param>
-    /// <param name="request">触发本次失败的请求（挂在异常上供调用方定位）。</param>
-    /// <param name="attempt">第几次尝试未能发出，写进消息里便于排查。</param>
-    /// <param name="budget">总预算的配置值，只用于消息；取原样（可空）以免配置被中途改写时抛出无关异常。</param>
-    /// <param name="inner">把预算耗尽归因到的那次失败（通常是上一次尝试抛出的异常），保留 <c>Cause</c> 链。</param>
+    /// <param name="request">触发本次失败的请求。</param>
+    /// <param name="attempt">第几次尝试未能发出。</param>
+    /// <param name="budget">总预算的配置值，只用于消息。</param>
+    /// <param name="inner">预算耗尽归因到的那次失败，保留 <c>Cause</c> 链。</param>
     internal static AxiosException TotalTimeoutExceeded(
         AxiosConfig config,
         HttpRequestMessage? request,
@@ -226,12 +200,9 @@ public class AxiosException : Exception
     }
 
     /// <summary>
-    /// 总预算（<see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/>）在某次尝试<b>发出之后</b>到点：本次尝试的上限本就被剩余预算压小，
-    /// 错误码与超时一致（<c>ECONNABORTED</c>），对外同样以 <see cref="IsTotalTimeoutExceeded"/> 表示「预算已经花完、不会再发下一次」。
+    /// 总预算在某次尝试<b>发出之后</b>到点：错误码与超时一致（<c>ECONNABORTED</c>），对外同样以 <see cref="IsTotalTimeoutExceeded"/> 表示预算已花完。
     /// </summary>
-    /// <remarks>
-    /// 与 <see cref="TotalTimeoutExceeded"/> 的区别只在文案：这里说的是「第几次尝试在途时到点」，而不是「下一次发不出去」。
-    /// </remarks>
+    /// <remarks>与 <see cref="TotalTimeoutExceeded"/> 的区别只在文案：这里说的是「第几次尝试在途时到点」。</remarks>
     internal static AxiosException TotalTimeoutExceededDuringAttempt(
         AxiosConfig config,
         HttpRequestMessage? request,
@@ -255,7 +226,7 @@ public class AxiosException : Exception
         };
     }
 
-    /// <summary>流式响应的单帧超过内部上限（没有分帧符的畸形流会把缓冲区撑到不可控）。</summary>
+    /// <summary>流式响应的单帧超过内部上限。</summary>
     internal static AxiosException StreamFrameTooLarge(AxiosConfig config, HttpRequestMessage? request, string format, int limit)
     {
         return new AxiosException(
@@ -338,7 +309,7 @@ public class AxiosException : Exception
         return new AxiosException("Network Error", ErrNetwork, config, request, null, inner);
     }
 
-    /// <summary>熔断拒绝：请求没有发出（没有连接、没有流量、没有副作用），消息里带上计数维度与建议等待时间。</summary>
+    /// <summary>熔断拒绝：请求没有发出，消息带上计数维度与建议等待时间。</summary>
     internal static AxiosException CircuitOpen(AxiosConfig config, HttpRequestMessage? request, string host, TimeSpan retryAfter)
     {
         var hint = retryAfter > TimeSpan.Zero
@@ -356,8 +327,7 @@ public class AxiosException : Exception
     }
 
     /// <summary>
-    /// 连接池 origin 基数饱和：distinct origin 同时「在途」的数量触顶 <see cref="AxiosNet.Pooling.ConnectionPoolOptions.MaxEndpointCount"/>，
-    /// 且没有可驱逐的空闲节点，请求没有发出。
+    /// 连接池 origin 基数饱和：distinct origin 同时「在途」的数量触顶，且没有可驱逐的空闲节点，请求没有发出。
     /// </summary>
     internal static AxiosException PoolExhausted(AxiosConfig? config, HttpRequestMessage? request, int max, Exception? inner = null)
     {
@@ -382,12 +352,10 @@ public class AxiosException : Exception
     /// <summary>URL 非法（<c>ERR_INVALID_URL</c>）：消息里的 URL 截断到 <c>MaxUrlInMessage</c>。</summary>
     internal static AxiosException InvalidUrl(string url, AxiosConfig? config = null, Exception? inner = null, string? message = null)
     {
-        // 超长 URL 整条塞进消息只会变成几十万字符的日志。长度本身由 UrlBuilder 的闸门负责拒
-        // （.NET 10 起 Uri 不再限长，不能再指望它挡），这里只保证消息恒定在 MaxUrlInMessage 量级。
         return new AxiosException(message ?? $"Invalid URL: {Truncate(url)}", ErrInvalidUrl, config, null, null, inner);
     }
 
-    // 消息里 URL 的截断长度：日志不该被一条超长 URL 撑爆。
+    // 消息里 URL 的截断长度。
     private const int MaxUrlInMessage = 512;
 
     /// <summary>超长 URL 截断后再进消息（512 字符上限），尾部标出原始长度。</summary>
@@ -396,7 +364,7 @@ public class AxiosException : Exception
             ? value
             : value[..MaxUrlInMessage] + $"...(truncated, {value.Length} chars)";
 
-    // 异常消息 / toJSON 里响应正文的字符上限：超长错误页（HTML）不该把日志撑爆。
+    // 异常消息 / toJSON 里响应正文的字符上限。
     private const int MaxBodyInMessage = 512;
 
     /// <summary>消息尾部追加正文片段：空正文不追加（保持原文案），换行压平，超长截断。</summary>
@@ -405,7 +373,7 @@ public class AxiosException : Exception
 
     /// <summary>
     /// 正文片段：去首尾空白、把 CR/LF 折成空格（多行日志不会被拆散），超长时截断并标出原始长度。
-    /// 只折叠换行，不改写其余空白——JSON 字符串里的空格可能是有意义的。
+    /// 只折叠换行，不改写其余空白。
     /// </summary>
     private static string BodySnippet(string body)
     {
@@ -437,9 +405,7 @@ public class AxiosException : Exception
         return new AxiosException(message, ErrBadOptionValue, config, null, null, inner);
     }
 
-    /// <summary>
-    /// 正文为空但调用方按「一定有正文」取值（<c>AxiosResponse&lt;T&gt;.DataOrThrow()</c> 用）。
-    /// </summary>
+    /// <summary>正文为空但调用方按「一定有正文」取值（<c>AxiosResponse&lt;T&gt;.DataOrThrow()</c> 用）。</summary>
     /// <param name="config">本次请求配置。</param>
     /// <param name="request">请求对象（可能为 <c>null</c>）。</param>
     /// <param name="response">本次响应。</param>
@@ -459,7 +425,7 @@ public class AxiosException : Exception
             response,
             innerException: null);
 
-    /// <summary>状态码错误消息里的「方法 + URL（已剥 query / fragment / userinfo）+ 第几次尝试」上下文；拿不到 request（如拦截器拒绝路径）时返回空串，保持现有的状态码前缀不变。</summary>
+    /// <summary>状态码错误消息里的「方法 + URL（已剥 query / fragment / userinfo）+ 第几次尝试」；拿不到 request 时返回空串。</summary>
     private static string RequestSuffix(HttpRequestMessage? request, int? attemptNumber)
     {
         if (request is null)
@@ -472,28 +438,27 @@ public class AxiosException : Exception
             ? method + " " + Truncate(Sanitize(uri))
             : method;
 
-        // 防御：当前调用点要么给 attempt，要么 request 为 null；未来新增调用点可能走到这里。
         return attemptNumber is { } attempt
             ? $" ({location}, attempt {attempt})"
             : $" ({location})";
     }
 
-    /// <summary>只保留 scheme + host + port + path，剥掉 query / fragment / userinfo：异常消息默认进日志，不应泄露令牌或凭据。先剥敏感部分，再交给 <see cref="Truncate"/> 截断；相对 URI 无法解析组件时退回 <see cref="Uri.OriginalString"/>，保证异常路径不再抛。</summary>
-    /// <remarks>路径本身不脱敏：把凭据放进 path（如 <c>/api/token/{secret}</c>）的接口，消息里仍会原样出现该段。</remarks>
+    /// <summary>只保留 scheme + host + port + path，剥掉 query / fragment / userinfo。</summary>
+    /// <remarks>路径本身不脱敏：把凭据放进 path 的接口，消息里仍会原样出现该段。</remarks>
     private static string Sanitize(Uri uri)
         => uri.IsAbsoluteUri
             ? uri.GetComponents(UriComponents.SchemeAndServer | UriComponents.Path, UriFormat.UriEscaped)
             : uri.OriginalString;
 
-    /// <summary>非 2xx 响应：5xx 归 <c>ERR_BAD_RESPONSE</c>，4xx 归 <c>ERR_BAD_REQUEST</c>；3xx 且带 <c>Location</c> 时按重定向细分。
-    /// 所有分支都会在状态码前缀后追加「方法 + URL + 第几次尝试」，便于开了重试 / 换端点 / 对冲后定位打到哪个端点、第几次尝试。</summary>
+    /// <summary>
+    /// 非 2xx 响应：5xx 归 <c>ERR_BAD_RESPONSE</c>，4xx 归 <c>ERR_BAD_REQUEST</c>；3xx 且带 <c>Location</c> 时按重定向细分。
+    /// 各分支都在状态码前缀后追加「方法 + URL + 第几次尝试」。
+    /// </summary>
     /// <param name="config">本次请求的生效配置（错误码取自它）。</param>
-    /// <param name="request">触发本次失败的请求；为 <c>null</c>（如拦截器拒绝路径）时不追加上下文后缀。</param>
+    /// <param name="request">触发本次失败的请求；为 <c>null</c> 时不追加上下文后缀。</param>
     /// <param name="response">非 2xx 的响应。</param>
-    /// <param name="maxRedirects">
-    /// 实例生效的重定向上限（<see cref="AxiosClientOptions.MaxRedirects"/>，<c>0</c> = 不跟随）；只用于把原因写进消息，不参与判定。
-    /// </param>
-    /// <param name="attemptNumber">第几次尝试（从 1 起）；未知时传 <c>null</c>，消息不带尝试序号。</param>
+    /// <param name="maxRedirects">实例生效的重定向上限（<c>0</c> = 不跟随），只用于写消息，不参与判定。</param>
+    /// <param name="attemptNumber">第几次尝试（从 1 起）；<c>null</c> 时消息不带尝试序号。</param>
     internal static AxiosException FromResponse(
         AxiosConfig config,
         HttpRequestMessage? request,
@@ -501,8 +466,7 @@ public class AxiosException : Exception
         int maxRedirects,
         int? attemptNumber = null)
     {
-        // 3xx + Location 说明服务端还想跳：要么次数到了上限（ERR_TOO_MANY_REDIRECTS），
-        // 要么是调用方把 MaxRedirects 设成 0 主动关闭跟随（仍是 ERR_BAD_REQUEST，文案点明配置）。
+        // 3xx + Location：次数到顶报 ERR_TOO_MANY_REDIRECTS，MaxRedirects = 0 报 ERR_BAD_REQUEST。
         if (IsRedirectStatus(response.Status) && HasLocation(response))
         {
             if (maxRedirects == 0)
@@ -530,9 +494,7 @@ public class AxiosException : Exception
 
         var code = response.Status >= 500 ? ErrBadResponse : ErrBadRequest;
 
-        // 状态码本身说明不了业务原因：把服务端正文片段带进消息，日志里不用再翻 Response.RawText。
-        // 重定向分支不带正文：那里的重点是「怎么调 MaxRedirects」，正文多是跳转页，反而干扰阅读
-        // （上下文后缀两个分支都带：超限时正是最需要知道「打到哪个端点、第几次尝试」的时刻）。
+        // 消息里带服务端正文片段；重定向分支不带。
         return new AxiosException(
             $"Request failed with status code {response.Status}{RequestSuffix(request, attemptNumber)}{BodySuffix(response.RawText)}",
             code,
@@ -573,7 +535,7 @@ public class AxiosException : Exception
     internal static AxiosException BadResponse(AxiosConfig? config, HttpRequestMessage? request, Type targetType, Exception inner, string? body = null)
         => BadResponse(config, request, targetType.Name, inner, body);
 
-    /// <summary>响应正文反序列化失败，目标名由调用方给出（避免再取 <c>Type</c>）。</summary>
+    /// <summary>响应正文反序列化失败，目标名由调用方给出。</summary>
     /// <remarks><paramref name="body"/> 为空时只在消息里写目标类型，不追加正文片段。</remarks>
     internal static AxiosException BadResponse(AxiosConfig? config, HttpRequestMessage? request, string targetName, Exception inner, string? body = null)
     {
@@ -641,8 +603,8 @@ public class AxiosException : Exception
     }
 
     /// <summary>
-    /// 回调抛出异常（回调属于请求管线，异常不能以裸类型漏给调用方）；上传阶段取
-    /// <c>ERR_BAD_REQUEST</c>、下载 / 原始字节阶段取 <c>ERR_BAD_RESPONSE</c>，原始异常在 <see cref="Cause"/> 里。
+    /// 回调抛出异常（回调属于请求管线，不以裸类型漏给调用方）；上传阶段取 <c>ERR_BAD_REQUEST</c>，
+    /// 下载 / 原始字节阶段取 <c>ERR_BAD_RESPONSE</c>，原始异常在 <see cref="Cause"/> 里。
     /// </summary>
     internal static AxiosException CallbackFailed(AxiosConfig config, HttpRequestMessage? request, string callbackName, Exception inner, bool upload)
     {

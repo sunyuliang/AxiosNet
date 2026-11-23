@@ -32,7 +32,7 @@ public class ResponseContentTypeBenchmarks
     [GlobalCleanup]
     public void Cleanup() => _client.Dispose();
 
-    /// <summary>旧实现：BCL 类型化解析（构造 <see cref="MediaTypeHeaderValue"/> 与参数对象）。</summary>
+    /// <summary>基线：BCL 类型化解析（构造 <see cref="MediaTypeHeaderValue"/> 与参数对象）。</summary>
     /// <returns>媒体类型与字符集。</returns>
     [Benchmark(Baseline = true)]
     public (string? MediaType, string? CharSet) Eager_MediaTypeHeaderValue()

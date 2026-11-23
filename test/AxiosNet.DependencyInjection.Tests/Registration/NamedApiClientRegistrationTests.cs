@@ -21,7 +21,7 @@ public sealed class NamedApiClientRegistrationTests
         return services.BuildServiceProvider();
     }
 
-    // ---- 注册形态与解析 ----
+    // 注册形态与解析
 
     [Fact]
     public void AddApiClient_WithName_RegistersResolverAndSiteClient()
@@ -158,7 +158,7 @@ public sealed class NamedApiClientRegistrationTests
         Assert.Contains("a", ex.Message, StringComparison.Ordinal);
     }
 
-    // ---- per-site 配置与容器授权 ----
+    // per-site 配置与容器授权
 
     [Fact]
     public async Task AddApiClient_Named_ConfigureDefaults_AppliedPerSite()
@@ -249,7 +249,7 @@ public sealed class NamedApiClientRegistrationTests
         Assert.Equal("Bearer token-b", server.Received[1].Headers["Authorization"]);
     }
 
-    // ---- 与既有重载的共存关系 ----
+    // 与既有重载的共存关系
 
     [Fact]
     public void AddApiClient_Named_DoesNotRegisterUnkeyedApiClient()
@@ -282,7 +282,7 @@ public sealed class NamedApiClientRegistrationTests
         Assert.NotSame(facade.Axios, siteA.Axios);
     }
 
-    // ---- 端到端与释放 ----
+    // 端到端与释放
 
     [Fact]
     public async Task AddApiClient_Named_ResolvedClients_SendRequestsAgainstServer()
@@ -339,7 +339,7 @@ public sealed class NamedApiClientRegistrationTests
         Assert.False(resolver.TryGet("never-resolved", out _));
     }
 
-    // ---- 参数守卫与链式返回 ----
+    // 参数守卫与链式返回
 
     [Fact]
     public void AddApiClient_Named_ReturnsSameServiceCollection()

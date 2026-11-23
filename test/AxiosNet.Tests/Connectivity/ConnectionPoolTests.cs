@@ -661,9 +661,7 @@ public sealed class ConnectionPoolTests
         Assert.Equal(200, response.Status);
     }
 
-    // ---------------------------------------------------------------
-    // 共享池的 fail-fast：连接级实例配置不能静默忽略
-    // ---------------------------------------------------------------
+// 共享池的 fail-fast：连接级实例配置不能静默忽略
 
     [Fact]
     public void SharedPool_WithInstanceLevelConnectionOptions_Throws()
@@ -751,9 +749,7 @@ public sealed class ConnectionPoolTests
         Assert.Contains(server.Received, r => r.Path == "/final");
     }
 
-    // ---------------------------------------------------------------
-    // origin key 规范化：IDNA 归一化，但不合并 scheme/port 不同的目标
-    // ---------------------------------------------------------------
+// origin key 规范化：IDNA 归一化，但不合并 scheme/port 不同的目标
 
     [Fact]
     public void OriginKey_NormalizesUnicodeHostToPunycode()
@@ -798,9 +794,7 @@ public sealed class ConnectionPoolTests
         Assert.Equal(4, pool.GetStatistics().EndpointCount);
     }
 
-    // ---------------------------------------------------------------
-    // 选项隔离：池构造时克隆，调用方事后改动不影响池；Options 返回副本
-    // ---------------------------------------------------------------
+// 选项隔离：池构造时克隆，调用方事后改动不影响池；Options 返回副本
 
     [Fact]
     public void PoolOptions_AreIsolatedFromCallerMutation()
@@ -828,9 +822,7 @@ public sealed class ConnectionPoolTests
         Assert.Equal(32, pool.Options.MaxConnectionsPerServer);
     }
 
-    // ---------------------------------------------------------------
-    // Cookie：默认关闭；WithCredentials 打开并带上默认系统凭据
-    // ---------------------------------------------------------------
+// Cookie：默认关闭；WithCredentials 打开并带上默认系统凭据
 
     [Fact]
     public async Task UseCookies_DisabledByDefault_DoesNotSendStoredCookies()
@@ -1128,9 +1120,7 @@ public sealed class ConnectionPoolTests
         Assert.False(server.Received[0].Headers.ContainsKey("cookie"));
     }
 
-    // ------------------------------------------------------------------
-    // 池选项：Timeout.InfiniteTimeSpan 表示「不限」
-    // ------------------------------------------------------------------
+// 池选项：Timeout.InfiniteTimeSpan 表示「不限」
 
     [Fact]
     public async Task PoolOptions_InfiniteTimeSpan_IsAccepted_AndRequestSucceeds()
@@ -1230,9 +1220,7 @@ public sealed class ConnectionPoolTests
         Assert.Equal(200, (await slow).Status);
     }
 
-    // ------------------------------------------------------------------
-    // L13：租用与池关闭的竞态不留下不可回收的节点
-    // ------------------------------------------------------------------
+// L13：租用与池关闭的竞态不留下不可回收的节点
 
     [Fact]
     public async Task Lease_RacingWithDispose_DoesNotLeakEndpoints()
@@ -1320,9 +1308,7 @@ public sealed class ConnectionPoolTests
         Assert.Empty(server.Received);
     }
 
-    // ---------------------------------------------------------------
-    // 池本身：租约计数、关闭竞态、容量
-    // ---------------------------------------------------------------
+// 池本身：租约计数、关闭竞态、容量
 
     [Fact]
     public void PoolLease_DoubleDispose_ReturnsOnlyOnce()
@@ -1377,9 +1363,7 @@ public sealed class ConnectionPoolTests
         Assert.Equal(0, pool.GetStatistics().EndpointCount);
     }
 
-    // ---------------------------------------------------------------
-    // 驱逐路径：锁内判定、锁外释放（P1：不得持锁关闭 Handler）
-    // ---------------------------------------------------------------
+// 驱逐路径：锁内判定、锁外释放（P1：不得持锁关闭 Handler）
 
     [Fact]
     public async Task Pool_EvictIdle_ReleasesHandlerOutsideLock_PoolStaysResponsive()
@@ -1796,9 +1780,7 @@ public sealed class ConnectionPoolTests
             }
         })).ToArray();
 
-    // ------------------------------------------------------------------
-    // 命名共享池（进程级表：key 由调用方给，不做配置指纹）
-    // ------------------------------------------------------------------
+// 命名共享池（进程级表：key 由调用方给，不做配置指纹）
 
     /// <summary>用例独占的池名：表是进程级的，用随机 key 避免与并行用例互相干扰。</summary>
     private static string UniquePoolKey() => "test-pool-" + Guid.NewGuid().ToString("N");

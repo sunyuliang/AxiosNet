@@ -2,10 +2,7 @@ using System;
 
 namespace AxiosNet;
 
-/// <summary>
-/// URL 构造专用的字符区间拼接入口：net6+ 转发 BCL 的 span 重载（只分配结果字符串），
-/// netstandard2.0 退化成一次 <c>char[]</c> 拷贝再构串。集中在一处以保证三份资产的拼接语义一致。
-/// </summary>
+/// <summary>URL 构造专用的字符区间拼接入口：net6+ 转发 BCL 的 span 重载，兼容资产退化成一次 <c>char[]</c> 拷贝再构串。</summary>
 internal static class SpanStringConcat
 {
     /// <summary>拼接两段字符区间。</summary>
@@ -23,7 +20,7 @@ internal static class SpanStringConcat
     internal static string Concat(ReadOnlySpan<char> first, ReadOnlySpan<char> second, ReadOnlySpan<char> third)
         => Concat(first, second, third, default);
 
-    /// <summary>拼接四段字符区间（2/3 段重载最终都落到这里，兼容分支只存在一份）。</summary>
+    /// <summary>拼接四段字符区间（2/3 段重载最终都落到这里）。</summary>
     /// <param name="first">第一段。</param>
     /// <param name="second">第二段。</param>
     /// <param name="third">第三段。</param>
@@ -49,13 +46,12 @@ internal static class SpanStringConcat
     }
 
 #if NETSTANDARD2_0
-    /// <summary>把一段字符区间拷进结果缓冲区并推进写入位置；兼容资产专用的拼接内循环。</summary>
+    /// <summary>把一段字符区间拷进结果缓冲区并推进写入位置。</summary>
     /// <param name="buffer">结果缓冲区。</param>
     /// <param name="offset">当前写入位置，调用后加上本段长度。</param>
     /// <param name="part">待拷入的字符区间。</param>
     private static void CopyInto(char[] buffer, ref int offset, ReadOnlySpan<char> part)
     {
-        // AsSpan(int) 由 System.Memory 提供；一次拷贝覆盖整段，不做逐字符循环。
         part.CopyTo(buffer.AsSpan(offset));
         offset += part.Length;
     }

@@ -38,8 +38,8 @@ internal static class DispositionTokens
 }
 
 /// <summary>
-/// multipart 的调用方选项非法（部件字段名，或文件名与 Content-Type），由 <see cref="MultipartBodyBuilder"/>
-/// 转成 <see cref="AxiosException"/>（<c>ERR_BAD_OPTION_VALUE</c>）。
+/// multipart 选项非法（部件字段名，或文件名与 Content-Type）时抛出，由 <see cref="MultipartBodyBuilder"/>
+/// 转成 <c>ERR_BAD_OPTION_VALUE</c>。
 /// </summary>
 internal sealed class InvalidMultipartOptionException : Exception
 {

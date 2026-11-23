@@ -22,7 +22,7 @@ internal sealed class SchemaMapper
     /// <summary>本次映射累计注册的可复用类型（类 / 枚举 / 常量类）。</summary>
     private readonly List<ApiType> _types = new();
 
-    /// <summary>$ref 原文 → 已映射类型，避免同一引用重复生成，也让循环引用提前收敛。</summary>
+    /// <summary>$ref 原文 → 已映射类型，避免同一引用重复生成。</summary>
     private readonly Dictionary<string, TypeRef> _refTypes = new(StringComparer.Ordinal);
 
     /// <summary>正在解析的别名（primitive / array / enum）：用来识别 A → B → A 这类别名环。</summary>
@@ -37,7 +37,7 @@ internal sealed class SchemaMapper
     /// <summary>当前递归深度，防止病态 schema 把栈打爆。</summary>
     private int _depth;
 
-    /// <summary>构造映射器；<paramref name="reservedNames"/> 来自读取阶段，用来避免模型与请求类 / 接口重名。</summary>
+    /// <summary>构造映射器；<paramref name="reservedNames"/> 用来避免模型与请求类 / 接口重名。</summary>
     public SchemaMapper(SpecNode root, IEnumerable<string> reservedNames, CliOptions options, WarningCollector warnings)
     {
         _refs = new RefResolver(root, warnings);
@@ -257,8 +257,7 @@ internal sealed class SchemaMapper
         }
 
         // 别名（primitive / array / enum）：不额外生成包装类型，直接映射目标。
-        // 别名环（A → B → A）在「解析中」集合处打断并告警：以前是往缓存里塞一个 JsonElement 占位，
-        // 环里的字段就这样悄悄退化成 JsonElement，生成的 SDK 少了强类型且没有任何提示。
+        // 别名环（A → B → A）在「解析中」集合处打断并告警。
         if (!_resolvingAliases.Add(reference))
         {
             _warnings.Add("REF_CYCLE", location, $"别名循环引用 {reference}，按 JsonElement 处理。");
@@ -401,8 +400,7 @@ internal sealed class SchemaMapper
         {
             _warnings.Add("NUMERIC_ENUM", location, "数字枚举按数值类型生成。");
 
-            // 没有 type（推断成 number）或声明 type=number 且未写浮点 format 时，全为整数就落成整数：
-            // 生成端更贴近契约，也避免 [JsonNumberHandling] 之外的浮点精度问题。
+            // 没有 type 或 type=number 且未写浮点 format、值全为整数时落成整数。
             if (typeName == "number" && schema["format"]?.AsString() is not ("float" or "double" or "decimal"))
             {
                 var integralFormat = IntegralEnumFormat(values);
@@ -424,10 +422,7 @@ internal sealed class SchemaMapper
         return MapPrimitive(typeName, schema["format"]?.AsString(), nullable);
     }
 
-    /// <summary>
-    /// 数字枚举能否落成整数：全部值可解析为 64 位整数时返回对应的 format（int32 / int64），
-    /// 否则返回 <c>null</c> 交由 double 兜底。
-    /// </summary>
+    /// <summary>数字枚举能否落成整数：全部值可解析为 64 位整数时返回对应 format（int32 / int64），否则返回 <c>null</c>。</summary>
     private static string? IntegralEnumFormat(IReadOnlyList<string?> values)
     {
         // 全部值都落在 int32 范围内才用 int；更大的整数用 long。
@@ -586,7 +581,7 @@ internal sealed class SchemaMapper
             new HashSet<string>(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal),
             $"schema {type.Name}", 0);
 
-        // 属性名独立去重，避免 "foo-bar" 与 "foo_bar" 都变成 FooBar。
+        // 属性名独立去重。
         var usedNames = new HashSet<string>(StringComparer.Ordinal);
         foreach (var wire in order)
         {
@@ -644,7 +639,7 @@ internal sealed class SchemaMapper
         string location,
         int depth)
     {
-        // allOf 可以无限嵌套（不经过 $ref 环检测），这里必须单独限深，否则深层文档会打爆调用栈。
+        // allOf 可以无限嵌套，这里单独限深。
         if (depth >= MaxDepth)
         {
             _warnings.Add("SCHEMA_DEPTH", location, "allOf / $ref 展开过深，已停止收集属性。");

@@ -26,9 +26,7 @@ public sealed class AttemptPipelineTests
             return await next(request, ctx);
         };
 
-    // ------------------------------------------------------------------
-    // 默认链
-    // ------------------------------------------------------------------
+// 默认链
 
     [Fact]
     public void Default_IsRetryThenFailoverThenCircuitThenHedgingThenGateThenAudit()
@@ -67,9 +65,7 @@ public sealed class AttemptPipelineTests
         Assert.Single(server.Received);
     }
 
-    // ------------------------------------------------------------------
-    // 位置决定调用次数
-    // ------------------------------------------------------------------
+// 位置决定调用次数
 
     [Fact]
     public void Axios_Create_AppliesPipeline()
@@ -155,9 +151,7 @@ public sealed class AttemptPipelineTests
         Assert.Equal(new[] { "a#1", "b#1", "c#1", "d#1" }, log);
     }
 
-    // ------------------------------------------------------------------
-    // 熔断排在闸门与一切内层之前
-    // ------------------------------------------------------------------
+// 熔断排在闸门与一切内层之前
 
     [Fact]
     public async Task CircuitRejection_SkipsEverythingInsideIt()
@@ -183,9 +177,7 @@ public sealed class AttemptPipelineTests
         Assert.Empty(server.Received);
     }
 
-    // ------------------------------------------------------------------
-    // 并发槽位的交接
-    // ------------------------------------------------------------------
+// 并发槽位的交接
 
     [Fact]
     public async Task Slot_IsHandedToTerminal_OnlyWhenLimitIsSet()
@@ -380,9 +372,7 @@ public sealed class AttemptPipelineTests
     /// <summary>实例级并发容量：构造期固化，按请求改不了。</summary>
     private static AxiosClientOptions Concurrency(int maxConcurrency) => new() { MaxInFlight = maxConcurrency };
 
-    // ------------------------------------------------------------------
-    // 编排校验
-    // ------------------------------------------------------------------
+// 编排校验
 
     [Fact]
     public void InsertBefore_FirstItem_IsRejected()
@@ -446,9 +436,7 @@ public sealed class AttemptPipelineTests
             () => AxiosAttemptPipeline.Default.Remove(Probe(new ConcurrentQueue<string>(), "x")));
     }
 
-    // ------------------------------------------------------------------
-    // 中间件可以短路（不调用 next 就没有请求）
-    // ------------------------------------------------------------------
+// 中间件可以短路（不调用 next 就没有请求）
 
     [Fact]
     public async Task Middleware_CanSendNothing()
@@ -527,9 +515,7 @@ public sealed class AttemptPipelineTests
         Assert.Contains("null", ex.Message);
     }
 
-    // ------------------------------------------------------------------
-    // 请求头：响应侧能读到（短路没有请求消息）
-    // ------------------------------------------------------------------
+// 请求头：响应侧能读到（短路没有请求消息）
 
     [Fact]
     public async Task GetRequestHeader_ReadsTheHeadersThatWereSent()

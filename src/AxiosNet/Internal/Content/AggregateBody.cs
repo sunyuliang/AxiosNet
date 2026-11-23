@@ -58,7 +58,7 @@ internal readonly struct AggregateBodyMember
     /// <summary>成员的原始值；<c>null</c> 在 JSON 里照样输出 <c>null</c>。</summary>
     public object? Value { get; }
 
-    /// <summary>成员的声明类型：AOT 下按它解析 <c>JsonTypeInfo</c>，避免合成字典缺元数据。</summary>
+    /// <summary>成员的声明类型：AOT 下按它解析 <c>JsonTypeInfo</c>。</summary>
     public Type ValueType { get; }
 
     /// <summary>键名是否已显式指定（<c>[Body("名")]</c> / <c>[JsonPropertyName]</c>）；是则不套 <c>PropertyNamingPolicy</c>。</summary>

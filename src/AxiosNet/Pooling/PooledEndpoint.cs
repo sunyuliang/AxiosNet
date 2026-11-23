@@ -3,10 +3,7 @@ using AxiosNet.Telemetry;
 
 namespace AxiosNet.Pooling;
 
-/// <summary>
-/// 单个 origin（scheme://host:port）对应的池化节点：持有一个 Handler
-/// （默认 <c>SocketsHttpHandler</c>，也可由 <see cref="ConnectionPoolOptions.HandlerFactory"/> 提供）与其上的 HttpClient。
-/// </summary>
+/// <summary>单个 origin（scheme://host:port）的池化节点：持有一个 Handler（默认 <c>SocketsHttpHandler</c> 或 <see cref="ConnectionPoolOptions.HandlerFactory"/> 提供）与其上的 HttpClient。</summary>
 internal sealed class PooledEndpoint : IDisposable
 {
     private readonly HttpConnectionPool _owner;
@@ -37,17 +34,14 @@ internal sealed class PooledEndpoint : IDisposable
     /// <summary>节点是否已释放（池关闭、被驱逐，或最后一条租约归还后自行销毁）。</summary>
     public bool IsDisposed { get; private set; }
 
-    /// <summary>
-    /// 节点已被池提前摘除（池 Dispose 或 <see cref="HttpConnectionPool.ClearCookies"/>）：最后一条租约归还时自行销毁。
-    /// 标记在锁内、锁外都会写，读发生在 <see cref="Release"/> 的锁内。
-    /// </summary>
+    /// <summary>节点已被池提前摘除（池 Dispose 或 <see cref="HttpConnectionPool.ClearCookies"/>）：最后一条租约归还时销毁。</summary>
     public bool DisposeWhenIdle
     {
         get => _disposeWhenIdle;
         set => _disposeWhenIdle = value;
     }
 
-    // 关闭时还有租约在外：最后一个租约归还时由它触发真正的释放。
+    // 关闭时还有租约在外：最后一个租约归还时触发真正的释放。
     private volatile bool _disposeWhenIdle;
 
     /// <summary>租约计数与释放共用的锁。</summary>
@@ -66,7 +60,6 @@ internal sealed class PooledEndpoint : IDisposable
         Handler = CreateHandler(Origin, key, options, transport, cookieContainer);
         Client = new HttpClient(Handler, disposeHandler: false)
         {
-            // 超时由 AxiosClient 按请求统一控制。
             Timeout = Timeout.InfiniteTimeSpan
         };
     }
@@ -79,14 +72,14 @@ internal sealed class PooledEndpoint : IDisposable
         ConnectionTransportOptions transport,
         CookieContainer? cookieContainer)
     {
-        // 命名档的工厂优先：同一条池里不同出口可以各自接管传输层。
+        // 命名档的工厂优先。
         var factory = transport.HandlerFactory ?? options.HandlerFactory;
         if (factory is null)
         {
             return DefaultHandlerFactory.Create(options, transport, cookieContainer);
         }
 
-        // 传副本而不是池持有的 options：工厂改了它也不能回流到池。
+        // 传副本，工厂改动不会回流到池。
         var context = new PooledHandlerContext(
             origin,
             new Uri(key.BaseAddress + "/"),
@@ -118,11 +111,11 @@ internal sealed class PooledEndpoint : IDisposable
 
             ActiveLeases++;
 
-            // 与 LastUsedTimestamp 的 Volatile.Read 配对：32 位平台上 64 位写入不加 Volatile 可能被读到半截。
+            // 与 Volatile.Read 配对：32 位平台上 64 位写入不加 Volatile 可能读到半截。
             Volatile.Write(ref _lastUsedTimestamp, Stopwatch.GetTimestamp());
         }
 
-        // 进程级活跃租约水位（ObservableGauge 收集时读）：派发带异常捕获，放在临界区外。
+        // 派发带异常捕获，放在临界区外。
         AxiosTelemetry.Dispatch.EnterLease();
         return true;
     }
@@ -130,7 +123,7 @@ internal sealed class PooledEndpoint : IDisposable
     /// <summary>归还一条租约（必须与成功的 <see cref="TryAcquire"/> 配对，重复归还会抛错）。</summary>
     public void Release()
     {
-        // 时间戳与驱逐判定的读取无时序依赖：读到旧值只会让节点晚一轮被驱逐。
+        // 读到旧值只会让节点晚一轮被驱逐。
         Volatile.Write(ref _lastUsedTimestamp, Stopwatch.GetTimestamp());
 
         var retire = false;
@@ -150,7 +143,7 @@ internal sealed class PooledEndpoint : IDisposable
             }
         }
 
-        // 只有真的减掉了才减水位，避免重复 Release 让计数变成负数。
+        // 只有真的减掉了才减水位。
         if (released)
         {
             AxiosTelemetry.Dispatch.ExitLease();
@@ -158,7 +151,6 @@ internal sealed class PooledEndpoint : IDisposable
 
         if (retire)
         {
-            // 节点已被池摘除（池关闭 / ClearCookies）：归还租约的同时把自己从池里摘掉并释放。
             _owner.Forget(this);
             DisposeClientAndHandler();
         }

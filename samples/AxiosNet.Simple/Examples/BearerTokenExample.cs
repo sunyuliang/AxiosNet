@@ -26,19 +26,19 @@ public sealed class BearerTokenExample : IExample
 
         InstallInterceptors(http, session);
 
-        // ---- 1) 未携带令牌访问受保护资源：服务端 401 ----
+        // 1) 未携带令牌访问受保护资源：服务端 401
         Console.WriteLine("  [1] 未登录直接访问 /api/orders");
         await ShowErrorAsync(http.GetAsync("/api/orders"));
 
-        // ---- 2) 密码错误：服务端校验凭据，401 ----
+        // 2) 密码错误：服务端校验凭据，401
         Console.WriteLine("  [2] 错误密码登录（凭据校验失败）");
         await ShowErrorAsync(http.PostAsync(DemoAuthApi.LoginPath, new { username = "alice", password = "wrong-password" }));
 
-        // ---- 3) 正确登录：签发 access / refresh 令牌 ----
+        // 3) 正确登录：签发 access / refresh 令牌
         Console.WriteLine("  [3] 正确登录，签发令牌");
         await session.LoginAsync();
 
-        // ---- 4) 请求拦截器自动附加 Authorization: Bearer … ----
+        // 4) 请求拦截器自动附加 Authorization: Bearer …
         Console.WriteLine("  [4] 自动携带令牌访问受保护资源与验签端点");
         var orders = await http.GetAsync<JsonElement>("/api/orders");
         Console.WriteLine($"      GET /api/orders -> {orders.Status} user={orders.Data.GetProperty("user").GetString()}");
@@ -47,7 +47,7 @@ public sealed class BearerTokenExample : IExample
         var verify = await http.GetAsync<JsonElement>("/api/token/verify");
         Console.WriteLine($"      GET /api/token/verify -> {verify.Status} {verify.Data.GetRawText()}");
 
-        // ---- 5) 令牌过期：响应拦截器捕获 401 → 刷新 → 自动重试 ----
+        // 5) 令牌过期：响应拦截器捕获 401 → 刷新 → 自动重试
         Console.WriteLine("  [5] 令牌过期（重新登录换一个 1 秒过期的短令牌），再访问受保护资源");
         await session.LoginAsync(ttlSeconds: 1);
         await Task.Delay(TimeSpan.FromMilliseconds(1200));
@@ -55,7 +55,7 @@ public sealed class BearerTokenExample : IExample
         var retried = await http.GetAsync<JsonElement>("/api/orders");
         Console.WriteLine($"      重试结果 -> {retried.Status} user={retried.Data.GetProperty("user").GetString()}（新令牌取回数据）");
 
-        // ---- 6) 登出吊销会话：刷新同样失败，401 最终抛给调用方 ----
+        // 6) 登出吊销会话：刷新同样失败，401 最终抛给调用方
         Console.WriteLine("  [6] 登出吊销会话后再访问：连刷新也失效，401 抛给调用方");
         await http.PostAsync("/api/token/logout");
         await ShowErrorAsync(http.GetAsync("/api/orders"));

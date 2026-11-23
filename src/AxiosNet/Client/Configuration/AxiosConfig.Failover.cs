@@ -3,15 +3,12 @@ namespace AxiosNet;
 public sealed partial class AxiosConfig
 {
     /// <summary>
-    /// 备用端点：当前端点不可用（网络错误 / 超时 / 池耗尽 / 熔断打开 / 5xx）时，把同一份请求嫁接到下一个端点的 base URL 重发；
-    /// 全部失败才交给重试。<see cref="Endpoints"/> 为空（默认）时不换端点。
+    /// 备用端点：当前端点不可用（网络错误 / 超时 / 池耗尽 / 熔断打开 / 5xx）时，把同一份请求嫁接到下一个端点的 base URL 重发。
     /// </summary>
     /// <remarks>
     /// 端点只提供 origin 与路径前缀，请求自己的 path / query 接在后面；顺序即优先级。
-    /// 健康端点排在前面，冷却中的端点退到末尾；全部冷却时仍按原顺序逐个试。
     /// 换端点要求请求体能重放（流必须可 seek），并会丢掉调用方显式设过的 <c>Host</c> 头。
     /// 4xx、<c>ERR_QUEUE_TIMEOUT</c> / <c>ERR_QUEUE_FULL</c>、配置错误与取消不换端点，<c>ERR_CIRCUIT_OPEN</c> 换。
-    /// 流式响应只在响应头阶段能换端点。
     /// </remarks>
     public sealed class FailoverSettings
     {
@@ -32,7 +29,7 @@ public sealed partial class AxiosConfig
             }
         }
 
-        /// <summary>复制端点列表：调用方之后改自己的集合，不会影响已生效的配置。</summary>
+        /// <summary>复制端点列表。</summary>
         private static Uri[] Snapshot(IReadOnlyList<Uri> endpoints)
         {
             var copy = new Uri[endpoints.Count];
@@ -51,12 +48,10 @@ public sealed partial class AxiosConfig
 
         /// <summary>
         /// 同一个端点连续失败多少次后进入冷却（默认 2，<c>0</c> 关闭健康记忆）。
-        /// 冷却期内它不再作为首跳，避免主端点持续不可用时每条请求都先撞一次。
         /// </summary>
         /// <remarks>
-        /// 只统计「换一个下游可能好」的故障（与 <see cref="Endpoints"/> 的换端点判据同源）：
-        /// 网络错误 / 超时 / 连接池耗尽 / 熔断打开 / 5xx。4xx、取消与配置错误既不加也不减。
-        /// 判定是客户端级共享状态：同一实例上的所有请求看同一份健康表，按请求改本值只影响之后记录时的阈值。
+        /// 只统计「换一个下游可能好」的故障：网络错误 / 超时 / 连接池耗尽 / 熔断打开 / 5xx；4xx、取消与配置错误不在内。
+        /// 判定是客户端级共享状态，同一实例上的所有请求看同一份健康表。
         /// </remarks>
         public int FailureThreshold
         {
@@ -74,8 +69,7 @@ public sealed partial class AxiosConfig
         private TimeSpan _cooldown = TimeSpan.FromSeconds(30);
 
         /// <summary>
-        /// 基础冷却时长（默认 30 秒，<c>TimeSpan.Zero</c> 同样关闭健康记忆）；连续失败越多冷却按 2 的幂延长，
-        /// 封顶 <see cref="MaxCooldown"/>。冷却到期后端点自动重新可用，再失败立刻重新进入冷却。
+        /// 基础冷却时长（默认 30 秒，<c>TimeSpan.Zero</c> 同样关闭健康记忆）；连续失败越多冷却按 2 的幂延长，封顶 <see cref="MaxCooldown"/>。
         /// </summary>
         public TimeSpan Cooldown
         {

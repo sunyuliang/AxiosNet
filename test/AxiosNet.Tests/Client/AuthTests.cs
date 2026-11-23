@@ -14,9 +14,7 @@ namespace AxiosNet.Tests.Client;
 /// </summary>
 public sealed class AuthTests
 {
-    // ------------------------------------------------------------------
-    // Basic 认证：user-id 不允许冒号（RFC 7617 用第一个冒号做分隔）
-    // ------------------------------------------------------------------
+// Basic 认证：user-id 不允许冒号（RFC 7617 用第一个冒号做分隔）
 
     [Fact]
     public void AxiosAuth_UsernameWithColon_Throws()

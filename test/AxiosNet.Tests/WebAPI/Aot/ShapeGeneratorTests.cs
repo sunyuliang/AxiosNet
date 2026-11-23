@@ -714,9 +714,7 @@ public sealed class ShapeGeneratorTests
         Assert.Empty(result.Results.Single().GeneratedSources);
     }
 
-    // ------------------------------------------------------------------
-    // 调用辅助：生成程序集里的 Boot 方法负责构造模型与发起调用
-    // ------------------------------------------------------------------
+// 调用辅助：生成程序集里的 Boot 方法负责构造模型与发起调用
 
     private static object CreateFilters(Assembly assembly)
     {
@@ -813,9 +811,7 @@ public sealed class ShapeGeneratorTests
         return Encoding.UTF8.GetString(server.Received.Single().Body);
     }
 
-    // ------------------------------------------------------------------
-    // 生成器驱动（与接口生成器测试同一套内存编译 / 模块初始化器加载方式）
-    // ------------------------------------------------------------------
+// 生成器驱动（与接口生成器测试同一套内存编译 / 模块初始化器加载方式）
 
     private static object CreateInstance(Assembly assembly, string typeName, params object?[] constructorArguments)
         => Activator.CreateInstance(assembly.GetType(typeName, throwOnError: true)!, constructorArguments)!;

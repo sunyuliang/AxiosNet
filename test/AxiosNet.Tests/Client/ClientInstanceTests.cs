@@ -190,9 +190,7 @@ public sealed class ClientInstanceTests
         Assert.Contains("ConnectTimeout", ex.Message);
     }
 
-    // ------------------------------------------------------------------
-    // 构造后 Options 冻结：改就报错，而不是「改了没效果」
-    // ------------------------------------------------------------------
+// 构造后 Options 冻结：改就报错，而不是「改了没效果」
 
     [Fact]
     public async Task OptionsMutatedAfterConstruction_Throws_AndPoolIsUntouched()
@@ -304,9 +302,7 @@ public sealed class ClientInstanceTests
         Assert.Equal(3, client.Options.MaxRedirects);
     }
 
-    // ------------------------------------------------------------------
-    // WithCredentials：构造期一个入口，池 / Handler 场景各自把关
-    // ------------------------------------------------------------------
+// WithCredentials：构造期一个入口，池 / Handler 场景各自把关
 
     [Fact]
     public async Task WithCredentialsFromOptions_OpensCookieContainer()
@@ -449,9 +445,7 @@ public sealed class ClientInstanceTests
         Assert.Equal("base", client.Defaults.Headers.Get("X-Default"));
     }
 
-    // ---------------------------------------------------------------
-    // Dispose / DisposeAsync 幂等
-    // ---------------------------------------------------------------
+// Dispose / DisposeAsync 幂等
 
     [Fact]
     public void Dispose_CalledTwice_DoesNotThrow()
@@ -516,9 +510,7 @@ public sealed class ClientInstanceTests
         Assert.Throws<ObjectDisposedException>(() => pool.Lease(new Uri("http://127.0.0.1:9211/")));
     }
 
-    // ------------------------------------------------------------------
-    // 实例级选项只有构造期一个入口：不存在「按请求复述」这条路
-    // ------------------------------------------------------------------
+// 实例级选项只有构造期一个入口：不存在「按请求复述」这条路
 
     [Fact]
     public async Task OmittedInstanceOptions_DoNotLeakIntoRequests()
@@ -528,7 +520,7 @@ public sealed class ClientInstanceTests
             options: new AxiosClientOptions { WithCredentials = true, MaxRedirects = 3 });
 
         // 请求没碰这两项：按实例值走，照常发出
-        // （旧实现靠 *Set 标记区分「没写」与「写了默认值」，现在它们不在配置上，这条守的是「合并不再碰它们」）
+        // 这七项不在配置上，这条守「合并不会碰它们」。
         var response = await client.GetAsync(server.Url + "x");
 
         Assert.Equal(200, response.Status);
@@ -569,9 +561,7 @@ public sealed class ClientInstanceTests
         Assert.Equal(200, response.Status);
     }
 
-    // ------------------------------------------------------------------
-    // L14/L15：关闭语义（不掐断在途请求；竞态不漏裸 ObjectDisposedException）
-    // ------------------------------------------------------------------
+// L14/L15：关闭语义（不掐断在途请求；竞态不漏裸 ObjectDisposedException）
 
     [Fact]
     public async Task Dispose_DoesNotInterruptInFlightRequest_InjectedHandler()
@@ -646,9 +636,7 @@ public sealed class ClientInstanceTests
     // ===============================================================
 
 
-    // ------------------------------------------------------------------
-    // 辅助
-    // ------------------------------------------------------------------
+// 辅助
 
 
     private static async Task DrainAsync<T>(IAsyncEnumerable<T>? source)
@@ -731,9 +719,7 @@ public sealed class ClientInstanceTests
         }
     }
 
-    // ---------------------------------------------------------------
-    // 辅助
-    // ---------------------------------------------------------------
+// 辅助
 
     /// <summary>
     /// 正文读取阶段的超时预算。必须同时满足两头：

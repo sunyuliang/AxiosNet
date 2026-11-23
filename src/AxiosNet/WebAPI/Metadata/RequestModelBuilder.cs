@@ -96,13 +96,12 @@ public sealed class RequestModelBuilder
 
     /// <summary>
     /// 声明一个成员并一次性配置它的全部绑定（同一属性可同时绑定路径 + 头 + 查询 + 请求体）。
-    /// 生成器用本重载，因为每个绑定方法返回所属模型构建器，无法在同一条链上连续调用。
     /// </summary>
     /// <param name="name">成员名（CLR 属性名）。</param>
     /// <param name="valueType">成员类型。</param>
-    /// <param name="getValue">生成期写死的直接 getter。</param>
-    /// <param name="configure">绑定配置；null 表示不标注任何参数特性。</param>
-    /// <param name="description">错误消息里的定位文本（如 <c>BaseRequest.Id</c>）；null 时用 <c>{模型名}.{成员名}</c>。</param>
+    /// <param name="getValue">直接取值的委托。</param>
+    /// <param name="configure">绑定配置；<c>null</c> 表示不标注任何参数特性。</param>
+    /// <param name="description">错误消息里的定位文本；<c>null</c> 时用 <c>{模型名}.{成员名}</c>。</param>
     public RequestModelBuilder Member(
         string name,
         Type valueType,
@@ -114,7 +113,7 @@ public sealed class RequestModelBuilder
         return this;
     }
 
-    /// <summary>追加一个成员声明并返回它的构建器；参数校验在这里做，具体绑定由调用方在返回的构建器上继续加。</summary>
+    /// <summary>追加一个成员声明并返回它的构建器；参数校验在这里做。</summary>
     private RequestModelMemberBuilder AddMember(
         string name,
         Type valueType,
@@ -155,9 +154,7 @@ public sealed class RequestModelMemberBuilder
         _member = member;
     }
 
-    /// <summary>字段名：聚合正文的键名兜底值，同时是表单 / multipart 的默认部件名。</summary>
-    /// <param name="fieldName">字段名；空白回退成员名（此时按未命名处理，聚合正文仍套 JSON 命名策略）。</param>
-    /// <param name="nameFromAttribute">该名字是否已显式确定（true 则聚合正文不再套 JSON 命名策略）；默认 <c>true</c>，调用即视为显式命名。</param>
+    /// <summary>字段名：聚合正文的键名兜底值，同时是表单 / multipart 的默认部件名；空白回退成员名，<paramref name="nameFromAttribute"/> 默认 <c>true</c>（视为显式命名，不再套 JSON 命名策略）。</summary>
     public RequestModelMemberBuilder FieldName(string fieldName, bool nameFromAttribute = true)
     {
         var blank = string.IsNullOrWhiteSpace(fieldName);
@@ -189,7 +186,6 @@ public sealed class RequestModelMemberBuilder
     }
 
     /// <summary><c>[Format]</c>：成员级值格式化（只影响库转文本的通道，结构化正文内部归序列化器）。</summary>
-    /// <param name="format">格式化；生成器把 <c>[Format]</c> 的两种形态都烘焙成这里的调用。</param>
     public RequestModelMemberBuilder Format(ValueFormat format)
     {
         ArgumentNullException.ThrowIfNull(format);

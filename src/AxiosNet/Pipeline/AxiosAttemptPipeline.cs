@@ -2,24 +2,17 @@ using System.Collections.ObjectModel;
 
 namespace AxiosNet.Pipeline;
 
-/// <summary>
-/// 「一次尝试」的中间件链：<b>不可变</b>，每个编辑方法都返回新实例。
-/// 默认链是 <c>[Retry, Failover, Circuit, Hedging, Gate, Audit]</c>，索引 0 最外层、末位最内层；
-/// 真正的发送（终端）恒在最内层，不在列表里，也换不掉。
-/// </summary>
+/// <summary>「一次尝试」的中间件链：<b>不可变</b>，每个编辑方法都返回新实例；默认链为 <c>[Retry, Failover, Circuit, Hedging, Gate, Audit]</c>，索引 0 最外层。</summary>
 /// <remarks>
-/// 调用次数由位置决定：落在 <see cref="Attempt.Retry"/> 之内 = 每次尝试一次（重试 N 次则 N+1 次）；
-/// 再落在 <see cref="Attempt.Failover"/> 之内时每个备用端点各一次，再落在 <see cref="Attempt.Hedging"/> 之内时
-/// 每条对冲分支各一次 —— 即 <c>(N+1) × (端点数+1) × (1 + MaxHedges)</c>。
-/// 落在 <see cref="Attempt.Retry"/> 之外 = 每次请求一次，该位置请改用响应拦截器；
-/// 没有 <see cref="InsertBefore"/> 入口能插到链首（会抛 <see cref="ArgumentException"/>），确需最外层只能用 <see cref="Create"/> 显式列出来。
-/// 链在客户端构造时编译一次并固化，中间件里按请求分支请读 <see cref="AxiosAttemptContext.Config"/>。
+/// 真正的发送（终端）恒在最内层，不在列表里，也换不掉。调用次数由位置决定：落在 <see cref="Attempt.Retry"/> 之内为每次尝试一次，
+/// 再落在 <see cref="Attempt.Failover"/> / <see cref="Attempt.Hedging"/> 之内则按端点与分支相乘；最外层为每次请求一次，该位置请改用响应拦截器。
+/// 没有 <see cref="InsertBefore"/> 能插到链首（会抛 <see cref="ArgumentException"/>）；链在客户端构造时编译一次并固化。
 /// </remarks>
 public sealed class AxiosAttemptPipeline
 {
     private readonly AxiosAttemptMiddleware[] _middleware;
 
-    // 对外只给只读视图：直接交出数组会被强转回数组改元素，改坏全局共享的 Default。
+    // 只读视图，防止外部改写共享的 Default。
     private readonly ReadOnlyCollection<AxiosAttemptMiddleware> _view;
 
     private AxiosAttemptPipeline(AxiosAttemptMiddleware[] middleware)
@@ -28,26 +21,15 @@ public sealed class AxiosAttemptPipeline
         _view = new ReadOnlyCollection<AxiosAttemptMiddleware>(middleware);
     }
 
-    /// <summary>
-    /// 默认链：<c>[Retry, Failover, Circuit, Hedging, Gate, Audit]</c>。顺序是契约：重试在最外层，每次尝试都会重过一遍
-    /// 备用端点、熔断、对冲与闸门；备用端点与熔断都在对冲之外，闸门在对冲之内，审计紧贴终端。
-    /// 换成别的顺序会换掉这些语义。
-    /// </summary>
-    /// <remarks>
-    /// 审计（<see cref="Attempt.Audit"/>）在默认链上，因此「每次尝试怎么走的」默认可见；
-    /// 没有订阅 <c>AxiosNet.Attempt</c> 事件时它只做一次开关判定，不建状态机、不分配。
-    /// 它已在链上，再 <c>Append(Attempt.Audit)</c> 会作为重复内置项被拒绝。
-    /// </remarks>
+    /// <summary>默认链：<c>[Retry, Failover, Circuit, Hedging, Gate, Audit]</c>，顺序即语义，换序会改变行为。</summary>
+    /// <remarks>审计已在默认链上，再 <c>Append(Attempt.Audit)</c> 会作为重复内置项被拒绝。</remarks>
     public static AxiosAttemptPipeline Default { get; } =
         new(new[] { Attempt.Retry, Attempt.Failover, Attempt.Circuit, Attempt.Hedging, Attempt.Gate, Attempt.Audit });
 
     /// <summary>链上的中间件，索引 0 最外层（只读视图，改不了）。</summary>
     public IReadOnlyList<AxiosAttemptMiddleware> Middleware => _view;
 
-    /// <summary>
-    /// 整体重排：按给出的顺序建链（第一个 = 最外层）。
-    /// 把自定义中间件放在 <see cref="Attempt.Retry"/> 之前会让它变成「每次请求一次」，该场景请改用响应拦截器。
-    /// </summary>
+    /// <summary>整体重排：按给出的顺序建链（第一个 = 最外层）；把自定义中间件放在 <see cref="Attempt.Retry"/> 之前会变成每次请求一次。</summary>
     /// <exception cref="ArgumentNullException"><paramref name="middleware"/> 或其元素为 <c>null</c>。</exception>
     /// <exception cref="ArgumentException">同一个内置中间件出现了多次（嵌套重试 / 双闸门几乎都是写错）。</exception>
     public static AxiosAttemptPipeline Create(params AxiosAttemptMiddleware[] middleware)
@@ -56,23 +38,15 @@ public sealed class AxiosAttemptPipeline
         return new AxiosAttemptPipeline(Copy(middleware));
     }
 
-    /// <summary>
-    /// 追加到链尾（闸门与审计之后、发送之前）：每次尝试各调用一次，落在备用端点与对冲之内，
-    /// 调用次数为 <c>(N+1) × (端点数+1) × (1 + MaxHedges)</c>，因此必须能并发执行、不共享可变状态。
-    /// </summary>
-    /// <remarks>它比 <see cref="Attempt.Audit"/> 更靠近终端，执行时间会计入审计的事件耗时。</remarks>
+    /// <summary>追加到链尾（闸门与审计之后、发送之前）：每次尝试各调用一次，必须能并发执行、不共享可变状态。</summary>
     public AxiosAttemptPipeline Append(AxiosAttemptMiddleware middleware)
     {
         ArgumentNullException.ThrowIfNull(middleware);
         return new AxiosAttemptPipeline(Append(_middleware, middleware));
     }
 
-    /// <summary>
-    /// 插到某个中间件之前。<paramref name="anchor"/> 必须是链上已有的成员。
-    /// </summary>
-    /// <exception cref="ArgumentException">
-    /// 锚点是链上第一项 —— 插到它前面等于放最外层，请改用响应拦截器。
-    /// </exception>
+    /// <summary>插到某个中间件之前。<paramref name="anchor"/> 必须是链上已有的成员。</summary>
+    /// <exception cref="ArgumentException">锚点是链上第一项 —— 该位置请改用响应拦截器。</exception>
     public AxiosAttemptPipeline InsertBefore(AxiosAttemptMiddleware anchor, AxiosAttemptMiddleware middleware)
     {
         ArgumentNullException.ThrowIfNull(middleware);
@@ -96,9 +70,7 @@ public sealed class AxiosAttemptPipeline
         return Insert(IndexOf(anchor, nameof(anchor)) + 1, middleware);
     }
 
-    /// <summary>
-    /// 替换链上的某个中间件（可用它把内置项换成自己的实现，或用 <see cref="Remove"/> 直接摘掉）。
-    /// </summary>
+    /// <summary>替换链上的某个中间件（也可用 <see cref="Remove"/> 直接摘掉）。</summary>
     public AxiosAttemptPipeline Replace(AxiosAttemptMiddleware target, AxiosAttemptMiddleware middleware)
     {
         ArgumentNullException.ThrowIfNull(middleware);
@@ -119,9 +91,7 @@ public sealed class AxiosAttemptPipeline
         return new AxiosAttemptPipeline(copy);
     }
 
-    /// <summary>
-    /// 把链编译成单个委托：索引 0 成为最外层。<b>只在客户端构造时调用一次</b>。
-    /// </summary>
+    /// <summary>把链编译成单个委托：索引 0 成为最外层。<b>只在客户端构造时调用一次</b>。</summary>
     internal AxiosAttemptHandler Compile(AxiosAttemptHandler terminal, AxiosConfig? config = null)
     {
         ArgumentNullException.ThrowIfNull(terminal);
@@ -139,12 +109,11 @@ public sealed class AxiosAttemptPipeline
         return handler;
     }
 
-    // 找锚点中间件的位置；找不到时报错要指出是哪个参数引用了不存在的锚点。
+    // 定位锚点；找不到时按参数名报错。
     private int IndexOf(AxiosAttemptMiddleware anchor, string paramName)
     {
         if (anchor is null)
         {
-            // 用调用方的公共参数名（anchor / target），不固定成 nameof(anchor)。
             throw new System.ArgumentNullException(paramName);
         }
 
@@ -160,7 +129,7 @@ public sealed class AxiosAttemptPipeline
         return index;
     }
 
-    // 插入并返回新实例：链不可变，改一次就复制一次。
+    // 插入并返回新实例。
     private AxiosAttemptPipeline Insert(int index, AxiosAttemptMiddleware middleware)
     {
         var copy = new AxiosAttemptMiddleware[_middleware.Length + 1];
@@ -171,7 +140,7 @@ public sealed class AxiosAttemptPipeline
         return new AxiosAttemptPipeline(copy);
     }
 
-    // 逐项复制成新数组：链一旦发布就不再被修改。
+    // 逐项复制并校验，返回新数组。
     private static AxiosAttemptMiddleware[] Copy(AxiosAttemptMiddleware[] middleware)
     {
         var copy = new AxiosAttemptMiddleware[middleware.Length];
@@ -217,7 +186,7 @@ public sealed class AxiosAttemptPipeline
         }
     }
 
-    // 是否内置中间件：内置项恒在链上，只由配置决定干不干活，删不掉。
+    // 是否内置中间件。
     private static bool IsBuiltIn(AxiosAttemptMiddleware middleware)
         => ReferenceEquals(middleware, Attempt.Retry)
            || ReferenceEquals(middleware, Attempt.Failover)

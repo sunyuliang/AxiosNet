@@ -7,10 +7,9 @@ public sealed partial class AxiosConfig
     /// 重试 / 换端点 / 对冲的各次发送共用同一个键，服务端因此只把它当作一次写操作。
     /// </summary>
     /// <remarks>
-    /// 键在请求模板上写一次（模板被复制时随头一起搬），所以「每次尝试换一个键」不会发生；
-    /// 键属于<b>生效配置</b>：同一次发送内的重试 / 换端点 / 对冲共用一个键，而每调用一次 <c>RequestAsync</c> 都是一份新的生效配置、一个新键。
-    /// 认证失败后的重放要用同一个键，需把它写进 <see cref="Key"/> 再重发。
-    /// 默认关闭：只有显式 <see cref="IdempotencySettings.Enabled"/> 才写头，因为非幂等方法自动带键会把「重复写」变成「静默去重」。
+    /// 键在请求模板上写一次（模板被复制时随头一起搬），因此同一次发送内的重试 / 换端点 / 对冲共用一个键；
+    /// 每调用一次 <c>RequestAsync</c> 都是一份新的生效配置、一个新键。
+    /// 认证失败后的重放要用同一个键，需把它写进 <see cref="Key"/> 再重发。默认关闭，只有显式 <see cref="IdempotencySettings.Enabled"/> 才写头。
     /// </remarks>
     public sealed class IdempotencySettings
     {

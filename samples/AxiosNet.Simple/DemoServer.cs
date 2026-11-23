@@ -423,7 +423,7 @@ public sealed class DemoServer : IDisposable
                     + $"\"sha256\":\"{Sha256Hex(body)}\"}}");
             }
 
-            // ---- Bearer 令牌 / 请求签名（业务逻辑在 DemoAuthApi） ----
+            // Bearer 令牌 / 请求签名（业务逻辑在 DemoAuthApi）
             case "POST" when path == DemoAuthApi.LoginPath:
                 return Json(AuthApi.Login(query, Encoding.UTF8.GetString(body)));
 

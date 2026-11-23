@@ -12,9 +12,7 @@ namespace AxiosNet.Tests.Resilience;
 [Collection(TimingCollection.Name)]
 public sealed class RetryTimingTests
 {
-    // ------------------------------------------------------------------
-    // 本轮修复：multipart 部件里的 StreamContent 必须 fail-fast
-    // ------------------------------------------------------------------
+// 本轮修复：multipart 部件里的 StreamContent 必须 fail-fast
 
     [Fact]
     public async Task MultipartStreamContentPart_WithRetry_FailsFast()
@@ -112,9 +110,7 @@ public sealed class RetryTimingTests
         Assert.Contains("part-payload", Encoding.UTF8.GetString(server.Received[0].Body));
     }
 
-    // ------------------------------------------------------------------
-    // 本轮修复：等待时间的取值范围
-    // ------------------------------------------------------------------
+// 本轮修复：等待时间的取值范围
 
     [Fact]
     public async Task MaxDelayBeyondTimerLimit_IsRejectedBeforeSending()

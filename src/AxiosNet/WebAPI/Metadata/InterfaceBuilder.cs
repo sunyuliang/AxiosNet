@@ -202,7 +202,6 @@ public sealed class InterfaceParameterBuilder
     }
 
     /// <summary><c>[Format]</c>：参数级值格式化（只影响库转文本的通道，结构化正文内部归序列化器）。</summary>
-    /// <param name="format">格式化；生成器把 <c>[Format]</c> 的两种形态都烘焙成这里的调用。</param>
     public InterfaceParameterBuilder Format(ValueFormat format)
     {
         ArgumentNullException.ThrowIfNull(format);

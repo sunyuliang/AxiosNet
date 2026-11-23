@@ -159,9 +159,7 @@ public sealed class ResponseTypeTests
         Assert.IsType<string>((await client.GetAsync("any", c => c.ResponseType = ResponseType.Text)).Data);
     }
 
-    // ---------------------------------------------------------------
-    // 空正文 / HEAD 的流式响应
-    // ---------------------------------------------------------------
+// 空正文 / HEAD 的流式响应
 
     [Fact]
     public async Task StreamResponse_ZeroLengthBody_CompletesImmediately()
@@ -403,9 +401,7 @@ public sealed class ResponseTypeTests
         Assert.Equal("hello", response.Data);
     }
 
-    // ------------------------------------------------------------------
-    // L16：流式响应的 WriteAsync 走异步直连（不退化成同步等待）
-    // ------------------------------------------------------------------
+// L16：流式响应的 WriteAsync 走异步直连（不退化成同步等待）
 
     [Fact]
     public async Task StreamResponse_WriteAsync_ThrowsNotSupported_WithoutHanging()

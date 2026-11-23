@@ -11,9 +11,7 @@ namespace AxiosNet.Tests.Client;
 [Collection(AllocationCollection.Name)]
 public sealed class HeadersCopyOnWriteTests
 {
-    // ------------------------------------------------------------------
-    // 语义：共享 → 写入时发布新版本
-    // ------------------------------------------------------------------
+// 语义：共享 → 写入时发布新版本
 
     [Fact]
     public void Clone_ReadsSharedValues()
@@ -193,9 +191,7 @@ public sealed class HeadersCopyOnWriteTests
         Assert.Null(source.Headers.Get("X-Clone"));
     }
 
-    // ------------------------------------------------------------------
-    // 分配：克隆成本与头数无关
-    // ------------------------------------------------------------------
+// 分配：克隆成本与头数无关
 
     [Fact]
     public void Clone_CostDoesNotScaleWithHeaderCount()

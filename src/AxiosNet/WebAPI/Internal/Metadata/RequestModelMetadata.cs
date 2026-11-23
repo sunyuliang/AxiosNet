@@ -8,10 +8,10 @@ using AxiosNet.WebAPI.Reflection;
 
 namespace AxiosNet.WebAPI.Internal.Metadata;
 
-/// <summary>请求模型的绑定元数据（按模型类型缓存一份，构造期完成全部校验）。校验失败同样进入缓存，每次调用都抛同一份错误。</summary>
+/// <summary>请求模型的绑定元数据（按模型类型缓存一份，构造期完成全部校验）；校验失败也进缓存，每次调用抛同一份错误。</summary>
 internal sealed class RequestModelMetadata
 {
-    /// <summary>AOT 保留范围：模型类型的公开属性与实现的接口。<see cref="ApiClient"/> 的取元数据入口复用同一份标注。</summary>
+    /// <summary>AOT 保留范围：模型类型的公开属性与实现的接口；<see cref="ApiClient"/> 的取元数据入口复用同一份标注。</summary>
     internal const DynamicallyAccessedMemberTypes ModelMembers =
         DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.Interfaces;
 
@@ -20,7 +20,7 @@ internal sealed class RequestModelMetadata
 
     static RequestModelMetadata()
     {
-        // 能力切换（测试钩子）要同时丢掉这里按能力缓存的构建结果。
+        // 能力切换时要一并丢掉按能力缓存的构建结果。
         RuntimeSupport.CapabilityChanged += InvalidateAll;
     }
 
@@ -75,12 +75,10 @@ internal sealed class RequestModelMetadata
     internal PartBinding[] PartBindings { get; init; } = [];
 
     /// <summary>取（必要时构建并缓存）请求模型的绑定元数据；模型定义非法时抛 <see cref="InvalidOperationException"/>。</summary>
-    /// <param name="requestType">请求模型类型；标注要求 JIT 回退路径保留公开属性（生成路径不依赖反射）。</param>
     public static RequestModelMetadata Get(
         [DynamicallyAccessedMembers(ModelMembers)] Type requestType)
     {
-        // 用捕获的 requestType（带标注）而不是工厂参数：缓存字典的 Type 键本身不携带裁剪标注。
-        // 命中路径先 TryGetValue，未命中才构造工厂委托。
+        // 用带裁剪标注的 requestType 作键：缓存字典的 Type 键不携带标注。
         if (!Cache.TryGetValue(requestType, out var metadata))
         {
             metadata = Cache.GetOrAdd(requestType, _ => Build(requestType));
@@ -88,7 +86,7 @@ internal sealed class RequestModelMetadata
 
         if (metadata._missingMetadataType is { } missingType)
         {
-            // 每次新建异常：同一条缓存可被并发请求共享，异常实例不能跨线程同时抛出。
+            // 每次新建异常：缓存实例可能被并发请求共享。
             throw AxiosAotMetadataException.MissingRequestModel(missingType);
         }
 
@@ -100,27 +98,21 @@ internal sealed class RequestModelMetadata
         return metadata;
     }
 
-    /// <summary>注册新声明后摘掉该类型的旧缓存：反射构建的结果不能压过之后的显式注册。</summary>
-    /// <param name="requestType">被注册的请求模型类型。</param>
+    /// <summary>注册新声明后摘掉该类型的旧缓存。</summary>
     internal static void Invalidate(Type requestType) => Cache.TryRemove(requestType, out _);
 
-    /// <summary>测试钩子：切换动态代码能力后清空全部缓存（JIT 构建的元数据与 AOT 结论不能混用）。</summary>
+    /// <summary>测试钩子：清空全部缓存。</summary>
     internal static void InvalidateAll() => Cache.Clear();
 
     /// <summary>把路径模板里的 <c>{name}</c> 替换成属性值（URL 转义），返回最终请求 URL。</summary>
-    /// <param name="request">请求模型实例。</param>
-    /// <param name="formatter">URL 参数格式化钩子（返回 null 表示用默认规则），可为 null。</param>
     public string ResolveUrl(object request, Func<object?, ValueTextChannel, string?>? formatter)
         => _plan.ResolveUrl(_pathTemplate, request, formatter);
 
-    /// <summary>汇总全部查询参数（显式 <see cref="QueryAttribute"/> + 非 body 方法上未标注属性的默认绑定 + 平铺的字典映射）；没有参数或值全为 <c>null</c> 时返回 <c>null</c>。
-    /// 调用方拿到 <c>null</c> 时不要写进配置：合并层把显式 null 当作摘掉实例默认值。</summary>
+    /// <summary>汇总全部查询参数；没有参数或值全为 <c>null</c> 时返回 <c>null</c>（调用方不要写进配置：显式 null 会摘掉实例默认值）。</summary>
     public Dictionary<string, object?>? ResolveQuery(object request, Func<object?, ValueTextChannel, string?>? formatter)
         => _plan.ResolveQuery(request, formatter);
 
-    /// <summary>请求体的原始值：显式 <see cref="BodyAttribute"/> 取该属性；POST / PUT / PATCH 返回未标注属性聚合的对象；multipart 模型返回装配好的声明式表单（全部属性为 <c>null</c> 时返回 <c>null</c>）。</summary>
-    /// <param name="request">请求模型实例。</param>
-    /// <param name="formatter">实例级格式化钩子；只作用于裸标量正文与部件文本。</param>
+    /// <summary>请求体的原始值：显式 <see cref="BodyAttribute"/> 取该属性；body 方法返回未标注属性的聚合对象；multipart 模型返回装配好的表单（全为 <c>null</c> 时返回 <c>null</c>）。</summary>
     public object? ResolveBody(object request, Func<object?, ValueTextChannel, string?>? formatter)
     {
         if (!IsMultipart)
@@ -128,7 +120,7 @@ internal sealed class RequestModelMetadata
             return _plan.ResolveBodyValue(request, formatter);
         }
 
-        // 模型自身即表单：null 属性跳过（与 query / headers 的 null 规则一致）
+        // 模型自身即表单：null 属性跳过。
         return MultipartFormAssembler.Build(request.GetType().Name, PartBindings, request);
     }
 
@@ -151,7 +143,7 @@ internal sealed class RequestModelMetadata
                 return BuildCore(declaration);
             }
 
-            // 条件里必须是 RuntimeFeature.IsDynamicCodeSupported 本身：ILC 折成常量 false 后，这段反射实现才不可达并被裁掉。
+            // 用 IsDynamicCodeSupported 本身：ILC 折成 false 后这段反射实现才不可达。
             if (!RuntimeSupport.ForceNoDynamicCode && RuntimeFeature.IsDynamicCodeSupported)
             {
                 return BuildCore(RequestModelDeclarationReader.Read(requestType));
@@ -161,7 +153,7 @@ internal sealed class RequestModelMetadata
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or FormatException)
         {
-            // 特性构造函数抛出的 ArgumentException / FormatException 连同校验错误一起缓存，统一从 Get() 抛出。
+            // 特性构造函数抛出的异常连同校验错误一起缓存。
             return new RequestModelMetadata(ex.Message);
         }
     }
@@ -186,14 +178,13 @@ internal sealed class RequestModelMetadata
         var path = DeclarationNormalization.Path(declaration.Path);
         var owner = $"请求模型 {modelName}";
 
-        // 类 / 属性两层的编码声明：属性级优先，但两层都显式声明且取值不同时直接报错，不静默取一个。
+        // 类 / 属性两层的编码声明：属性级优先，两层都显式声明且取值不同时报错。
         var contentType = ResolveContentType(declaration, owner);
         var queryCollectionFormat = ResolveQueryCollectionFormat(declaration, owner);
         var (hasStream, streamFormat) = ResolveStream(declaration, owner);
 
         var accumulator = new BindingAccumulator(owner, "属性");
 
-        // multipart 部件绑定：模型声明 [Multipart] 时，模型自身即表单
         var parts = new List<PartBinding>();
         var seenPartNames = new HashSet<string>(StringComparer.Ordinal);
         var isMultipart = declaration.Multipart;
@@ -265,7 +256,6 @@ internal sealed class RequestModelMetadata
                 var display = $"{owner}.{member.Name}";
                 var explicitName = DeclarationNormalization.OptionalPartValue(member.PartName, display, nameof(PartAttribute.Name));
 
-                // 默认名走 [JsonPropertyName] / 属性名，与 builder 展平嵌套对象时的命名规则一致
                 var name = explicitName ?? DefaultPartName(member);
                 if (!seenPartNames.Add(name))
                 {
@@ -311,8 +301,7 @@ internal sealed class RequestModelMetadata
                     continue;
                 }
 
-                // 无标注：默认通道由 HTTP 方法决定（body 方法 → 按键名聚合的对象；其余 → Query）。
-                // 键名优先 [JsonPropertyName]，否则属性名；显式改名不再套 JSON 命名策略。
+                // 无标注：默认通道由 HTTP 方法决定（body 方法 → 按键名聚合；其余 → Query），键名优先 [JsonPropertyName]。
                 accumulator.AddUnannotated(source, member.FieldName, member.NameFromAttribute);
             }
             else if (member.Query)
@@ -322,7 +311,6 @@ internal sealed class RequestModelMetadata
             }
         }
 
-        // multipart 与 [Body] / [RootBody] 互斥：一个模型两种请求体形态属二义性
         if (isMultipart && accumulator.HasBody)
         {
             throw new InvalidOperationException(
@@ -348,7 +336,7 @@ internal sealed class RequestModelMetadata
     private static string DefaultPartName(RequestModelMemberDeclaration member)
         => string.IsNullOrWhiteSpace(member.FieldName) ? member.Name : member.FieldName;
 
-    // ---- 类 / 属性两层编码声明的解析：属性级优先；两层都显式声明且取值不同 → ERR_BAD_OPTION_VALUE ----
+    // 类 / 属性两层编码声明的解析：属性级优先；两层都显式声明且取值不同 → ERR_BAD_OPTION_VALUE
 
     private static string? ResolveContentType(RequestModelDeclaration declaration, string owner)
     {
@@ -371,13 +359,7 @@ internal sealed class RequestModelMetadata
         return hasValue ? value : null;
     }
 
-    /// <summary>
-    /// 解析查询集合格式的两层声明（属性级 > 类型级），顺带校验枚举值合法；
-    /// 属性之间或属性与类之间取值不一致时报 <c>ERR_BAD_OPTION_VALUE</c>。
-    /// </summary>
-    /// <param name="declaration">模型的声明快照（类型级 + 各属性级）。</param>
-    /// <param name="owner">报错用的模型名。</param>
-    /// <returns>生效的集合格式；两层都没声明时为 <c>null</c>（走默认 <c>Brackets</c>）。</returns>
+    /// <summary>解析查询集合格式的两层声明（属性级 &gt; 类型级），并校验枚举值合法；取值不一致时报 <c>ERR_BAD_OPTION_VALUE</c>；都没声明时为 <c>null</c>（走默认 <c>Brackets</c>）。</summary>
     private static AxiosCollectionFormat? ResolveQueryCollectionFormat(RequestModelDeclaration declaration, string owner)
     {
         var hasTypeValue = declaration.QueryCollectionFormat is not null;
@@ -435,10 +417,7 @@ internal sealed class RequestModelMetadata
         return (hasValue, value);
     }
 
-    /// <summary>
-    /// 两层声明解析：属性级 > 类型级；多个属性都声明时必须一致；属性与类同时声明且取值不同 → <c>ERR_BAD_OPTION_VALUE</c>。
-    /// 返回值可空表示两层都没有声明（调用方只在至少有声明时使用）。
-    /// </summary>
+    /// <summary>两层声明解析：属性级 &gt; 类型级；多处声明必须一致，不一致抛 <c>ERR_BAD_OPTION_VALUE</c>。</summary>
     private static (bool HasValue, T Value) ResolveEncodingDeclaration<T>(
         string owner,
         string attributeName,
@@ -473,23 +452,14 @@ internal sealed class RequestModelMetadata
     }
 
     /// <summary>把「声明位置 = 取值」拼成一条可读清单，用于「多处声明不一致」的错误消息。</summary>
-    /// <param name="members">各属性的声明（取值 + <c>类型.成员</c> 定位文本）。</param>
-    /// <typeparam name="T">声明值的类型（字符串或枚举）。</typeparam>
-    /// <returns>形如 <c>A.P=0、A.Q=1</c> 的清单。</returns>
     private static string FormatDeclarations<T>(IReadOnlyList<(T Value, string Display)> members)
         => string.Join("、", members.Select(item => $"{item.Display}={FormatValue(item.Value)}"));
 
-    /// <summary>取值的展示文本：字符串加引号（否则看不出首尾空格），其余走 <c>ToString</c>，<c>null</c> 显示为 <c>null</c>。</summary>
-    /// <param name="value">要展示的声明值。</param>
-    /// <typeparam name="T">值的类型。</typeparam>
-    /// <returns>错误消息里用的文本。</returns>
+    /// <summary>取值的展示文本：字符串加引号，其余走 <c>ToString</c>，<c>null</c> 显示为 <c>null</c>。</summary>
     private static string FormatValue<T>(T value)
         => value is string text ? $"\"{text}\"" : value?.ToString() ?? "null";
 
-    /// <summary>校验集合格式声明落在已定义的枚举范围内：不在范围内说明声明写错了，直接报错而不是静默退回默认值。</summary>
-    /// <param name="format">声明值。</param>
-    /// <param name="owner">报错用的模型名。</param>
-    /// <param name="scope">声明位置（<c>类</c> 或 <c>属性 X</c>）。</param>
+    /// <summary>校验集合格式声明落在已定义的枚举范围内；不在范围内直接报错。</summary>
     private static void ValidateCollectionFormat(AxiosCollectionFormat format, string owner, string scope)
     {
         if (!Enum.IsDefined(typeof(AxiosCollectionFormat), format))
@@ -500,10 +470,7 @@ internal sealed class RequestModelMetadata
         }
     }
 
-    /// <summary>校验流式格式声明落在已定义的枚举范围内（<see cref="ValidateCollectionFormat"/> 的同类检查）。</summary>
-    /// <param name="format">声明值。</param>
-    /// <param name="owner">报错用的模型名。</param>
-    /// <param name="scope">声明位置（<c>类</c> 或 <c>属性 X</c>）。</param>
+    /// <summary>校验流式格式声明落在已定义的枚举范围内。</summary>
     private static void ValidateStreamFormat(AxiosStreamFormat format, string owner, string scope)
     {
         if (!Enum.IsDefined(typeof(AxiosStreamFormat), format))

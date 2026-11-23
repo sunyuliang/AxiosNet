@@ -10,21 +10,19 @@ namespace AxiosNet.Pipeline;
 /// <see cref="Hedging"/> → <see cref="Gate"/> → <see cref="Audit"/>（顺序即默认链序）。
 /// </summary>
 /// <remarks>
-/// 六项恒在默认链上，要摘掉得显式 <see cref="AxiosAttemptPipeline.Remove"/> 或整体 <see cref="AxiosAttemptPipeline.Create"/>；
-/// <see cref="Audit"/> 未订阅 <c>AxiosNet.Attempt</c> 事件时只做一次开关判定，不建状态机。
-/// 是否真的干活由中间件按本次请求的生效配置决定（没配策略 / 端点 / 分支数就交给下一环）。
+/// 六项恒在默认链上，摘掉需显式 <see cref="AxiosAttemptPipeline.Remove"/> 或整体重建；
+/// 是否生效由本次请求的生效配置决定（未配置策略 / 端点 / 分支数时交给下一环）。
 /// </remarks>
 public static partial class Attempt
 {
     /// <summary>
-    /// 重试：最外层的循环型中间件。每次尝试换一条新请求（正文与请求头沿用模板），
-    /// 没配策略或 <c>MaxRetries &lt;= 0</c> 时直接把请求交给下一环（不建状态机）。
+    /// 重试：最外层的循环型中间件。每次尝试换一条新请求（正文与请求头沿用模板）；
+    /// 未配策略或 <c>MaxRetries &lt;= 0</c> 时直接交给下一环。
     /// </summary>
     public static AxiosAttemptMiddleware Retry { get; } = next =>
     {
         ArgumentNullException.ThrowIfNull(next);
 
-        // 快路径不写成 async：默认配置下多数请求不重试，不必为它多建一个状态机。
         return (request, ctx) =>
             ctx.Retry?.Policy is { } policy && policy.MaxRetries > 0
                 ? RetryLoopAsync(next, request, ctx, policy)
@@ -32,8 +30,8 @@ public static partial class Attempt
     };
 
     /// <summary>
-    /// 熔断：每次尝试之前的闸门。拒绝时请求根本没发出去，因此排在并发闸门之前 —— 不给被拒的请求占槽位。
-    /// 没配策略时直接把请求交给下一环。
+    /// 熔断：每次尝试之前的准入闸门；拒绝时以 <c>ERR_CIRCUIT_OPEN</c> 失败，请求不会发出。
+    /// 未配策略时直接交给下一环。
     /// </summary>
     public static AxiosAttemptMiddleware Circuit { get; } = next =>
     {
@@ -46,9 +44,9 @@ public static partial class Attempt
     };
 
     /// <summary>
-    /// 并发闸门：本次尝试的槽位。排队时间不计入 <see cref="AxiosConfig.Timeout"/>（队列有自己的
-    /// <c>QueueTimeout</c>），所以计时在闸门之后才开始；但它计入 <see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/>，
-    /// 因此总预算比排队上限更紧时，闸门按剩余预算截断等待。没设并发上限时直接把请求交给下一环。
+    /// 并发闸门：占用本次尝试的槽位。排队时间不计入 <see cref="AxiosConfig.Timeout"/>，
+    /// 但计入 <see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/>（更紧时按剩余预算截断等待）。
+    /// 未设并发上限时直接交给下一环。
     /// </summary>
     public static AxiosAttemptMiddleware Gate { get; } = next =>
     {
@@ -61,7 +59,7 @@ public static partial class Attempt
     };
 
     /// <summary>
-    /// 重试循环：每次尝试有独立的超时预算（<see cref="AxiosConfig.Timeout"/> 是单次尝试上限），
+    /// 重试循环：每次尝试有独立的超时预算（<see cref="AxiosConfig.Timeout"/> 为单次尝试上限），
     /// 调用方令牌贯穿所有尝试与等待。
     /// </summary>
     private static async ValueTask<AxiosAttemptResult> RetryLoopAsync(
@@ -73,22 +71,21 @@ public static partial class Attempt
         var retry = ctx.Retry!;
         var externalToken = ctx.ExternalToken;
 
-        // 正文必须能拨回起点，否则重试只会发出空内容；在第一次发送之前就拦下。
+        // 校验正文可重放。
         var bodyRewind = RetryBody.Prepare(ctx.Config);
 
-        // 第一条真实失败（非闸门拒绝）：后面某轮若在闸门被拒，抛的是它而不是「没排上队」（与对冲同一口径）。
+        // 第一条真实失败（非闸门拒绝）。
         Exception? firstRealFailure = null;
 
         for (var attempt = 1; ; attempt++)
         {
             if (attempt > 1)
             {
-                // 同一份正文再发一次：先把读指针拨回起点。放在 try 之外：拨不动说明正文不可重放，
-                // 不该再拿去问策略要不要重试。
+                // 拨回正文读指针。
                 bodyRewind?.Rewind(ctx.Config);
             }
 
-            // 首次尝试直接用模板，后续尝试按模板复制（模板本身不能再发，也不该被后续尝试改写）
+            // 首次尝试用模板，后续尝试按模板复制。
             var request = attempt == 1 ? template : CloneRequest(template);
             try
             {
@@ -96,17 +93,16 @@ public static partial class Attempt
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                // 取消类异常直接冒到调用方，不问策略是否重试。
+                // 取消类异常不参与重试判定，直接冒到调用方。
                 var failed = new AxiosRetryContext(attempt, policy.MaxRetries, ex, ctx.Config, (ex as AxiosException)?.Response);
 
-                // 已经是「总预算耗尽」：消息里已写明第几次没发出，再包一层只会把序号 +1。
+                // 总预算耗尽：原样抛出。
                 if (ex is AxiosException { IsTotalTimeoutExceeded: true })
                 {
                     throw;
                 }
 
-                // 本次尝试连槽位都没拿到（排队超时 / 队列满）：说明不了下游健康，库级也不重试它。
-                // 前面已有真实失败时抛那一条，不让「没排上队」盖掉能定位问题的故障。
+                // 未拿到槽位（排队超时 / 队列满）：请求未发出，库级不重试；已有真实失败时优先抛那一条。
                 if (IsGateRejection(ex))
                 {
                     if (firstRealFailure is not null)
@@ -116,33 +112,29 @@ public static partial class Attempt
                 }
                 else
                 {
-                    // 只记第一条：后续失败多半是同一个原因的延续，首条最接近「请求为什么没成」。
+                    // 只记第一条。
                     firstRealFailure ??= ex;
                 }
 
-                // 库级终止原因（次数到顶 / 取消 / 熔断 / 闸门 / 配置错误）先判：与预算无关，不因「预算恰好也空了」改写错误码。
+                // 库级终止原因先判：次数到顶 / 取消 / 熔断 / 闸门 / 配置错误。
                 if (!IsRetryableFailure(failed, externalToken, policy))
                 {
                     throw;
                 }
 
-                // 本次尝试的超时上限就是剩余总预算（被它压小），且已经到点：预算花完了，下一次尝试发不出去。
-                // 判在问策略之前：不重试就不该扣共享令牌，也不必再走一遍「发不出去再退费」。
+                // 剩余预算已用尽：下一次尝试发不出去。
                 if (ex is AxiosException { TimedOutOnTotalBudget: true })
                 {
                     throw AxiosException.TotalTimeoutExceeded(ctx.Config, request, attempt + 1, ctx.Config.TotalTimeoutValue, ex);
                 }
 
-                // 再问策略：它决定「这类失败值不值得重试」（4xx / 非幂等方法等），「不」时原样抛给调用方。
-                // 顺序不能和下面的预算检查对调：反过来会把「策略本来就不会重试」的失败（4xx）也改写成
-                // ECONNABORTED —— 同一个「调用方误判该重试」的坑。
+                // 询问策略是否重试；返回 false 时原样抛给调用方。
                 if (!policy.ShouldRetry(failed))
                 {
                     throw;
                 }
 
-                // 令牌已经扣了，但重试还没发出去：这条路径上任何退出（预算耗尽 / 回调抛错 / 退避被取消）
-                // 都要把令牌退回（共享桶不该为一次没发生的发送记账，否则同一只桶里的其它请求会被白白饿死）。
+                // 重试未发出时退回令牌。
                 var retryScheduled = false;
                 try
                 {
@@ -154,17 +146,16 @@ public static partial class Attempt
                     var delay = policy.GetDelay(failed);
                     if (delay < TimeSpan.Zero)
                     {
-                        // 策略算错时间不该把请求变成配置错误：负值按「不等待」处理。
+                        // 负值按不等待处理。
                         delay = TimeSpan.Zero;
                     }
                     else if (delay > Timeouts.Max)
                     {
-                        // Task.Delay 上限约 49.7 天，自定义策略可返回任意值，在这里收敛。
+                        // 收敛到 Task.Delay 上限。
                         delay = Timeouts.Max;
                     }
 
-                    // 退避睡完就到截止点（含只剩不足一个计时器 tick）：这次重试发不出去，
-                    // 不再白等一段只为「下一次尝试立刻失败」。
+                    // 退避后即到截止点：不再发起下一次尝试。
                     if (ctx.RemainingTotalTimeout is { } remainingBudget
                         && remainingBudget - delay <= TotalTimeoutBudget.TimerResolution)
                     {
@@ -175,10 +166,10 @@ public static partial class Attempt
                     var retryContext = new AxiosRetryContext(
                         attempt, policy.MaxRetries, ex, ctx.Config, failed.Response, delay);
 
-                    // 回调在 catch 块里调用：它抛出的异常按约定原样抛给调用方，不再问策略。
+                    // 回调异常原样抛出，不再询问策略。
                     retry.OnRetry?.Invoke(retryContext);
 
-                    // 观测点放在「决定重试」这一刻，与 OnRetry 同一语义。
+                    // 与 OnRetry 同点派发。
                     AxiosTelemetry.Dispatch.RequestRetried(retryContext, ctx.Uri);
 
                     if (delay > TimeSpan.Zero)
@@ -189,7 +180,7 @@ public static partial class Attempt
                         }
                         catch (OperationCanceledException oce)
                         {
-                            // 等待期间被取消：仍按统一错误模型报「已取消」，而不是漏出裸 TaskCanceledException
+                            // 等待被取消：归一为已取消错误。
                             throw AxiosException.Canceled(ctx.Config, request, "请求在重试等待期间被取消", oce);
                         }
                     }
@@ -208,7 +199,7 @@ public static partial class Attempt
             {
                 if (!ReferenceEquals(request, template))
                 {
-                    // 正文是共享的（后续尝试还要用）：先摘下来，只释放这条请求本身
+                    // 正文是共享的，只释放请求本身。
                     request.Content = null;
                     request.Dispose();
                 }
@@ -217,8 +208,8 @@ public static partial class Attempt
     }
 
     /// <summary>
-    /// 带熔断的单次尝试：放行 → 发送 → 回报结果。拒绝时直接抛 <c>ERR_CIRCUIT_OPEN</c>；
-    /// 回报必须恰好一次，漏掉「取消」会让熔断器卡在半开。
+    /// 带熔断的单次尝试：放行 → 发送 → 回报。拒绝时抛 <c>ERR_CIRCUIT_OPEN</c>；
+    /// 放行后回报恰好一次（含取消与 4xx）。
     /// </summary>
     private static async ValueTask<AxiosAttemptResult> WithCircuitAsync(
         AxiosAttemptHandler next,
@@ -226,7 +217,7 @@ public static partial class Attempt
         AxiosAttemptContext ctx,
         IAxiosCircuitPolicy policy)
     {
-        // 调用方已取消就先报取消，否则熔断拒绝会盖掉真正的退出原因。
+        // 调用方已取消：先报取消。
         if (ctx.ExternalToken.IsCancellationRequested)
         {
             throw AxiosException.Canceled(ctx.Config, request);
@@ -234,8 +225,7 @@ public static partial class Attempt
 
         var context = new AxiosCircuitContext(CircuitHost(ctx.Uri), ctx.Uri, ctx.Config);
 
-        // 内置熔断器额外发一张准入票：迟到的结果凭过期票被丢弃，不污染新一轮。
-        // 建议等待时间一并从同一个临界区带出来（熔断打开期间每个请求都是拒绝，`GetRetryAfter` 会再查一次表、再锁一次）。
+        // 内置熔断器额外返回准入票与建议等待时间。
         long ticket = 0;
         TimeSpan retryAfter;
         bool allowed;
@@ -251,7 +241,7 @@ public static partial class Attempt
 
         if (!allowed)
         {
-            // 回调在抛错之前调用，其异常按约定原样抛出；上下文带上建议等待时间。
+            // 回调先于抛错执行，其异常原样抛出；上下文带上建议等待时间。
             ctx.Circuit!.OnRejected?.Invoke(new AxiosCircuitContext(context.Host, ctx.Uri, ctx.Config, retryAfter: retryAfter));
 
             throw AxiosException.CircuitOpen(ctx.Config, request, context.Host, retryAfter);
@@ -262,26 +252,24 @@ public static partial class Attempt
         {
             result = await next(request, ctx).ConfigureAwait(false);
 
-            // 内部中间件漏返回时先给出可定位的错误：否则下面读 Status 会变成裸 NRE。
-            // 放在 try 内：这个错误同样要回报，否则半开态的探测名额泄漏，熔断器会永久卡在半开。
+            // 中间件未返回结果时补一个可定位的错误；该错误同样要回报。
             result = AxiosAttemptResult.Ensure(result, ctx.Config);
         }
         catch (Exception ex)
         {
-            // 失败结论带上异常，策略据此区分下游故障与取消 / 4xx；策略异常按约定原样抛出。
+            // 失败结论带上异常，策略据此区分下游故障与取消 / 4xx；策略异常原样抛出。
             RecordCircuit(policy, new AxiosCircuitContext(context.Host, ctx.Uri, ctx.Config, ex), ticket);
             throw;
         }
 
-        // 状态码一并回报（validateStatus 放行时也可能是 5xx）；流式响应在响应头到达时记账。
-        // 回报放在 try 之外，策略异常不会被记成一次尝试失败。
+        // 成功路径回报状态码（<c>validateStatus</c> 放行时也可能是 5xx）。
         try
         {
             RecordCircuit(policy, new AxiosCircuitContext(context.Host, ctx.Uri, ctx.Config, statusCode: result.Response.Status), ticket);
         }
         catch
         {
-            // 策略异常按约定原样抛给调用方，但不能顺带漏掉流式正文的租约 —— 它占着该 origin 的并发额度。
+            // 策略异常抛出前释放流式正文租约。
             result.StreamOwner?.Dispose();
             throw;
         }
@@ -290,14 +278,12 @@ public static partial class Attempt
     }
 
     /// <summary>
-    /// 并发槽位：占到的槽位登记进上下文交给终端，由终端归还（失败路径）或接管（流式成功路径）。
-    /// 排队用本次尝试的令牌，被放弃的尝试（如对冲败者）在闸门里排队时也能立刻收掉。
+    /// 并发槽位：占到的槽位随上下文交给终端，由终端归还（失败路径）或随正文转交（流式成功路径）。
+    /// 排队使用本次尝试的令牌。
     /// </summary>
     /// <remarks>
-    /// 闸门自己也要兜底归还：插在闸门之后的自定义中间件可以不调 <c>next</c>，那时终端一次都不执行。
-    /// 槽位的 <see cref="IDisposable.Dispose"/> 幂等，重复释放安全。
-    /// 登记走 <see cref="AxiosAttemptContext.WithLease"/>（追加而非覆盖），内层中间件的租约不会被顶掉。
-    /// 自建 <see cref="AxiosAttemptResult.StreamOwner"/> 的中间件拿不到这份并发额度，闸门照常归还槽位。
+    /// 闸门自己兜底归还（内层中间件可以不调用 <c>next</c>）；槽位 <see cref="IDisposable.Dispose"/> 幂等；
+    /// 租约经 <see cref="AxiosAttemptContext.WithLease"/> 追加，不覆盖内层。
     /// </remarks>
     private static async ValueTask<AxiosAttemptResult> WithSlotAsync(
         AxiosAttemptHandler next,
@@ -311,7 +297,7 @@ public static partial class Attempt
             ctx.AttemptToken,
             ctx.Config.ConcurrencyQueueTimeout,
 
-            // 总预算比排队上限更紧时由它封顶：TotalTimeout 不约束排队就等于没约束「整条请求」。
+            // 整条请求的剩余预算，比排队上限更紧时封顶。
             ctx.RemainingTotalTimeout,
             ctx.AttemptNumber).ConfigureAwait(false);
 
@@ -322,13 +308,12 @@ public static partial class Attempt
         }
         catch
         {
-            // 失败路径：终端通常已经归还过了（幂等）；真正兜的是「内层根本没走到终端」的情况。
+            // 失败路径兜底归还（幂等）。
             slot.Dispose();
             throw;
         }
 
-        // 成功路径：流式响应把上下文里的租约随正文转交给了 StreamOwner —— 此刻归还会让还在下载的正文
-        // 不再计入并发额度。其余情况（含中间件自己造的响应与自建凭证）都归还，幂等。
+        // 成功路径：租约已转交正文时不归还。
         if (!result.LeasesTransferred)
         {
             slot.Dispose();
@@ -337,22 +322,20 @@ public static partial class Attempt
         return result;
     }
 
-    /// <summary>按模板复制一条可发送的请求（请求头逐个搬运，正文沿用同一份）；用 <c>TryAddWithoutValidation</c> 避免对已校验过的头再校验一遍。</summary>
+    /// <summary>按模板复制一条可发送的请求（请求头逐个搬运，正文沿用同一份）；<paramref name="uri"/> 非 <c>null</c> 时替换目标地址。</summary>
     /// <param name="template">请求模板（模板本身不能再发）。</param>
-    /// <param name="uri">替换后的目标地址；<c>null</c> 表示沿用模板的地址（备用端点换镜像时用）。</param>
+    /// <param name="uri">替换后的目标地址；<c>null</c> 表示沿用模板地址。</param>
     internal static HttpRequestMessage CloneRequest(HttpRequestMessage template, Uri? uri = null)
     {
         var request = new HttpRequestMessage(template.Method, uri ?? template.RequestUri)
         {
             Version = template.Version,
 #if !NETSTANDARD2_0
-            // 策略必须一起搬，否则 RequestVersionExact 会变回默认的 OrLower。
-            // netstandard2.0 的 HttpRequestMessage 没有 VersionPolicy 属性。
             VersionPolicy = template.VersionPolicy
 #endif
         };
 
-        // 换了目标地址就不搬 Host：HttpClient 只认 Headers.Host，搬过去会让镜像按原端点的虚拟主机路由。
+        // 换目标地址时不搬 Host。
         var retargeted = uri is not null;
 
         foreach (var header in template.Headers)
@@ -365,10 +348,8 @@ public static partial class Attempt
             request.Headers.TryAddWithoutValidation(header.Key, header.Value);
         }
 
-        // 自定义中间件写进 Options 的内容（如 HttpRequestOptions 上的开关）要跟着走，否则重发一次就丢。
-        // HttpRequestOptions 的索引器是显式实现，Set 只认带类型的 HttpRequestOptionsKey，这里走字典接口。
+        // 搬运 Options / Properties 上的选项（索引器为显式实现，走字典接口）。
 #if NETSTANDARD2_0
-        // netstandard2.0 没有 HttpRequestMessage.Options：用旧的 Properties 字典搬运同一批选项。
         var options = request.Properties;
         var sourceOptions = template.Properties;
 #else
@@ -384,26 +365,21 @@ public static partial class Attempt
         return request;
     }
 
-    /// <summary>这次失败是否「本次尝试被内部收掉」而非真失败：调用方没取消，但本次尝试的令牌已被链接令牌取消。</summary>
-    /// <remarks>
-    /// 库内只有对冲会这么干（胜出后取消其余分支），所以这是「败者被清理」，不是下游故障 ——
-    /// 对冲据此不记失败，审计据此不发 <c>AttemptFailed</c>（否则健康请求在监控里恒有一半失败）。
-    /// 取消在库里的两种形态都要认（<see cref="OperationCanceledException"/> 与 <c>ERR_CANCELED</c>）。
-    /// </remarks>
+    /// <summary>这次失败是否「被内部收掉」而非真失败：调用方未取消，但本次尝试的令牌已取消。</summary>
+    /// <remarks>库内只有对冲会这样取消分支；这类取消不计失败、不发 <c>AttemptFailed</c>。两种取消形态都认。</remarks>
     internal static bool IsCleanupCancellation(Exception exception, in AxiosAttemptContext ctx)
         => !ctx.ExternalToken.IsCancellationRequested
            && FailureClassifier.IsCancellation(exception);
 
     /// <summary>
-    /// 这次失败是否「整条请求的总预算已经花完」：<c>IsTotalTimeoutExceeded</c> 是「下一次开始前就耗尽」，
-    /// <c>TimedOutOnTotalBudget</c> 是「本次尝试的上限被剩余预算压小，到点即花完」。两种都必须终止换端点 / 对冲，
-    /// 因为下一次尝试只会在同一个截止点上失败。
+    /// 这次失败是否「整条请求的总预算已花完」：<c>IsTotalTimeoutExceeded</c> 表示下一次开始前即耗尽，
+    /// <c>TimedOutOnTotalBudget</c> 表示本次尝试的上限被剩余预算压小后到点。
     /// </summary>
     internal static bool IsBudgetExhausted(Exception exception)
         => exception is AxiosException axios
            && (axios.IsTotalTimeoutExceeded || axios.TimedOutOnTotalBudget);
 
-    /// <summary>把「预算已花完」的失败改报成对外统一口径；被剩余预算压小后到点的用「在途到点」文案。</summary>
+    /// <summary>把「预算已花完」的失败改报成对外统一口径。</summary>
     private static Exception AsBudgetExhausted(Exception failure, AxiosAttemptContext ctx, HttpRequestMessage request)
         => failure is AxiosException { TimedOutOnTotalBudget: true }
             ? AxiosException.TotalTimeoutExceededDuringAttempt(
@@ -415,10 +391,7 @@ public static partial class Attempt
             : failure;
 
     /// <summary>库级别的「不该重试」：次数到顶、调用方已取消、错误即取消、被熔断 / 闸门拦下、配置错误。</summary>
-    /// <remarks>
-    /// 只做库内判定，<b>不调用</b> <see cref="IAxiosRetryPolicy.ShouldRetry"/>：策略可能带副作用
-    /// （例如 <see cref="RetryBudgetPolicy"/> 会扣共享令牌），策略的调用点与「发不出去就退费」放在一起。
-    /// </remarks>
+    /// <remarks>只做库内判定，<b>不调用</b> <see cref="IAxiosRetryPolicy.ShouldRetry"/>（策略可能带副作用）。</remarks>
     private static bool IsRetryableFailure(AxiosRetryContext context, CancellationToken externalToken, IAxiosRetryPolicy policy)
     {
         if (context.Attempt > policy.MaxRetries)
@@ -438,20 +411,19 @@ public static partial class Attempt
 
         if (context.Exception is AxiosException { Code: AxiosException.ErrCircuitOpen })
         {
-            // 熔断拒绝时请求根本没发出去，再重试只会撞同一个开着的闸门。
+            // 熔断拒绝：请求未发出。
             return false;
         }
 
         if (context.Exception is AxiosException { Code: AxiosException.ErrQueueTimeout or AxiosException.ErrQueueFull })
         {
-            // 排队超时 / 队列满说明本实例的在途 + 排队都已顶到上限 —— 立刻重发只会再撞同一个满载的闸门，
-            // 把「等并发降下来」这件该由调用方（降速 / 扩容 / 换实例）决定的事，变成库内的无效循环。
+            // 排队超时 / 队列满：请求未发出。
             return false;
         }
 
         if (context.Exception is AxiosException { Code: AxiosException.ErrBadOptionValue })
         {
-            // 尝试阶段的配置 / 编程错误（中间件返回 default、凭证用法不对等）：重发改变不了它。
+            // 配置错误：重发不改变结果。
             return false;
         }
 
@@ -462,7 +434,7 @@ public static partial class Attempt
     private static string CircuitHost(Uri uri)
         => uri.Authority is { Length: > 0 } authority ? authority : uri.Host;
 
-    /// <summary>回报一次熔断结果：内置熔断器带上准入票（迟到结果按代次丢弃），其它策略走原接口。</summary>
+    /// <summary>回报一次熔断结果：内置熔断器带上准入票，其它策略走原接口。</summary>
     private static void RecordCircuit(IAxiosCircuitPolicy policy, in AxiosCircuitContext context, long ticket)
     {
         if (policy is CircuitBreaker breaker)
@@ -474,9 +446,6 @@ public static partial class Attempt
         policy.Record(context);
     }
 
-    /// <summary>
-    /// 退回一次「已放行、但注定发不出去」的重试所扣的令牌（总预算已耗尽 / 回调抛错 / 退避被取消）。
-    /// 只认内建预算策略（含嵌套）；自定义装饰器包住它时识别不到，属已知的保守偏差。
-    /// </summary>
+    /// <summary>退回一次「已放行、但注定发不出去」的重试所扣的令牌。</summary>
     private static void RefundRetryBudget(IAxiosRetryPolicy policy) => (policy as RetryBudgetPolicy)?.Refund();
 }

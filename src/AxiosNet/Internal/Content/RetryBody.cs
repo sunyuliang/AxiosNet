@@ -2,19 +2,15 @@ using System.Net.Http.Json;
 
 namespace AxiosNet.Internal.Content;
 
-/// <summary>
-/// 重发时的请求体重放：记住正文里各个流的起点，每次重发前拨回去。
-/// 不可 seek 的流在请求发出之前就被拒绝（<c>ERR_BAD_OPTION_VALUE</c>）。
-/// </summary>
+/// <summary>重发时的请求体重放：记住正文里各个流的起点，每次重发前拨回去。</summary>
+/// <remarks>不可 seek 的流在请求发出之前就被拒绝（<c>ERR_BAD_OPTION_VALUE</c>）。</remarks>
 internal sealed class RetryBody
 {
     private readonly List<(Stream Stream, long Position)> _streams;
 
     private RetryBody(List<(Stream Stream, long Position)> streams) => _streams = streams;
 
-    /// <summary>
-    /// 检查正文是否可重放并记下流的起点；返回 <c>null</c> 表示正文不需要回拨（对象 / 字节 / 字符串 / 白名单内容）。
-    /// </summary>
+    /// <summary>检查正文是否可重放并记下流的起点；<c>null</c> 表示正文不需要回拨。</summary>
     /// <exception cref="AxiosException">正文不可重放（<c>ERR_BAD_OPTION_VALUE</c>）。</exception>
     public static RetryBody? Prepare(AxiosConfig config)
     {
@@ -64,9 +60,7 @@ internal sealed class RetryBody
             },
             part =>
             {
-                // 部件级 HttpContent 由调用方构造，库无法回拨：与根级内容同一套白名单，并且必须逐层下钻——
-                // 只判「这一层是不是 StreamContent」会漏掉 MultipartContent 里嵌套的 StreamContent，
-                // 那种正文第一次照常发出、第二次只剩空部件。
+                // 部件级 HttpContent 必须逐层下钻，嵌套的 StreamContent 也要拒绝。
                 EnsureReplayableContent(part, config);
             });
 
@@ -85,7 +79,7 @@ internal sealed class RetryBody
             }
             catch (Exception ex) when (ex is ObjectDisposedException or NotSupportedException or IOException)
             {
-                // 归到统一错误模型，不漏裸异常。
+                // 归到统一错误模型。
                 throw AxiosException.InvalidOption(
                     "重试 / 换端点前无法把请求正文的流拨回起点：流可能已被关闭，或不支持定位（CanSeek）。"
                     + "开启重试或备用端点要求正文可重放，请改用 byte[] / string / 业务对象，"
@@ -94,13 +88,8 @@ internal sealed class RetryBody
         }
     }
 
-    /// <summary>
-    /// 调用方自备的 <see cref="HttpContent"/>：只放行能确定可重放的标准形态，逐层下钻 multipart 部件。
-    /// </summary>
-    /// <remarks>
-    /// 「长度已知」不等于「可重放」，所以按白名单判断：内存缓冲形态与 JsonContent 放行，其余自定义内容在发送前拒绝。
-    /// 自引用的 <see cref="MultipartContent"/> 不做环检测：BCL 自身就会沿部件图无限递归。
-    /// </remarks>
+    /// <summary>调用方自备的 <see cref="HttpContent"/>：只放行可重放的标准形态，并逐层下钻 multipart 部件。</summary>
+    /// <remarks>内存缓冲形态与 JsonContent 放行，其余自定义内容在发送前拒绝。</remarks>
     private static void EnsureReplayableContent(HttpContent content, AxiosConfig config)
     {
         switch (content)
@@ -133,7 +122,7 @@ internal sealed class RetryBody
         }
     }
 
-    /// <summary>正文不可重发时的报错：说清第二次为什么发不出完整正文，并列出可重放的替代形态。</summary>
+    /// <summary>正文不可重发时的报错，列出可重放的替代形态。</summary>
     private static AxiosException NotReplayable(AxiosConfig config, string what)
         => AxiosException.InvalidOption(
             $"开启重试或备用端点要求请求体能重发，但当前 data 是{what}："

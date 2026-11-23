@@ -85,9 +85,7 @@ public sealed class InterfaceValidationTests
         Assert.NotEmpty(errors);
     }
 
-    // ------------------------------------------------------------------
-    // 接口形状
-    // ------------------------------------------------------------------
+// 接口形状
 
     [Fact]
     public void ValidateInterfaces_OpenGenericInterface_IsReportedBeforeAnythingElse()
@@ -142,9 +140,7 @@ public sealed class InterfaceValidationTests
         Assert.Contains("[Post]", errors[0]);
     }
 
-    // ------------------------------------------------------------------
-    // [Stream] 的三种误用
-    // ------------------------------------------------------------------
+// [Stream] 的三种误用
 
     [Fact]
     public void ValidateInterfaces_StreamOnDataReturn_IsReported()
@@ -178,9 +174,7 @@ public sealed class InterfaceValidationTests
         Assert.Empty(ApiClient.ValidateInterfaces(typeof(IStreamFormatApi)));
     }
 
-    // ------------------------------------------------------------------
-    // 参数形状
-    // ------------------------------------------------------------------
+// 参数形状
 
     [Fact]
     public void ValidateInterfaces_ByRefParameter_IsReported()
@@ -228,9 +222,7 @@ public sealed class InterfaceValidationTests
         Assert.Empty(ApiClient.ValidateInterfaces(typeof(IIgnoredParameterApi)));
     }
 
-    // ------------------------------------------------------------------
-    // 元数据解析：DispatchProxy 交回的方法可能不是接口方法
-    // ------------------------------------------------------------------
+// 元数据解析：DispatchProxy 交回的方法可能不是接口方法
 
     [Fact]
     public void ResolveMethod_FallsBackToInterfaceMethod_WhenProxyHandsBackAnImplementationMethod()
@@ -294,9 +286,7 @@ public interface IDuplicatePlaceholderApi
     Task<AxiosResponse<Person>> GetAsync([Path] int id, CancellationToken cancellationToken = default);
 }
 
-// ----------------------------------------------------------------------
 // 形状负例：每一条都对应 InterfaceDeclaration 里的一条规则
-// ----------------------------------------------------------------------
 
 /// <summary>开放泛型接口：只能使用闭合类型。</summary>
 public interface IGenericRepo<T>

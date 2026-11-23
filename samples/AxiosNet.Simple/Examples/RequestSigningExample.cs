@@ -36,17 +36,17 @@ public sealed class RequestSigningExample : IExample
 
         var order = """{"sku":"AXN-1001","quantity":2,"remark":"签名演示"}""";
 
-        // ---- 1) 正常签名请求 ----
+        // 1) 正常签名请求
         Console.WriteLine("  [1] 正常签名请求（POST 带 JSON 请求体）");
         var created = await http.PostAsync<JsonElement>(DemoAuthApi.SignedOrdersPath, order, UseSigning);
         Console.WriteLine($"      {created.Status} -> {created.Data.GetRawText()}");
 
-        // ---- 2) 无请求体的签名请求 ----
+        // 2) 无请求体的签名请求
         Console.WriteLine("  [2] 签名 GET（无请求体，bodyHash 取空串哈希）");
         var profile = await http.GetAsync<JsonElement>(DemoAuthApi.SignedProfilePath, UseSigning);
         Console.WriteLine($"      {profile.Status} -> {profile.Data.GetRawText()}");
 
-        // ---- 3) 请求体被篡改：签名针对原请求体计算，实际上送改过的内容 ----
+        // 3) 请求体被篡改：签名针对原请求体计算，实际上送改过的内容
         Console.WriteLine("  [3] 请求体被篡改（签名算的是原内容，实际上送被改过的内容）");
         var tampered = """{"sku":"AXN-1001","quantity":2,"remark":"被改过的备注"}""";
         var tamperedTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
@@ -59,7 +59,7 @@ public sealed class RequestSigningExample : IExample
             SetSignatureHeaders(c, token, tamperedTimestamp, tamperedNonce, tamperedSignature);
         }));
 
-        // ---- 4) 重放攻击：同一 nonce + 时间戳 + 签名原样再发一次 ----
+        // 4) 重放攻击：同一 nonce + 时间戳 + 签名原样再发一次
         Console.WriteLine("  [4] 重放攻击（首次成功，原样重发被 nonce 缓存拒绝）");
         var replayTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
         var replayNonce = Guid.NewGuid().ToString("N");
@@ -75,7 +75,7 @@ public sealed class RequestSigningExample : IExample
         Console.WriteLine($"      首次发送 -> {first.Status}");
         await ShowSignedErrorAsync(http.PostAsync<JsonElement>(DemoAuthApi.SignedOrdersPath, order, replayHeaders));
 
-        // ---- 5) 过期时间戳：签名本身正确，但时间戳已滑出允许窗口 ----
+        // 5) 过期时间戳：签名本身正确，但时间戳已滑出允许窗口
         Console.WriteLine("  [5] 过期时间戳（签名正确，但时间戳在 5 分钟窗口之外）");
         var staleTimestamp = (DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 600).ToString();
         var staleNonce = Guid.NewGuid().ToString("N");

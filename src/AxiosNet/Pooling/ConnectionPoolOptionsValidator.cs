@@ -17,10 +17,8 @@ internal static class ConnectionPoolOptionsValidator
         }
 
 #if NETSTANDARD2_0
-        // 兼容资产的默认 Handler 是 HttpClientHandler：下列连接级选项没有可映射的位置，设置了也不会生效。
-        // 在构造期显式拒绝（默认值放行），避免「配了却没反应」的静默失效。
-        // 只有全局 HandlerFactory 才接管默认档；命名传输档的工厂只作用于该档（见 PooledEndpoint.CreateHandler），
-        // 不能拿它给默认档豁免，否则默认档上这些选项依旧静默失效。
+        // 兼容资产的默认 Handler 是 HttpClientHandler：下列连接级选项没有映射位置，非默认值在构造期拒绝。
+        // 只有全局 HandlerFactory 能接管默认档；命名档工厂不能给默认档豁免。
         if (options.HandlerFactory is null)
         {
             if (options.PooledConnectionLifetime != ConnectionPoolOptions.DefaultPooledConnectionLifetime)
@@ -75,7 +73,7 @@ internal static class ConnectionPoolOptionsValidator
                 config);
         }
 
-        // SocketsHttpHandler 只接受正数：没有「0 表示不限制」的写法。
+        // SocketsHttpHandler 只接受正数。
         if (options.MaxResponseHeadersLength <= 0)
         {
             throw AxiosException.InvalidOption(
@@ -88,7 +86,7 @@ internal static class ConnectionPoolOptionsValidator
             throw AxiosException.InvalidOption("MaxAutomaticRedirections 必须大于 0；不跟随重定向请设 AllowAutoRedirect = false。", config);
         }
 
-        // Cookie 容器容量三项只在真的建容器时才有意义：没开 UseCookies 时不校验，避免关掉 cookie 后还被无关项拦下。
+        // Cookie 容量三项只在真的建容器时校验。
         if (options.UseCookies)
         {
             if (options.CookieCapacity <= 0)
@@ -109,8 +107,7 @@ internal static class ConnectionPoolOptionsValidator
             }
         }
 
-        // DecompressionMethods.All 在 BCL 里是 -1（每一位都亮），属合法的「全开」；
-        // 超出 gzip / deflate / br 的位按配置错误拦下。
+        // DecompressionMethods.All 在 BCL 里是 -1（每一位都亮），属合法「全开」；超出已知算法位按错误拦下。
 #if NETSTANDARD2_0
         // 兼容资产没有 Brotli / All：合法位只有 gzip / deflate，直接按位判定。
         const DecompressionMethods knownDecompression =
@@ -148,7 +145,7 @@ internal static class ConnectionPoolOptionsValidator
             throw AxiosException.InvalidOption($"EvictionInterval（{options.EvictionInterval}）超出后台计时器上限（约 49.7 天）：请调小，或设为 0 改用手动驱逐。", config);
         }
 
-        // 0 不是「不 ping」而是「立刻 ping」：不 ping 只有 InfiniteTimeSpan 一种写法。
+        // 0 不是「不 ping」而是「立刻 ping」。
         if (options.KeepAlivePingDelay <= TimeSpan.Zero && options.KeepAlivePingDelay != Timeout.InfiniteTimeSpan)
         {
             throw AxiosException.InvalidOption("KeepAlivePingDelay 必须大于 0；不发 keep-alive ping 请设为 Timeout.InfiniteTimeSpan。", config);
@@ -159,7 +156,7 @@ internal static class ConnectionPoolOptionsValidator
             throw AxiosException.InvalidOption("KeepAlivePingTimeout 必须大于 0；不因 ping 超时断连请设为 Timeout.InfiniteTimeSpan。", config);
         }
 
-        // 两者都由底层计时器表达，上限与 CancelAfter 同一口径（见 Timeouts.Max）。
+        // 两者都由底层计时器表达，上限同 Timeouts.Max。
         var pingLimit = Timeouts.Max;
         if (options.KeepAlivePingDelay > pingLimit || options.KeepAlivePingTimeout > pingLimit)
         {
@@ -170,7 +167,7 @@ internal static class ConnectionPoolOptionsValidator
         }
 
 #if !NETSTANDARD2_0
-        // 枚举只认两个值，别的值底层会当成「不 ping」。兼容资产没有该枚举与 h2 ping 能力，整块校验不适用。
+        // 枚举只认两个值，其它值底层会当成「不 ping」。
         if (options.KeepAlivePingPolicy is not (HttpKeepAlivePingPolicy.WithActiveRequests or HttpKeepAlivePingPolicy.Always))
         {
             throw AxiosException.InvalidOption(
@@ -186,9 +183,7 @@ internal static class ConnectionPoolOptionsValidator
         => value < TimeSpan.Zero && value != Timeout.InfiniteTimeSpan;
 
 #if NETSTANDARD2_0
-    /// <summary>
-    /// 兼容资产上「没有对应配置入口」的池选项统一报错：与其静默忽略，不如让调用方换目标框架或换 Handler。
-    /// </summary>
+    /// <summary>兼容资产上「没有对应配置入口」的池选项统一报错。</summary>
     /// <param name="optionName">被拒绝的选项名（用于消息定位）。</param>
     /// <param name="config">当前配置（可为 <c>null</c>，用于异常上下文）。</param>
     /// <returns>可直接抛出的配置错误。</returns>

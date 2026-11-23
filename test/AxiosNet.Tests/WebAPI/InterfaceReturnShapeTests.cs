@@ -146,9 +146,7 @@ public sealed class InterfaceReturnShapeTests
         Assert.Empty(server.Received);
     }
 
-    // ------------------------------------------------------------------
-    // 返回形态的启动期校验
-    // ------------------------------------------------------------------
+// 返回形态的启动期校验
 
     [Fact]
     public void Validation_RejectsSyncAndValueTask_WithReadableTypeName()

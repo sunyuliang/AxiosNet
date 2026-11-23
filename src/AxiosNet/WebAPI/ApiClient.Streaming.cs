@@ -6,12 +6,9 @@ namespace AxiosNet.WebAPI;
 public sealed partial class ApiClient
 {
     /// <summary>
-    /// 读取流式响应：<c>Data</c> 是逐帧反序列化的 <see cref="IAsyncEnumerable{T}"/>。
-    /// 帧格式取请求模型类 / 属性上的 <c>[Stream]</c> 声明，未声明时按 NDJSON。
+    /// 读取流式响应：<c>Data</c> 是逐帧反序列化的 <see cref="IAsyncEnumerable{T}"/>；帧格式取请求模型类 / 属性上的 <c>[Stream]</c> 声明，未声明时按 NDJSON。
     /// </summary>
     /// <typeparam name="TItem">每个帧（行）反序列化后的类型。</typeparam>
-    /// <param name="request">请求模型实例；泛型参数即<b>单个帧</b>的类型。</param>
-    /// <param name="cancellationToken">外部取消令牌（贯穿整个枚举过程）。</param>
     public Task<AxiosResponse<IAsyncEnumerable<TItem>>> RequestStreamAsync<TItem>(
         IApiRequest<TItem> request,
         CancellationToken cancellationToken = default)
@@ -28,16 +25,11 @@ public sealed partial class ApiClient
 
     /// <summary>以指定帧格式（NDJSON / SSE / JSON 数组）逐帧读取流式响应。</summary>
     /// <remarks>
-    /// 三种格式共用同一层字节读取与单帧上限（默认 8 MB）。正文超时与响应头同一份预算，超出抛 <c>ECONNABORTED</c>；
-    /// 不设超时时靠 <paramref name="cancellationToken"/> 退出。JSON 数组模式要求 UTF-8。
+    /// 三种格式共用同一层字节读取与单帧上限（默认 8 MB）；正文超时与响应头同一份预算，超出抛 <c>ECONNABORTED</c>，不设超时时靠 <paramref name="cancellationToken"/> 退出。
     /// 响应流只能枚举一次；解析失败抛 <c>ERR_BAD_RESPONSE</c>，中途断流抛 <c>ERR_NETWORK</c>，取消抛 <c>ERR_CANCELED</c>。
     /// <c>ResponseType</c> 未设置时自动切 <c>Stream</c>，显式设成非 <c>Stream</c> 抛 <c>ERR_BAD_OPTION_VALUE</c>。
     /// </remarks>
     /// <typeparam name="TItem">每个帧反序列化后的类型。</typeparam>
-    /// <param name="request">请求模型实例。</param>
-    /// <param name="format">帧格式。</param>
-    /// <param name="configure">按请求微调配置（在模型绑定之后、授权之前调用）。</param>
-    /// <param name="cancellationToken">外部取消令牌（贯穿整个枚举过程）。</param>
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2072",
@@ -66,8 +58,7 @@ public sealed partial class ApiClient
         CancellationToken cancellationToken,
         AxiosStreamFormat format)
     {
-        // 正文按帧消费：未显式设置时才自动切到 Stream。按请求与实例默认都算「显式」；
-        // 显式设成别的类型直接报配置错误，不能静默覆盖调用方的选择（那会让 Data 类型与调用方预期不符）。
+        // 未显式设置时才自动切到 Stream；显式设成别的类型直接报配置错误。
         var declaredResponseType = config.ResponseTypeSet
             ? config.ResponseType
             : Axios.Defaults.ResponseTypeSet
@@ -86,8 +77,7 @@ public sealed partial class ApiClient
         }
         else
         {
-            // 正文超时与响应头同一份预算（本次尝试的 Timeout，已被 TotalTimeout 压过），
-            // 不设超时时正文不限时、靠取消令牌退出。
+            // 正文超时与响应头同一份预算；不设超时时正文不限时、靠取消令牌退出。
             config.SetResponseTypeAuto(ResponseType.Stream);
         }
 
@@ -110,7 +100,7 @@ public sealed partial class ApiClient
         }
         catch
         {
-            // 构造失败时正文流已在本方法手里，必须兜底释放，否则会漏掉一份连接额度。
+            // 构造失败时正文流已在本方法手里，必须兜底释放。
             body.Dispose();
             throw;
         }

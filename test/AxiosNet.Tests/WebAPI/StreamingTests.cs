@@ -20,9 +20,7 @@ namespace AxiosNet.Tests.WebAPI;
 /// </summary>
 public sealed class StreamingTests
 {
-    // ------------------------------------------------------------------
-    // Bug 2：SSE 裸 CR 行尾
-    // ------------------------------------------------------------------
+// Bug 2：SSE 裸 CR 行尾
 
     [Fact]
     public async Task Sse_BareCarriageReturnLineEndings_AreFramed()
@@ -37,9 +35,7 @@ public sealed class StreamingTests
         Assert.Equal(new[] { 1, 2 }, items.Select(i => i.N));
     }
 
-    // ------------------------------------------------------------------
-    // JSON 数组：空数组与空元素的边界
-    // ------------------------------------------------------------------
+// JSON 数组：空数组与空元素的边界
 
     /// <summary>空数组一律交付 0 个元素，不能因为「帧长度为 0」而卡在循环里；含把 <c>[</c> 与 <c>]</c> 拆到两次读取的分块形态。</summary>
     [Theory]
@@ -75,9 +71,7 @@ public sealed class StreamingTests
         Assert.All(items, item => Assert.Equal(0, item.N));
     }
 
-    // ------------------------------------------------------------------
-    // 显式 ResponseType：流式入口只在未显式设置时自动切到 Stream
-    // ------------------------------------------------------------------
+// 显式 ResponseType：流式入口只在未显式设置时自动切到 Stream
 
     [Fact]
     public async Task RequestStreamAsync_ExplicitNonStreamResponseType_IsRejected()
@@ -147,9 +141,7 @@ public sealed class StreamingTests
         Assert.Equal("ok", item.T);
     }
 
-    // ------------------------------------------------------------------
-    // Bug 3：流式分帧未校验强制 TextEncoding
-    // ------------------------------------------------------------------
+// Bug 3：流式分帧未校验强制 TextEncoding
 
     [Fact]
     public async Task Sse_ForcedNonAsciiCompatibleEncoding_IsRejected()
@@ -168,9 +160,7 @@ public sealed class StreamingTests
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
     }
 
-    // ------------------------------------------------------------------
-    // SSE 帧上限：字节口径
-    // ------------------------------------------------------------------
+// SSE 帧上限：字节口径
 
     [Fact]
     public async Task RequestStreamAsync_SseFrameOverByteLimit_ThrowsFrameTooLarge()
@@ -194,9 +184,7 @@ public sealed class StreamingTests
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
     }
 
-    // ------------------------------------------------------------------
-    // 流式：NDJSON
-    // ------------------------------------------------------------------
+// 流式：NDJSON
 
     [Fact]
     public async Task Ndjson_ReadsAllFrames_IncludingSplitMultiByteCharacters()
@@ -274,9 +262,7 @@ public sealed class StreamingTests
         Assert.Contains("只能枚举一次", error.Message);
     }
 
-    // ------------------------------------------------------------------
-    // 流式：SSE
-    // ------------------------------------------------------------------
+// 流式：SSE
 
     [Fact]
     public async Task Sse_ReadsDataFrames_SkipsComments_AndStopsAtDoneSentinel()
@@ -380,9 +366,7 @@ public sealed class StreamingTests
         Assert.Equal("café", Assert.Single(items).Text);
     }
 
-    // ------------------------------------------------------------------
-    // 流式：正文与响应头共用同一份预算（不设超时时正文不限时）
-    // ------------------------------------------------------------------
+// 流式：正文与响应头共用同一份预算（不设超时时正文不限时）
 
     [Fact]
     public async Task Stream_NoTimeoutConfigured_BodyIsNotBounded()
@@ -433,9 +417,7 @@ public sealed class StreamingTests
         Assert.Contains("remaining TotalTimeout budget", error.Message, StringComparison.Ordinal);
     }
 
-    // ------------------------------------------------------------------
-    // 流式：状态码错误与错误工厂
-    // ------------------------------------------------------------------
+// 流式：状态码错误与错误工厂
 
     [Fact]
     public async Task Stream_HttpError_ThrowsBeforeEnumeration_AndHonorsErrorFactory()
@@ -452,9 +434,7 @@ public sealed class StreamingTests
         Assert.Equal("E9", error.Error?.Code);
     }
 
-    // ------------------------------------------------------------------
-    // 基本形态
-    // ------------------------------------------------------------------
+// 基本形态
 
     [Fact]
     public async Task JsonArray_ReadsAllElements_WhenChunksSplitTokensAndMultiByteCharacters()
@@ -681,9 +661,7 @@ public sealed class StreamingTests
         Assert.Equal(1, Assert.Single(await CollectAsync(response.Data!)).N);
     }
 
-    // ------------------------------------------------------------------
-    // 空流与编码
-    // ------------------------------------------------------------------
+// 空流与编码
 
     [Fact]
     public async Task JsonArray_EmptyArray_YieldsNothing()
@@ -754,9 +732,7 @@ public sealed class StreamingTests
         Assert.Contains("charset", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    // ------------------------------------------------------------------
-    // 协议错误
-    // ------------------------------------------------------------------
+// 协议错误
 
     [Fact]
     public async Task JsonArray_RootIsNotArray_ReportsBadResponse()
@@ -888,9 +864,7 @@ public sealed class StreamingTests
         }
     }
 
-    // ------------------------------------------------------------------
-    // 与既有契约的一致性：正文预算、单次枚举、方言跟随序列化选项
-    // ------------------------------------------------------------------
+// 与既有契约的一致性：正文预算、单次枚举、方言跟随序列化选项
 
     [Fact]
     public async Task JsonArray_BodySharesTheAttemptBudget()
@@ -964,9 +938,7 @@ public sealed class StreamingTests
         Assert.Equal(1, item.GetProperty("a").GetProperty("b").GetInt32());
     }
 
-    // ------------------------------------------------------------------
-    // B7：流式请求的生效配置回放时不能泄漏 ResponseType.Stream
-    // ------------------------------------------------------------------
+// B7：流式请求的生效配置回放时不能泄漏 ResponseType.Stream
 
     [Fact]
     public async Task B7_StreamResponseConfigReplay_DoesNotLeakStreamResponseType()
@@ -985,9 +957,7 @@ public sealed class StreamingTests
         Assert.Equal(1, item.N);
     }
 
-    // ------------------------------------------------------------------
-    // B2：枚举令牌在挂起的读取中取消，也要翻译成 ERR_CANCELED
-    // ------------------------------------------------------------------
+// B2：枚举令牌在挂起的读取中取消，也要翻译成 ERR_CANCELED
 
     [Fact]
     public async Task B2_CancelDuringPendingRead_ReportsCanceled()
@@ -1012,9 +982,7 @@ public sealed class StreamingTests
         Assert.Equal(AxiosException.ErrCanceled, error.Code);
     }
 
-    // ------------------------------------------------------------------
-    // B5：UTF-16 / UTF-32 charset 声明会破坏按字节分帧，必须在取流时报错
-    // ------------------------------------------------------------------
+// B5：UTF-16 / UTF-32 charset 声明会破坏按字节分帧，必须在取流时报错
 
     [Fact]
     public async Task B5_NonAsciiCompatibleCharset_ThrowsClearError()
@@ -1030,9 +998,7 @@ public sealed class StreamingTests
         Assert.Contains("charset", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    // ------------------------------------------------------------------
-    // B6：反序列化结果类型不符时不能静默返回 default(T)
-    // ------------------------------------------------------------------
+// B6：反序列化结果类型不符时不能静默返回 default(T)
 
     [Fact]
     public async Task B6_WrongDeserializedType_ReportsBadResponse()
@@ -1053,9 +1019,7 @@ public sealed class StreamingTests
         Assert.Contains("System.String", error.Cause!.Message);
     }
 
-    // ------------------------------------------------------------------
-    // B8：调用方在两次 MoveNext 之间停顿，不算「网络空闲」
-    // ------------------------------------------------------------------
+// B8：调用方在两次 MoveNext 之间停顿，不算「网络空闲」
 
     [Fact]
     public async Task B8_ConsumerPauseBetweenFrames_IsHarmlessWithoutBudget()
@@ -1103,9 +1067,7 @@ public sealed class StreamingTests
         Assert.Equal("naïve", items[1].Text);
     }
 
-    // ------------------------------------------------------------------
-    // 帧里的非法 UTF-8：回退解码文本入口（坏字节按 U+FFFD 替换），与只解码的旧路径一致
-    // ------------------------------------------------------------------
+// 帧里的非法 UTF-8：回退解码文本入口（坏字节按 U+FFFD 替换），与只解码的旧路径一致
 
     [Fact]
     public async Task Ndjson_InvalidUtf8Frame_FallsBackToDecodedText()
@@ -1211,9 +1173,7 @@ public sealed class StreamingTests
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
     }
 
-    // ------------------------------------------------------------------
-    // 默认值
-    // ------------------------------------------------------------------
+// 默认值
 
     [Fact]
     public void DefaultStreamFrameLength_IsEightMegabytes()
@@ -1244,9 +1204,7 @@ public sealed class StreamingTests
         Assert.Contains("8388608", error.Message);
     }
 
-    // ------------------------------------------------------------------
-    // 放大：超过默认上限的帧在配置后可以读
-    // ------------------------------------------------------------------
+// 放大：超过默认上限的帧在配置后可以读
 
     [Fact]
     public async Task ConfiguredLimit_AllowsNdjsonFrameAboveDefault()
@@ -1278,9 +1236,7 @@ public sealed class StreamingTests
         Assert.Equal(9 * Mb, Assert.Single(items).Length);
     }
 
-    // ------------------------------------------------------------------
-    // 收紧：比默认更小的上限同样生效
-    // ------------------------------------------------------------------
+// 收紧：比默认更小的上限同样生效
 
     [Fact]
     public async Task ConfiguredLimit_RejectsFrameThatDefaultWouldAllow()
@@ -1296,9 +1252,7 @@ public sealed class StreamingTests
         Assert.Contains("1048576", error.Message);
     }
 
-    // ------------------------------------------------------------------
-    // 合并语义：按请求覆盖、显式 null 回到默认
-    // ------------------------------------------------------------------
+// 合并语义：按请求覆盖、显式 null 回到默认
 
     [Fact]
     public async Task PerRequestValue_OverridesInstanceDefault()
@@ -1367,9 +1321,7 @@ public sealed class StreamingTests
         Assert.Equal(12 * Mb, config.Clone().Limits.MaxStreamFrameBytes);
     }
 
-    // ------------------------------------------------------------------
-    // 越界：发送前 fail-fast，不发请求
-    // ------------------------------------------------------------------
+// 越界：发送前 fail-fast，不发请求
 
     [Theory]
     [InlineData(0)]

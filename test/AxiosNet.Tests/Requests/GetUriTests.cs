@@ -76,9 +76,7 @@ public sealed class GetUriTests
         Assert.Equal(2, first.Received.Count);   // 源服务端只收到最初那两次
     }
 
-    // ---------------------------------------------------------------
-    // RFC 3986：baseAddress 的 query / fragment 不是路径的一部分
-    // ---------------------------------------------------------------
+// RFC 3986：baseAddress 的 query / fragment 不是路径的一部分
 
     [Theory]
     // 非空相对路径：引用自带 query（没有就为空），base 的 query 不得混进路径。
@@ -130,9 +128,7 @@ public sealed class GetUriTests
         Assert.Equal("http://a.com/users", client.GetUri(c => c.Url = "users"));
     }
 
-    // ---------------------------------------------------------------
-    // baseURL 与 url 的斜杠合并
-    // ---------------------------------------------------------------
+// baseURL 与 url 的斜杠合并
 
     [Theory]
     [InlineData("http://a.com/api/", "/users", "http://a.com/api/users")]
@@ -312,9 +308,7 @@ public sealed class GetUriTests
         Assert.Throws<ArgumentNullException>(() => AxiosUrl.EncodePathSegment(null!));
     }
 
-    // ------------------------------------------------------------------
-    // L4：Uri 归一化与线上请求行一致（框架行为，文档化 + 锁定）
-    // ------------------------------------------------------------------
+// L4：Uri 归一化与线上请求行一致（框架行为，文档化 + 锁定）
 
     [Fact]
     public void GetUri_NormalizesUnreservedPercentEscapes_LikeTheWire()
@@ -339,9 +333,7 @@ public sealed class GetUriTests
     // ===============================================================
 
 
-    // ---------------------------------------------------------------
-    // 测试模型与序列化器夹具
-    // ---------------------------------------------------------------
+// 测试模型与序列化器夹具
 
 
     /// <summary>把请求挡在 <see cref="TaskCompletionSource"/> 之后的测试 Handler。</summary>

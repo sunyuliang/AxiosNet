@@ -16,7 +16,7 @@ internal static class RuntimeSupport
     /// <summary>能力切换的附加失效回调：可选扩展可按需注册自己的缓存清理（核心不认识具体来源）。</summary>
     internal static Action? CapabilityChanged;
 
-    /// <summary>测试钩子：模拟 Native AOT（只影响本库的守卫，不改变 BCL 行为）。切换时清空按能力缓存的元数据，避免两种结论混用。</summary>
+    /// <summary>测试钩子：模拟 Native AOT（只影响本库的守卫）。切换时清空按能力缓存的元数据。</summary>
     internal static bool ForceNoDynamicCode
     {
         get => _forceNoDynamicCode;

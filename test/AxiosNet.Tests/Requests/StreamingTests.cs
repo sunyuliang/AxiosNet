@@ -92,9 +92,7 @@ public sealed class StreamingTests
         Assert.Equal(1, pool.EvictIdleEndpoints());
     }
 
-    // ------------------------------------------------------------------
-    // 泛型参数与 responseType 不匹配时的流式正文
-    // ------------------------------------------------------------------
+// 泛型参数与 responseType 不匹配时的流式正文
 
     [Fact]
     public async Task TypedRequest_WithMismatchedStreamResponse_ReleasesLease()
@@ -171,9 +169,7 @@ public sealed class StreamingTests
         Assert.Equal(AxiosException.ErrNetwork, ex.Code);
     }
 
-    // ---------------------------------------------------------------
-    // 客户端关闭不得打断进行中的流式下载
-    // ---------------------------------------------------------------
+// 客户端关闭不得打断进行中的流式下载
 
     [Fact]
     public async Task StreamResponse_CompletesAfterClientDispose_AndReleasesEndpoint()
@@ -210,9 +206,7 @@ public sealed class StreamingTests
         client.Dispose();
     }
 
-    // ---------------------------------------------------------------
-    // 租约归还：Dispose / DisposeAsync / 中途放弃
-    // ---------------------------------------------------------------
+// 租约归还：Dispose / DisposeAsync / 中途放弃
 
     [Fact]
     public async Task StreamResponse_DisposeAsync_ReturnsLeaseAndKeepsConnectionReusable()
@@ -263,9 +257,7 @@ public sealed class StreamingTests
         Assert.Equal(200, next.Status);
     }
 
-    // ---------------------------------------------------------------
-    // P0-1：流式响应遇非 2xx 必须释放响应体，否则连接被永久占死
-    // ---------------------------------------------------------------
+// P0-1：流式响应遇非 2xx 必须释放响应体，否则连接被永久占死
 
     [Fact]
     public async Task StreamingErrorResponse_ReleasesConnectionInsteadOfHangingPool()
@@ -319,9 +311,7 @@ public sealed class StreamingTests
         Assert.Equal(1, pool.EvictIdleEndpoints());
     }
 
-    // ------------------------------------------------------------------
-    // 辅助
-    // ------------------------------------------------------------------
+// 辅助
 
 
     private static async Task DrainAsync<T>(IAsyncEnumerable<T>? source)
@@ -438,9 +428,7 @@ public sealed class StreamingTests
         }
     }
 
-    // ---------------------------------------------------------------
-    // 辅助
-    // ---------------------------------------------------------------
+// 辅助
 
     /// <summary>
     /// 正文读取阶段的超时预算。必须同时满足两头：

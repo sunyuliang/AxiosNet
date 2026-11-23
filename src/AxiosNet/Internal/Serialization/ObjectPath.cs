@@ -62,7 +62,7 @@ internal ref struct ObjectPath
         _chain![_count] = null;
     }
 
-    /// <summary>归还租下的数组并清空引用，避免池里长期持有业务对象。</summary>
+    /// <summary>归还租下的数组并清空引用。</summary>
     public void Dispose()
     {
         var chain = _chain;

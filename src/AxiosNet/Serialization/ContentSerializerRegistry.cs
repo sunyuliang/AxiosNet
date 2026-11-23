@@ -1,22 +1,18 @@
 
 namespace AxiosNet.Serialization;
 
-/// <summary>
-/// 按媒体类型登记序列化器的表（每个 <see cref="AxiosNet.AxiosClient"/> 一份）。
-/// </summary>
+/// <summary>按媒体类型登记序列化器的表（每个 <see cref="AxiosNet.AxiosClient"/> 一份）。</summary>
 /// <remarks>
-/// 查表规则与全局 <see cref="AxiosNet.AxiosContent.Register"/> 一致：归一化后精确匹配 → 常见别名（text/xml、text/json）
-/// → 结构化后缀（RFC 6839，<c>application/vnd.x+yaml</c> 回落到 <c>application/yaml</c>）。
-/// 登记是写时复制，查表不加锁；本表只影响使用它的客户端，不改变全局注册表。
-/// 表对象随配置走：同一个 <see cref="AxiosNet.AxiosConfig"/> 被多个客户端使用、或被 <c>Clone()</c> 时，彼此共享这一张表。
+/// 查表规则与全局 <see cref="AxiosNet.AxiosContent.Register"/> 一致：归一化后精确匹配 → 常见别名（text/xml、text/json）→ 结构化后缀（RFC 6839，<c>application/vnd.x+yaml</c> 回落到 <c>application/yaml</c>）。
+/// 登记是写时复制，查表不加锁；本表只影响使用它的客户端。表对象随配置走：多个客户端共用同一个 <see cref="AxiosNet.AxiosConfig"/> 或被 <c>Clone()</c> 时共享这一张表。
 /// </remarks>
 public sealed class ContentSerializerRegistry
 {
-    // 空表单例：未注册任何序列化器时的共同起点。
+    // 空表单例。
     private static readonly IReadOnlyDictionary<string, IContentSerializer> Empty =
         new Dictionary<string, IContentSerializer>(0, StringComparer.Ordinal);
 
-    // 媒体类型别名 → 注册键（如 <c>text/json</c> 归一），避免每个别名各存一份实例。
+    // 媒体类型别名 → 注册键。
     private static readonly Dictionary<string, string> AliasTargets = new(StringComparer.Ordinal)
     {
         ["text/xml"] = AxiosContentType.Xml,
@@ -24,17 +20,14 @@ public sealed class ContentSerializerRegistry
     };
 
     private readonly object _gate = new();
-    // 当前表（写时复制）：读路径只 Volatile.Read，注册整体替换。
+    // 当前表（写时复制）。
     private volatile IReadOnlyDictionary<string, IContentSerializer> _entries = Empty;
     private volatile IContentSerializer? _default;
 
     /// <summary>已登记的类型数。</summary>
     public int Count => _entries.Count;
 
-    /// <summary>
-    /// 表内默认项：按媒体类型匹配不到时使用；<c>null</c>（默认）表示本表不提供兜底。
-    /// 按媒体类型精确登记始终优先于默认项。
-    /// </summary>
+    /// <summary>表内默认项：按媒体类型匹配不到时使用；<c>null</c>（默认）表示本表不提供兜底，精确登记始终优先。</summary>
     public IContentSerializer? Default
     {
         get => _default;
@@ -138,10 +131,7 @@ public sealed class ContentSerializerRegistry
         return null;
     }
 
-    /// <summary>
-    /// 按 Ordinal 复制一份登记表（写时复制）。netstandard2.0 的 Dictionary 构造不接受 IReadOnlyDictionary，
-    /// 因此三个资产统一走这份显式复制，语义一致。
-    /// </summary>
+    /// <summary>按 Ordinal 复制一份登记表（写时复制）；三个资产统一走这份显式复制，语义一致。</summary>
     /// <param name="source">当前登记表。</param>
     /// <returns>独立副本。</returns>
     private static Dictionary<string, IContentSerializer> CopyEntries(IReadOnlyDictionary<string, IContentSerializer> source)

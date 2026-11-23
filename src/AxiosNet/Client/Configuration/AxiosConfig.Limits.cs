@@ -2,10 +2,7 @@ namespace AxiosNet;
 
 public sealed partial class AxiosConfig
 {
-    /// <summary>
-    /// 体积与流式分帧上限（真分组，也是这三项的唯一入口）：请求体上限 / 响应体上限 / 流式单帧上限。
-    /// 每个叶子只有一份存储、一份注释、一个入口；首次读取时懒创建。
-    /// </summary>
+    /// <summary>体积与流式分帧上限：请求体上限 / 响应体上限 / 流式单帧上限。</summary>
     public sealed class LimitsSettings
     {
         private long? _maxResponseBytes;

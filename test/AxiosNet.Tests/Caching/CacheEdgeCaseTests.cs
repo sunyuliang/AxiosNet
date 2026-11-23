@@ -21,9 +21,7 @@ public sealed class CacheEdgeCaseTests
         return new AxiosCache(options);
     }
 
-    // ---------------------------------------------------------------
-    // 单飞生命周期
-    // ---------------------------------------------------------------
+// 单飞生命周期
 
     [Fact]
     public async Task LeaderHookFailure_ReleasesTheFollower()
@@ -156,9 +154,7 @@ public sealed class CacheEdgeCaseTests
         Assert.Equal(3, server.Received.Count);
     }
 
-    // ---------------------------------------------------------------
-    // 命中路径语义
-    // ---------------------------------------------------------------
+// 命中路径语义
 
     [Fact]
     public async Task Hit_AppliesValidateStatus()
@@ -225,9 +221,7 @@ public sealed class CacheEdgeCaseTests
         Assert.Single(server.Received);
     }
 
-    // ---------------------------------------------------------------
-    // 无效新鲜期（RFC 9111 §4.2.1：无效的新鲜期信息按已过期处理）
-    // ---------------------------------------------------------------
+// 无效新鲜期（RFC 9111 §4.2.1：无效的新鲜期信息按已过期处理）
 
     [Theory]
     [InlineData("oops")]
@@ -290,9 +284,7 @@ public sealed class CacheEdgeCaseTests
         Assert.Equal(2, server.Received.Count);
     }
 
-    // ---------------------------------------------------------------
-    // 存储读取：总预算与取消
-    // ---------------------------------------------------------------
+// 存储读取：总预算与取消
 
     [Fact]
     public async Task StoreRead_IsBoundedByTotalTimeout()
@@ -373,9 +365,7 @@ public sealed class CacheEdgeCaseTests
         Assert.Single(server.Received);
     }
 
-    // ---------------------------------------------------------------
-    // 存储写入：总预算
-    // ---------------------------------------------------------------
+// 存储写入：总预算
 
     [Fact]
     public async Task StoreWrite_IsBoundedByTotalTimeout()
@@ -424,9 +414,7 @@ public sealed class CacheEdgeCaseTests
         Assert.Equal(receivedBefore + 2, server.Received.Count);
     }
 
-    // ---------------------------------------------------------------
-    // 其他特性交互
-    // ---------------------------------------------------------------
+// 其他特性交互
 
     [Fact]
     public async Task Redirect_EntryIsStoredUnderTheOriginalUrl()

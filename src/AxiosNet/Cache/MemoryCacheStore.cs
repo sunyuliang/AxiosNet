@@ -2,26 +2,19 @@ using System.Collections.Concurrent;
 
 namespace AxiosNet.Cache;
 
-/// <summary>
-/// 内置的内存存储：进程内字典 + 到期时间 + 条目 / 字节上限，<see cref="AxiosCache"/> 默认用它。
-/// </summary>
+/// <summary>内置的内存存储：进程内字典 + 到期时间 + 条目 / 字节上限，<see cref="AxiosCache"/> 默认用它。</summary>
 /// <remarks>
-/// 每个条目自带到期时刻，读的时候顺手摘掉过期项；要收新键时先判容量（条目数与近似字节数都要放得下），
-/// 满了先清过期项，仍放不下就不再接收**新**键（已存在的键照常覆盖，存活时长随之续期；
-/// 不做随机淘汰 —— 命中率不会因为「刚好轮到你」而抖动，行为也可测）。
-/// 带校验器（<c>ETag</c> / <c>Last-Modified</c>）的过期条目不摘：它们留给条件请求复用，
-/// 由 <see cref="GetRevalidationAsync"/> 取走，直到被覆盖、被容量压力清掉或 <see cref="ClearAsync"/>。
-/// 进程重启即清空；要跨进程共享请自己实现 <see cref="IAxiosCacheStore"/>。
+/// 读时顺手摘掉过期项；容量满先清过期项，仍放不下就不再接收新键（已有键照常覆盖并续期，不做随机淘汰）。
+/// 带校验器的过期条目留给条件请求复用，直到被覆盖、清掉或 <see cref="ClearAsync"/>。进程重启即清空。
 /// </remarks>
 public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidationStore
 {
     private readonly ConcurrentDictionary<string, Entry> _entries = new(StringComparer.Ordinal);
-    // 写锁把「条目表 + 字节计量」绑成一次原子更新：SetCore 是「读旧尺寸 → 覆盖 → 记差值」，
-    // 退账的路径（Remove / 读时摘除 / 清过期）若不进同一把锁，就会与它各退一次、把计量越跑越负。
+    // 写锁把条目表与字节计量绑成一次原子更新。
     private readonly object _writeLock = new();
     private readonly int _maxEntries;
     private readonly long _maxBytes;
-    // 当前占用字节数（近似值）：按条目写入时算好的 Size 增减。
+    // 当前近似占用字节数。
     private long _bytes;
 
     /// <summary>构造一份内存存储。</summary>
@@ -66,14 +59,13 @@ public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidation
                 return new ValueTask<AxiosShortCircuit?>(entry.Reply);
             }
 
-            // 带校验器的过期条目留着给条件请求复用：这里只是「不命中」，不能摘。
+            // 带校验器的过期条目留给条件请求复用，只是「不命中」。
             if (CacheValidators.HasAny(entry.Reply))
             {
                 return new ValueTask<AxiosShortCircuit?>((AxiosShortCircuit?)null);
             }
 
-            // 过期顺手摘掉，不必等淘汰；只摘「刚读到的那一条」，不误删并发覆盖进来的新条目。
-            // 摘除与退账必须在写锁里：否则 SetCore 会先读到这条旧尺寸，两边各退一次，计量越跑越负。
+            // 过期顺手摘掉；摘除与退账须在写锁内。
             lock (_writeLock)
             {
                 if (_entries.TryRemove(new KeyValuePair<string, Entry>(key, entry)))
@@ -112,7 +104,7 @@ public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidation
 
         lock (_writeLock)
         {
-            // 覆盖已有键不增加条目数，所以满了也要放行 —— 否则热门键的存活时长再也不会续期。
+            // 覆盖已有键不增加条目数：满了也放行。
             var exists = _entries.TryGetValue(key, out var existing);
 
             if (!exists && !HasRoom(size))
@@ -121,7 +113,6 @@ public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidation
 
                 if (!HasRoom(size))
                 {
-                    // 不收新键、也不为它淘汰旧键：避免一条冷数据把命中率高的条目挤掉。
                     return default;
                 }
             }
@@ -136,7 +127,7 @@ public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidation
     /// <inheritdoc />
     public ValueTask<bool> RemoveAsync(string key, CancellationToken cancellationToken)
     {
-        // 同上：摘除与退账在写锁里做，避免与 SetCore 的「读旧尺寸 → 覆盖 → 记差值」交错成双重退账。
+        // 摘除与退账在写锁内做。
         lock (_writeLock)
         {
             if (!_entries.TryRemove(key, out var removed))
@@ -180,7 +171,7 @@ public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidation
         }
     }
 
-    /// <summary>近似尺寸：正文按字节、头按 UTF-16 字符长度 ×2 估算；不是精确的托管堆占用，只用来兜住「大响应把内存吃满」。</summary>
+    /// <summary>近似尺寸：正文按字节、头按 UTF-16 字符长度 ×2 估算，只用来兜住大响应。</summary>
     private static long EstimateSize(AxiosShortCircuit entry)
     {
         long size = entry.Body?.Length ?? 0;

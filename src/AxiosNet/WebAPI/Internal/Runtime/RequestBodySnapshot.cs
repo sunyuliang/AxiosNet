@@ -44,7 +44,7 @@ internal sealed class RequestBodySnapshot
         long? maxBytes,
         CancellationToken cancellationToken)
     {
-        // 已知长度先判一次，避免为必然超限的正文分配缓冲。
+        // 已知长度先判一次。
         if (maxBytes is long limit && content.Headers.ContentLength is long known && known > limit)
         {
             return null;

@@ -5,7 +5,7 @@ using System.Collections.Immutable;
 
 namespace AxiosNet.SourceGen
 {
-    /// <summary>增量管线的值相等数组：按元素比较，避免每次编译都因为数组引用不同而重新生成。</summary>
+    /// <summary>增量管线的值相等数组：按元素比较。</summary>
     internal readonly struct EquatableArray<T> : IEquatable<EquatableArray<T>>, IEnumerable<T>
         where T : IEquatable<T>
     {

@@ -2,11 +2,8 @@ using System.Globalization;
 
 namespace AxiosNet.Retry;
 
-/// <summary>
-/// <see cref="IAxiosRetryPolicy"/> 的默认实现：按「次数 + 间隔」重试，可选指数退避、抖动与 <c>Retry-After</c> 优先。
-/// 默认只重试幂等方法上的网络错误、超时、408、429 与 5xx；POST / PATCH 需显式打开配置上的
-/// <c>Resilience.AllowUnsafeRetry</c>（重试与对冲共用）。
-/// </summary>
+/// <summary><see cref="IAxiosRetryPolicy"/> 的默认实现：按「次数 + 间隔」重试，可选指数退避、抖动与 <c>Retry-After</c> 优先。</summary>
+/// <remarks>默认只重试幂等方法上的网络错误、超时、408、429 与 5xx；POST / PATCH 需显式打开 <c>Resilience.AllowUnsafeRetry</c>。</remarks>
 /// <example>
 /// <code>
 /// // 固定间隔重试 3 次（每次间隔 1 秒，不翻倍、不加抖动）
@@ -77,7 +74,6 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
         get => _retryStatusCodes;
         set
         {
-            // 赋 null 是编程错误，在 setter 处就拦下。
             ArgumentNullException.ThrowIfNull(value);
             _retryStatusCodes = value;
         }
@@ -89,7 +85,7 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
     /// <summary>默认的状态码判定：408（请求超时）、429（限流）与全部 5xx。</summary>
     public static Func<int, bool> DefaultRetryStatus { get; } = static status => status is 408 or 429 or (>= 500 and < 600);
 
-    /// <summary>固定间隔策略：每次重试都等 <paramref name="interval"/>，不翻倍、不加抖动（<see cref="HonorRetryAfter"/> 仍默认开启：服务端给了 <c>Retry-After</c> 时以它为准）。</summary>
+    /// <summary>固定间隔策略：每次重试都等 <paramref name="interval"/>，不翻倍、不加抖动；<see cref="HonorRetryAfter"/> 仍默认开启。</summary>
     public static RetryPolicy Constant(int maxRetries, TimeSpan interval)
         => new(maxRetries, interval);
 
@@ -123,7 +119,7 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
             return false;
         }
 
-        // 「非幂等方法是否放行」是配置级唯一开关（Resilience.AllowUnsafeRetry），重试与对冲共用。
+        // 非幂等方法需 AllowUnsafeRetry 才重试。
         if (context.Config is { } config
             && !config.AllowUnsafeRetry
             && !IsIdempotent(config.Method))
@@ -131,11 +127,10 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
             return false;
         }
 
-        // 有响应：按状态码判定（408 / 429 / 5xx）。
+        // 有响应时按状态码判定。
         if (context.StatusCode is int status)
         {
-            // 401 的刷新与重放只归一层：凭据槽位是提供方形态时，内核不再重试 401 ——
-            // 否则用户把 401 写进 RetryStatusCodes 后，内核的重试与上层（WebAPI）的刷新重放会叠成两层循环。
+            // 凭据为提供方形态时 401 只由上层刷新重放处理，内核不再重试。
             if (status == 401 && IsCredentialProvider(context.Config))
             {
                 return false;
@@ -144,7 +139,7 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
             return RetryStatusCodes(status);
         }
 
-        // 没有响应：网络层失败或超时（与熔断计数共用同一张分类表）。
+        // 无响应：仅网络层失败或超时。
         return FailureClassifier.IsNetworkFailure(context.Exception);
     }
 
@@ -166,7 +161,7 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
 
         if (Jitter && milliseconds > 0)
         {
-            // 50%–100% 抖动：打散同时重试的客户端。
+            // 50%–100% 抖动。
             milliseconds *= 0.5d + (PlatformCompat.NextJitter() * 0.5d);
         }
 

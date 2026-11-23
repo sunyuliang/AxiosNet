@@ -5,15 +5,12 @@ using AxiosNet.Internal.Headers;
 namespace AxiosNet;
 
 /// <summary>
-/// 类似 axios 的 AxiosHeaders：大小写不敏感、同名覆盖（单值）、支持链式调用；读与克隆无锁，写入即校验。
+/// 类似 axios 的 AxiosHeaders：大小写不敏感、同名覆盖（单值）、支持链式调用。
 /// 头名必须是 RFC 7230 token，取值不允许 <c>CR</c> / <c>LF</c> 等控制字符；读 / 删入口对 <c>null</c> 名称抛 <see cref="ArgumentNullException"/>。
 /// </summary>
 public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
 {
-    /// <summary>
-    /// 一个头条目（不可变）。<see cref="Meta"/> 是查找用的判别位：
-    /// <c>(长度 &lt;&lt; 16) | (首字符 &lt;&lt; 8) | 末字符</c>。
-    /// </summary>
+    /// <summary>一个头条目（不可变）；<see cref="Meta"/> 是查找用的判别位。</summary>
     internal readonly struct Entry
     {
         internal readonly string Name;
@@ -34,14 +31,14 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
             return (length << 16) | (Fold(name[0]) << 8) | Fold(name[length - 1]);
         }
 
-        // 字符折叠成大写：头名比较走这条，比 ToUpperInvariant 少一次分配。
+        // 字符折叠成大写。
         private static int Fold(char c) => c is >= 'a' and <= 'z' ? c - ('a' - 'A') : c;
     }
 
     /// <summary>空数组单例。</summary>
     private static readonly Entry[] Empty = Array.Empty<Entry>();
 
-    /// <summary>当前版本：<see cref="Volatile"/> 读，<see cref="Interlocked.CompareExchange{T}(ref T, T, T)"/> 写。</summary>
+    /// <summary>当前条目快照（整体替换发布）。</summary>
     private Entry[] _items;
 
     /// <summary>创建空集合。</summary>
@@ -54,7 +51,6 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     {
         ArgumentNullException.ThrowIfNull(headers);
 
-        // 先在 List 里攒，最后一次性成型。
         var capacity = headers is ICollection<KeyValuePair<string, string>> known ? known.Count : 4;
         var buffer = new List<Entry>(capacity);
 
@@ -62,7 +58,6 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         {
             var name = ValidateName(kv.Key);
 
-            // null 取值等价于删除。
             if (kv.Value is null)
             {
                 Remove(buffer, name);
@@ -82,7 +77,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     {
         var key = ValidateName(name);
 
-        // null 表示删除：直接走 Delete，不校验取值。
+        // null 表示删除。
         if (value is null)
         {
             Delete(key);
@@ -107,7 +102,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
             {
                 var name = ValidateName(kv.Key);
 
-                // null 等价删除（不校验取值），其余一律过 CR/LF 闸口。
+                // null 等价删除；其余校验取值。
                 if (kv.Value is not null)
                 {
                     ValidateHeaderValue(name, kv.Value);
@@ -139,7 +134,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
             return items[index].Value;
         }
 
-        // 兼容「名称带首尾空白」：只在未命中时才 Trim 重试一次。
+        // 未命中时 Trim 重试一次。
         var trimmed = name.Trim();
         if (trimmed.Length == 0 || trimmed.Length == name.Length)
         {
@@ -183,7 +178,6 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
             var current = Volatile.Read(ref _items);
             var index = IndexOf(current, key);
 
-            // 不存在就不发布新版本。
             if (index < 0)
             {
                 return false;
@@ -200,15 +194,10 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         }
     }
 
-    /// <summary>清空：非空时一次性发布空版本，已经为空则直接返回（不分配）。</summary>
-    /// <remarks>
-    /// 用 <c>Volatile.Write</c> 盲写空单例：整条路径没有「读-改-写」，不存在可丢的更新，与并发
-    /// <see cref="Set(string, string?)"/> / <see cref="Delete"/> 的任意交错都能线性化成「写方在 Clear 之前」或「之后」。
-    /// 前提是数组永不就地修改——否则这条推理不成立。
-    /// </remarks>
+    /// <summary>清空：非空时发布空版本，已为空则直接返回。</summary>
+    /// <remarks>用 <c>Volatile.Write</c> 盲写空单例；前提是数组永不就地修改。</remarks>
     public void Clear()
     {
-        // 空版本没有内容可清，不发布也不分配。
         if (Volatile.Read(ref _items).Length == 0)
         {
             return;
@@ -238,7 +227,6 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
             return;
         }
 
-        // 取对方当前版本：不可变数组本身就是一致快照。
         var incoming = Volatile.Read(ref other._items);
         if (incoming.Length == 0)
         {
@@ -249,7 +237,6 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         {
             var current = Volatile.Read(ref _items);
 
-            // 合并结果没变化就不发布新版本。
             if (IsUnchanged(current, incoming))
             {
                 return;
@@ -278,7 +265,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     public struct Enumerator : IEnumerator<KeyValuePair<string, string>>
     {
         private readonly Entry[] _items;
-        // 已用槽位数：追加写到尾，删除走 Copy-On-Write 换新数组。
+        // 枚举游标：-1 表示首项之前。
         private int _index;
 
         internal Enumerator(Entry[] items)
@@ -304,7 +291,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         }
     }
 
-    /// <summary>单条写入：算出新数组后 CAS 发布；同值重设不发布、不分配。</summary>
+    /// <summary>单条写入：算出新数组后 CAS 发布；同值重设不发布。</summary>
     private void Publish(string name, string value)
     {
         while (true)
@@ -349,7 +336,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
             var current = Volatile.Read(ref _items);
             var next = ApplyOps(current, ops);
 
-            // 全是幂等写时 ApplyOps 原样返回 current。
+            // 无变化时 ApplyOps 原样返回 current。
             if (ReferenceEquals(next, current)
                 || ReferenceEquals(Interlocked.CompareExchange(ref _items, next, current), current))
             {
@@ -358,10 +345,9 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         }
     }
 
-    // 批量写入：先数要新增几条再一次性分配，覆盖与删除不改变长度。
+    // 批量写入：一次分配到位。
     private static Entry[] ApplyOps(Entry[] current, List<(string Name, string? Value)> ops)
     {
-        // 先过一遍：有没有实际变化、要新增几条（覆盖与删除不改变长度），一次分配到位。
         var added = 0;
         var changed = false;
         for (var i = 0; i < ops.Count; i++)
@@ -426,18 +412,12 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
 
     /// <summary>把 <paramref name="incoming"/> 覆盖合并进 <paramref name="current"/>，产出一版新数组。</summary>
     /// <remarks>
-    /// 一次分配到位（与 <see cref="ApplyOps"/> 同一模式）：先数出真正要新增几条，直接按最终长度
-    /// <c>new Entry[]</c>，先拷 <paramref name="current"/>，再把 <paramref name="incoming"/> 逐条写进数组。
-    /// 旧实现先建 <see cref="List{T}"/>、再 <c>ToArray()</c> 拷一份，每个带自定义头的请求都白付两次数组分配
-    /// （调用点在 <c>AxiosClient.Config.cs</c> 的每请求合并上）。
-    /// <para>语义不变：同名覆盖在原位置、新名按 <paramref name="incoming"/> 的顺序追加到尾部。</para>
+    /// 一次分配到位：先数要新增几条，按最终长度分配后先拷 <paramref name="current"/>，再逐条写入 <paramref name="incoming"/>。
+    /// 同名覆盖在原位置、新名按 <paramref name="incoming"/> 的顺序追加到尾部。
     /// </remarks>
     private static Entry[] Merge(Entry[] current, Entry[] incoming)
     {
-        // 先数：只有「current 里没有、incoming 前面也没出现过」的名字才占新槽位。
-        // incoming 自带同重名时不能重复计数，否则数组尾部会留下空槽位（Entry 是结构体，默认值不是合法头）。
-        // 第二个判定（IndexOf(incoming[0..i])）在公开路径上不可达 —— AxiosHeaders.Set 就按大小写不敏感去重，
-        // 造不出同名条目；保留它只是防未来的内部数组来源（例如手工拼的快照），不要当热点去优化。
+        // 先数：current 里没有、incoming 前面也没出现过的名字才占新槽位。
         var added = 0;
         for (var i = 0; i < incoming.Length; i++)
         {
@@ -451,7 +431,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         var merged = new Entry[current.Length + added];
         Array.Copy(current, merged, current.Length);
 
-        // 已占用的槽位数：新名从这里往后追加，因此顺序就是 incoming 的顺序。
+        // 新名从已占用槽位往后追加。
         var written = current.Length;
         for (var i = 0; i < incoming.Length; i++)
         {
@@ -469,7 +449,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         return merged;
     }
 
-    /// <summary>写入（覆盖同名、否则追加）。构造期与批量合并用，O(N) 扫描。</summary>
+    /// <summary>写入（覆盖同名、否则追加）。</summary>
     private static void Put(List<Entry> items, string name, string value)
     {
         var index = IndexOf(items, name);
@@ -482,7 +462,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         items.Add(new Entry(name, value));
     }
 
-    // 在待发布的副本上按键删项：只动副本，原版本不受影响。
+    // 在副本上按键删项。
     private static void Remove(List<Entry> items, string name)
     {
         var index = IndexOf(items, name);
@@ -492,7 +472,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         }
     }
 
-    // 已发布数组 / 副本列表上的统一查找：先比折叠后的判别位再比字符，命中通常一两次比较内结束。
+    // 先比折叠后的判别位再比字符。
     private static int IndexOf(ReadOnlySpan<Entry> items, string name)
     {
         if (name.Length == 0)
@@ -512,9 +492,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         return -1;
     }
 
-    // 批量合并 / 删除要边改边找。net6+ 用 CollectionsMarshal 直接看 List 底层数组（不复制、不分配）；
-    // netstandard2.0 没有 CollectionsMarshal：按索引读列表，同样是零分配
-    //（旧实现每次 Put/Remove 都 ToArray 复制整张表，批量合并因此退化成 O(n²) 分配）。
+    // net6+ 用 CollectionsMarshal 直接看 List 底层数组；netstandard2.0 按索引读。
     private static int IndexOf(List<Entry> items, string name)
     {
 #if NETSTANDARD2_0
@@ -538,13 +516,12 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
 #endif
     }
 
-    // 头名只去首尾空白：中间的空格留给 ValidateName 判非法，而不是悄悄改掉。
+    // 头名只去首尾空白，中间的交给 ValidateName 判非法。
     private static string NormalizeName(string name) => name.Trim();
 
     /// <summary>写入前的名称校验：RFC 7230 token（RFC 9110 §5.1 同）。</summary>
     private static string ValidateName(string name)
     {
-        // 手写空值判断以兼容 net6.0 目标。
         if (string.IsNullOrWhiteSpace(name))
         {
             throw new ArgumentException("The value cannot be an empty string or composed entirely of whitespace.", nameof(name));

@@ -16,9 +16,7 @@ namespace AxiosNet.Tests.Requests;
 /// </summary>
 public sealed class TimeoutAndCancellationTests
 {
-    // ---------------------------------------------------------------
-    // 取消：已取消的令牌必须在发请求前短路，且不与超时混淆
-    // ---------------------------------------------------------------
+// 取消：已取消的令牌必须在发请求前短路，且不与超时混淆
 
     [Fact]
     public async Task AlreadyCanceledToken_ShortCircuitsWithoutSending()
@@ -110,9 +108,7 @@ public sealed class TimeoutAndCancellationTests
         Assert.IsAssignableFrom<OperationCanceledException>(ex.Cause);
     }
 
-    // ------------------------------------------------------------------
-    // L17：超时预算在流构造时即耗尽 → 确定性 ECONNABORTED
-    // ------------------------------------------------------------------
+// L17：超时预算在流构造时即耗尽 → 确定性 ECONNABORTED
 
     [Fact]
     public async Task StreamResponse_ExhaustedTimeoutBudget_FailsDeterministically()

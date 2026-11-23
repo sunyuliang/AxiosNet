@@ -139,7 +139,7 @@ public sealed class AxiosClientRegistrationTests
         Assert.Throws<ArgumentNullException>(() => ((IServiceCollection)null!).AddAxiosClient());
     }
 
-    // ---- 尝试管线 ----
+    // 尝试管线
 
     [Fact]
     public void AddAxiosClient_NoPipeline_UsesDefaultPipeline()

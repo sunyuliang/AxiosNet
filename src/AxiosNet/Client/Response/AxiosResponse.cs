@@ -29,43 +29,27 @@ public class AxiosResponse
     }
 
     /// <summary>触发本次请求的生效配置（实例默认值 + 本次请求项已合并）。</summary>
-    /// <remarks>
-    /// 交回 <see cref="AxiosClient.RequestAsync(AxiosConfig)"/> 时按「按请求项」重新合并到目标实例的默认值上；
-    /// 实例级项（<c>BaseAddress</c> / <c>CancellationToken</c> / 连接级设置 / 并发上限）不回放，取目标实例的值。
-    /// </remarks>
+    /// <remarks>交回 <see cref="AxiosClient.RequestAsync(AxiosConfig)"/> 时按「按请求项」合并；实例级项取目标实例的值。</remarks>
     public AxiosConfig? Config { get; set; }
 
-    /// <summary>
-    /// 失败响应的正文原文（字符串形态），供记日志与排查用。
-    /// </summary>
+    /// <summary>失败响应的正文原文（字符串形态），正常响应为 <c>null</c>。</summary>
     /// <remarks>
-    /// 在两种情况下保留：状态码被 <see cref="AxiosConfig.ValidateStatus"/> 拒绝，或响应装配失败（正文解析 / <see cref="AxiosConfig.SerializationSettings.TransformResponse"/>）。
-    /// 正常响应不持有整段文本，避免大正文跟着响应对象一起存活。
-    /// 二进制响应与流式成功响应为 <c>null</c>（流式失败会先抢救一段错误体）；解析失败时 <see cref="Data"/> 为 <c>null</c> 而这里仍是原文。
-    /// 需要任何响应（含 2xx 成功）的原始字节请用 <see cref="AxiosConfig.ObservabilitySettings.OnRawResponse"/> 或
+    /// 状态码被 <see cref="AxiosConfig.ValidateStatus"/> 拒绝或响应装配失败时保留；二进制与流式成功响应为 <c>null</c>。
+    /// 任何响应（含 2xx）的原始字节请用 <see cref="AxiosConfig.ObservabilitySettings.OnRawResponse"/> 或
     /// <see cref="AxiosConfig.ObservabilitySettings.CaptureRawResponseBody"/>。
     /// </remarks>
     public string? RawText { get; internal set; }
 
-    /// <summary>
-    /// 底层 HttpRequestMessage（对应 axios response.request）。
-    /// 请求结束后已被释放：<c>Method</c> / <c>RequestUri</c> / <c>Headers</c> 仍可读；<c>Content</c> 不可依赖——
-    /// 重试分支会先把它置 <c>null</c> 再释放消息，读了只会得到 <c>null</c> 或已释放对象，别从它取正文。
-    /// </summary>
+    /// <summary>底层 HttpRequestMessage（对应 axios response.request），请求结束后已被释放。</summary>
+    /// <remarks><c>Method</c> / <c>RequestUri</c> / <c>Headers</c> 仍可读；<c>Content</c> 不可依赖，读取只会得到 <c>null</c> 或已释放对象。</remarks>
     public HttpRequestMessage? Request { get; set; }
 
     /// <summary>便捷获取响应头第一个值。</summary>
     public string? GetHeader(string name)
         => Headers.TryGetValue(name, out var values) ? values.FirstOrDefault() : null;
 
-    /// <summary>
-    /// 便捷获取<b>请求</b>头第一个值（对应 axios 里从 <c>response.request</c> 读请求头）；
-    /// 短路响应没有底层请求消息（<see cref="Request"/> 为 <c>null</c>），此时返回 <c>null</c>。
-    /// </summary>
-    /// <remarks>
-    /// 先查请求头、查不到再查内容头（Content-Type / Content-Length 等在内容头里）；
-    /// 重试过的请求正文被摘掉（<see cref="HttpRequestMessage.Content"/> 为 <c>null</c>），内容头那时读不到。
-    /// </remarks>
+    /// <summary>便捷获取<b>请求</b>头第一个值；短路响应无底层请求时返回 <c>null</c>。</summary>
+    /// <remarks>先查请求头，再查内容头；重试过的请求正文已摘掉，此时内容头读不到。</remarks>
     public string? GetRequestHeader(string name)
     {
         if (Request is not { } request)
@@ -78,7 +62,6 @@ public class AxiosResponse
             return values.FirstOrDefault();
         }
 
-        // 内容头：重试过的消息 Content 为 null，这里返回 null。
         return request.Content?.Headers.TryGetValues(name, out var contentValues) is true
             ? contentValues.FirstOrDefault()
             : null;
@@ -90,18 +73,14 @@ public class AxiosResponse
     /// <summary>这次响应是条件请求的 304 合并出来的（正文来自缓存），供遥测与日志区分「未命中」。</summary>
     internal bool CacheRevalidated { get; set; }
 
-    /// <summary>
-    /// 响应正文的原始字节（只读视图），供记日志、留档与排查用。
-    /// </summary>
+    /// <summary>响应正文的原始字节（只读），仅在打开 <see cref="AxiosConfig.ObservabilitySettings.CaptureRawResponseBody"/> 时有值。</summary>
     /// <remarks>
-    /// 只有显式打开 <see cref="AxiosConfig.ObservabilitySettings.CaptureRawResponseBody"/> 的响应才有值（默认 <c>null</c>，不额外占内存）；
-    /// 网络流式响应（<see cref="ResponseType.Stream"/>）没有完整字节，短路 / 缓存命中不受此限。
-    /// 内容与交给 <see cref="AxiosConfig.ObservabilitySettings.OnRawResponse"/> 的字节一致（已解压、未解码）。
-    /// 只读：底层数组可能与缓存条目共用，改写会污染缓存，所以不交出 <c>byte[]</c>。空正文是长度 0，不是 <c>null</c>。
+    /// 网络流式响应（<see cref="ResponseType.Stream"/>）没有完整字节；空正文是长度 0 而非 <c>null</c>。
+    /// 与 <see cref="AxiosConfig.ObservabilitySettings.OnRawResponse"/> 收到的一致（已解压、未解码）。
     /// </remarks>
     public ReadOnlyMemory<byte>? RawBody { get; internal set; }
 
-    /// <summary>缓存落库用的正文缓冲：与 <see cref="RawBody"/> 指向同一块数组，落库或失败收尾后由管线清空（不跟着响应对象一直存活）。</summary>
+    /// <summary>缓存落库用的正文缓冲：与 <see cref="RawBody"/> 指向同一块数组，落库或失败收尾后清空。</summary>
     internal byte[]? RawBodyBuffer { get; set; }
 
     /// <summary>把非泛型响应复制成 <typeparamref name="TData"/> 的响应；只在响应拦截器换掉响应对象时使用。</summary>
@@ -141,16 +120,8 @@ public sealed class AxiosResponse<TData> : AxiosResponse
         set => base.Data = value;
     }
 
-    /// <summary>
-    /// 取正文，<b>空正文直接抛错</b>：把「这里应该有正文」写成一次显式断言，而不是靠 <c>Data!</c> 压掉可空性。
-    /// </summary>
+    /// <summary>取正文；正文为空时抛 <see cref="AxiosException"/>（<c>ERR_BAD_RESPONSE</c>）。</summary>
     /// <returns>非空的正文。</returns>
-    /// <remarks>
-    /// 适用场景：调用方确定这个端点一定有正文（成功状态码 + 非 204）。用 <c>Data!</c> 的话，空正文会变成
-    /// 业务代码深处一个不带请求上下文的 <see cref="NullReferenceException"/>；这里抛的是带
-    /// <c>Code</c> / <c>Config</c> / <c>Response</c> 的统一错误模型（<c>ERR_BAD_RESPONSE</c>）。
-    /// 空正文合法时请继续用 <see cref="Data"/> 并处理 <c>null</c>。
-    /// </remarks>
     /// <exception cref="AxiosException">正文为空（<c>ERR_BAD_RESPONSE</c>）。</exception>
     public TData DataOrThrow()
         => base.Data is null

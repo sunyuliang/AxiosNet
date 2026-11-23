@@ -205,9 +205,7 @@ public sealed class TransformTests
         Assert.Equal("n", r2.Data!.Name);
     }
 
-    // ------------------------------------------------------------------
-    // transform 链：setter 传任何 IList 都要保证线程安全（枚举走快照）
-    // ------------------------------------------------------------------
+// transform 链：setter 传任何 IList 都要保证线程安全（枚举走快照）
 
     [Fact]
     public async Task TransformRequest_SetterWrapsPlainList()
@@ -269,9 +267,7 @@ public sealed class TransformTests
         Assert.Same(existing, config.Serialization.TransformResponse);
     }
 
-    // ---------------------------------------------------------------
-    // 5/6：transform 链写时复制
-    // ---------------------------------------------------------------
+// 5/6：transform 链写时复制
 
     [Fact]
     public async Task ConcurrentRequests_PerRequestTransforms_KeepChainsIsolated()
@@ -367,9 +363,7 @@ public sealed class TransformTests
         Assert.Equal(2, calls);
     }
 
-    // ---------------------------------------------------------------
-    // transform 链：顺序固定为「实例默认 → 本次追加」，且不写回实例
-    // ---------------------------------------------------------------
+// transform 链：顺序固定为「实例默认 → 本次追加」，且不写回实例
 
     [Fact]
     public async Task RequestTransformChain_RunsInstanceThenPerRequest_AndDoesNotAccumulate()
@@ -536,9 +530,7 @@ public sealed class TransformTests
 
     private static string BodyOf(TestRequest request) => Encoding.UTF8.GetString(request.Body);
 
-    // ------------------------------------------------------------------
-    // 测试辅助
-    // ------------------------------------------------------------------
+// 测试辅助
 
     private static HttpResponseMessage JsonResponse()
         => new(HttpStatusCode.OK)

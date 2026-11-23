@@ -1,9 +1,6 @@
 namespace AxiosNet.Cache;
 
-/// <summary>
-/// 一次请求里与缓存相关的指令（<c>Cache-Control</c> / <c>Pragma</c>），只有非
-/// <see cref="CacheFreshnessMode.Configured"/> 模式才读取：<c>Configured</c> 是「强制按配置执行」。
-/// </summary>
+/// <summary>一次请求里与缓存相关的指令（<c>Cache-Control</c> / <c>Pragma</c>），只有非 <see cref="CacheFreshnessMode.Configured"/> 模式才读取。</summary>
 internal readonly struct CacheRequestDirectives
 {
     /// <summary>什么都没声明：不影响查与写。</summary>
@@ -19,16 +16,10 @@ internal readonly struct CacheRequestDirectives
     /// <summary><c>no-store</c>：本次请求不许读缓存，也不许落库。</summary>
     internal bool NoStore { get; }
 
-    /// <summary>
-    /// <c>no-cache</c>（或旧式 <c>Pragma: no-cache</c>）：不许直接复用已落库的条目；
-    /// 开启条件请求时仍会拿旧条目去源服务器验证，否则按「跳过查询」处理。响应仍可落库。
-    /// </summary>
+    /// <summary><c>no-cache</c>（或 <c>Pragma: no-cache</c>）：不许直接复用已落库条目；开启条件请求时仍会用旧条目验证，响应仍可落库。</summary>
     internal bool NoCache { get; }
 
-    /// <summary>
-    /// <c>max-age</c>：调用方愿意接受的最大新鲜期。<c>0</c>（含非法或负数，RFC 9111 §4.2.1）等价于「必须重新取」；
-    /// 正数作为落库 TTL 的上限参与取交集。
-    /// </summary>
+    /// <summary><c>max-age</c>：愿意接受的最大新鲜期；<c>0</c>（含非法或负数）等价于「必须重新取」，正数作落库 TTL 上限。</summary>
     internal TimeSpan? MaxAge { get; }
 
     /// <summary>是否跳过查缓存：<c>no-store</c> / <c>no-cache</c> / <c>max-age=0</c>。</summary>

@@ -64,8 +64,7 @@ internal static class OpenApiGenerator
         var emitter = new CSharpEmitter(spec, options);
         var files = emitter.Emit().ToList();
 
-        // --report 会写文件：路径与生成产物（含清单）撞名时先拦下来，
-        // 否则报告会直接覆盖掉同名生成文件，产物被静默破坏。
+        // --report 会写文件：路径与生成产物撞名时先拦下来。
         ValidateReportPath(options, files);
 
         PrintSummary(version, source, spec);
@@ -77,8 +76,7 @@ internal static class OpenApiGenerator
             tracked => new GeneratedFile(OutputWriter.ManifestName, BuildManifest(version, tracked)),
             spec.Warnings);
 
-        // --dry-run / --check 约定不写任何文件：报告也是文件，必须一并跳过，
-        // 否则 --check 会写出一份带 STALE_FILE 的报告，让校验结果自相矛盾。
+        // --dry-run / --check 约定不写任何文件，报告一并跳过。
         if (!options.DryRun && !options.Check && options.ReportPath is { } reportPath)
         {
             WriteReport(reportPath, version, source, spec, files);
@@ -220,7 +218,7 @@ internal static class OpenApiGenerator
         Console.WriteLine($"  report: {fullPath}");
     }
 
-    /// <summary>把警告打到控制台：最多打印 50 条，其余提示去 <c>--report</c> 查看，避免病态文档刷屏。</summary>
+    /// <summary>把警告打到控制台：最多打印 50 条，其余去 <c>--report</c> 查看。</summary>
     private static void PrintWarnings(IReadOnlyList<ApiWarning> warnings)
     {
         if (warnings.Count == 0)

@@ -12,7 +12,7 @@ public enum AxiosCollectionFormat
     /// <summary><c>a=1&amp;a=2</c>（重复键）。</summary>
     Multi = 1,
 
-    /// <summary><c>a=1%2C2</c>（逗号分隔；拼成一串后整体转义，所以逗号会变成 <c>%2C</c>）。</summary>
+    /// <summary><c>a=1%2C2</c>（逗号分隔；逗号会转义为 <c>%2C</c>）。</summary>
     Csv = 2,
 
     /// <summary><c>a=1%202</c>（空格分隔）。</summary>

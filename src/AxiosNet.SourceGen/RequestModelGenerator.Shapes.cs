@@ -719,7 +719,7 @@ namespace AxiosNet.SourceGen
 
                 if (type is not INamedTypeSymbol { IsAnonymousType: true } anonymous)
                 {
-                    // 其它含匿名类型实参的泛型（List<匿名类型> 等）在源码里无法命名：不注册，避免生成非法样本。
+                    // 其它含匿名类型实参的泛型在源码里无法命名：不注册。
                     if (ContainsAnonymousType(type))
                     {
                         return null;

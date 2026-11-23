@@ -18,9 +18,7 @@ namespace AxiosNet.Tests.Resilience;
 [Collection(TelemetryCollection.Name)]
 public sealed class ShortCircuitTests
 {
-    // ------------------------------------------------------------------
-    // 不发送
-    // ------------------------------------------------------------------
+// 不发送
 
     [Fact]
     public async Task Body_IsReDeserializedPerCall_AndNoRequestIsSent()
@@ -98,9 +96,7 @@ public sealed class ShortCircuitTests
         Assert.Equal("server", replayed.Data!.Name);
     }
 
-    // ------------------------------------------------------------------
-    // 跳过的是「HTTP 操作」：闸门 / 重试 / 熔断
-    // ------------------------------------------------------------------
+// 跳过的是「HTTP 操作」：闸门 / 重试 / 熔断
 
     [Fact]
     public async Task ShortCircuit_DoesNotQueueForConcurrencySlot()
@@ -183,9 +179,7 @@ public sealed class ShortCircuitTests
         Assert.Single(server.Received);
     }
 
-    // ------------------------------------------------------------------
-    // 保留的是「响应方向」：transformResponse / 拦截器 / 错误模型
-    // ------------------------------------------------------------------
+// 保留的是「响应方向」：transformResponse / 拦截器 / 错误模型
 
     [Fact]
     public async Task TransformResponse_RunsForBody_ButNotForMaterializedData()
@@ -291,9 +285,7 @@ public sealed class ShortCircuitTests
         Assert.Equal("cached", response.Data!.Name);
     }
 
-    // ------------------------------------------------------------------
-    // 边界
-    // ------------------------------------------------------------------
+// 边界
 
     [Fact]
     public async Task ByteArrayBody_IsCopiedPerCall()

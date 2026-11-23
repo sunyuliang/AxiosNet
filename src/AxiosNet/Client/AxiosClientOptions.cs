@@ -7,9 +7,8 @@ namespace AxiosNet;
 /// </summary>
 /// <remarks>
 /// 构造时取一份副本并冻结（见 <see cref="AxiosClient.Options"/>），再改一律抛 <c>ERR_BAD_OPTION_VALUE</c>。
-/// 按请求可变的项在 <see cref="AxiosConfig"/> 上：<see cref="AxiosConfig.TransportSettings.Profile"/>、
-/// <see cref="AxiosConfig.ConcurrencySettings.QueueTimeout"/>、<see cref="AxiosConfig.Timeout"/>。
-/// 同一进程要用不同出口或并发上限时建多个 <see cref="AxiosClient"/>，连接池可用构造参数共享。
+/// 按请求可变的项在 <see cref="AxiosConfig"/> 上（<c>Transport.Profile</c> / <c>Concurrency.QueueTimeout</c> / <c>Timeout</c>）；
+/// 同一进程要用不同出口或并发上限时建多个 <see cref="AxiosClient"/>。
 /// </remarks>
 public sealed class AxiosClientOptions
 {
@@ -50,9 +49,8 @@ public sealed class AxiosClientOptions
     private bool _withCredentials;
 
     /// <summary>
-    /// 对应 axios withCredentials（使用系统默认凭据 / Cookie 容器），默认 <c>false</c>。
-    /// 为 <c>true</c> 时等价于在池上设 <see cref="ConnectionPoolOptions.UseCookies"/> 并把
-    /// <see cref="Credentials"/> 兜底为 <see cref="CredentialCache.DefaultCredentials"/>。
+    /// 对应 axios withCredentials（使用系统默认凭据 / Cookie 容器），默认 <c>false</c>；为 <c>true</c> 时等价于在池上设
+    /// <see cref="ConnectionPoolOptions.UseCookies"/> 并把 <see cref="Credentials"/> 兜底为 <see cref="CredentialCache.DefaultCredentials"/>。
     /// </summary>
     public bool WithCredentials
     {
@@ -91,10 +89,7 @@ public sealed class AxiosClientOptions
     /// 自建连接池的选项；与构造参数 <c>pool</c> / <c>poolOptions</c> 互斥（同时给会报错），
     /// 与 <see cref="Proxy"/> / <see cref="Credentials"/> 同名项也互斥。注入自定义 Handler 时本项无效。
     /// </summary>
-    /// <remarks>
-    /// <see cref="AxiosClient.Options"/> 上的这一项是<b>回填的生效快照</b>：即使构造时用的是 <c>poolOptions</c>
-    /// 或共享池，这里也能读到那个池的真实选项（而不是 <c>null</c>）。
-    /// </remarks>
+    /// <remarks>回写的是生效快照：构造时用的是 <c>poolOptions</c> 或共享池，这里也能读到那个池的真实选项。</remarks>
     public ConnectionPoolOptions? Pool
     {
         get => _pool;
@@ -111,9 +106,8 @@ public sealed class AxiosClientOptions
     /// 实例内在途请求上限（并发闸门容量），<c>null</c>（默认）不限；必须是正整数，0 / 负数在构造期报错。
     /// </summary>
     /// <remarks>
-    /// 闸门在首个受限请求时创建，容量取<b>构造期</b>的本值并固定（构造之后再改它也不影响容量）。
-    /// 配了对冲时容量要按 <c>1 + MaxHedges</c> 倍预留。
-    /// 排队等待的时长不在这里（那个值按请求可变），见 <see cref="AxiosConfig.ResilienceSettings.Concurrency"/>。
+    /// 闸门在首个受限请求时创建，容量取<b>构造期</b>的本值并固定；配了对冲时容量要按 <c>1 + MaxHedges</c> 倍预留。
+    /// 排队等待时长不在这里，见 <see cref="AxiosConfig.ResilienceSettings.Concurrency"/>。
     /// </remarks>
     public int? MaxInFlight
     {
@@ -131,7 +125,7 @@ public sealed class AxiosClientOptions
     /// 等待槽位的请求条数上限，<b>只在设置了 <see cref="MaxInFlight"/> 时有意义</b>；
     /// 必须是正整数或 <c>null</c>。
     /// </summary>
-    /// <remarks>只设本项而不设在途上限会在构造期报错：没有闸门就没有队列，静默无效比报错更难查。</remarks>
+    /// <remarks>只设本项而不设在途上限会在构造期报错。</remarks>
     public int? MaxQueue
     {
         get => _maxQueue;
@@ -142,33 +136,23 @@ public sealed class AxiosClientOptions
         }
     }
 
-    /// <summary>
-    /// 复制一份选项（浅拷贝：<see cref="Pool"/> 等引用成员按引用共享）。
-    /// </summary>
-    /// <returns>未冻结的新副本，可继续改；用于「注册时先留一份、构造时再给客户端」。</returns>
-    /// <remarks>
-    /// <see cref="AxiosClient"/> 构造时会自己调一次：调用方随后改传进去的对象不影响已建资源。
-    /// 容器 / 门面这类「先登记、后惰性创建」的入口应显式调用本方法，避免登记到创建之间被改。
-    /// </remarks>
+    /// <summary>复制一份选项（浅拷贝：<see cref="Pool"/> 等引用成员按引用共享）。</summary>
+    /// <returns>未冻结的新副本，可继续改。</returns>
+    /// <remarks><see cref="AxiosClient"/> 构造时会自己调一次；「先登记、后惰性创建」的入口应显式调用本方法。</remarks>
     public AxiosClientOptions Clone()
     {
         var copy = (AxiosClientOptions)MemberwiseClone();
 
-        // 副本回到「构造期还在填」的状态：它可能来自一个已经冻结的 Options（例如拿旧实例的选项建新实例）。
+        // 副本回到未冻结状态。
         copy._frozen = false;
         return copy;
     }
 
-    /// <summary>
-    /// 冻结：之后的写入一律报错。
-    /// </summary>
-    /// <remarks>由 <see cref="AxiosClient"/> 在构造末尾调用，此前 <see cref="AbsorbPoolEffective"/> 已把生效值回填完。</remarks>
+    /// <summary>冻结：之后的写入一律报错。</summary>
     internal void Freeze() => _frozen = true;
 
     /// <summary>
-    /// 构造期校验：并发上限 / 排队上限必须是正整数，且排队深度必须挂在在途上限上。
-    /// 这两项与 Handler 无关（闸门是库自己的），所以无条件校验；
-    /// <see cref="MaxRedirects"/> 的取值范围由连接层分支各自把关（注入 Handler / 共享池时它压根不生效）。
+    /// 构造期校验：并发上限 / 排队上限必须是正整数，且排队深度必须挂在在途上限上；<see cref="MaxRedirects"/> 的取值范围由连接层分支各自把关。
     /// </summary>
     /// <param name="config">报错时带上实例配置，便于日志定位。</param>
     internal void ValidateConcurrency(AxiosConfig config)
@@ -189,7 +173,7 @@ public sealed class AxiosClientOptions
                 config);
         }
 
-        // 没有闸门就没有队列：只写排队深度等于什么都没配，报错而不是静默忽略。
+        // 没有闸门就没有队列，报错而不是静默忽略。
         if (MaxQueue is not null && MaxInFlight is null)
         {
             throw AxiosException.InvalidOption(
@@ -199,13 +183,9 @@ public sealed class AxiosClientOptions
         }
     }
 
-    /// <summary>
-    /// 把连接池<b>实际生效</b>的出口写回本对象，让 <see cref="AxiosClient.Options"/> 的读者看到真实行为
-    /// （池可能被 <c>poolOptions</c> / 传输档 / 注入的 <c>pool</c> 改写）。
-    /// </summary>
+    /// <summary>把连接池实际生效的出口写回本对象，让读者看到真实行为。</summary>
     /// <remarks>
-    /// 回写不是「调用方显式设置」，因此直接写字段（绕过冻结）并清掉两个 <c>*Set</c> 标记。
-    /// 这里的值只在 <see cref="AxiosClient.Options"/> 快照上生效，不会反向影响已建好的池。
+    /// 回写不是调用方显式设置，因此直接写字段（绕过冻结）并清掉两个 <c>*Set</c> 标记；这些值只在本快照上生效。
     /// </remarks>
     /// <param name="effective">池的生效选项。</param>
     internal void AbsorbPoolEffective(ConnectionPoolOptions effective)
@@ -215,8 +195,7 @@ public sealed class AxiosClientOptions
         _maxRedirects = effective.AllowAutoRedirect ? effective.MaxAutomaticRedirections : 0;
         _withCredentials = effective.UseCookies;
 
-        // 自建池 / 共享池 / 传输档都可能改变池的形态：快照里放生效的那份，
-        // 否则读者看到 Pool = null，会以为这个实例没有池选项。
+        // 快照里放生效的那份。
         _pool = effective.Clone();
 
         MaxRedirectsSet = false;

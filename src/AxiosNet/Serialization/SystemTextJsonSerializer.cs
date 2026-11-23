@@ -11,13 +11,10 @@ using AxiosNet.Reflection;
 
 namespace AxiosNet.Serialization;
 
-/// <summary>
-/// 库内默认的 <see cref="IContentSerializer"/> 实现（System.Text.Json）。
-/// </summary>
+/// <summary>库内默认的 <see cref="IContentSerializer"/> 实现（System.Text.Json）。</summary>
 /// <remarks>
-/// 选项取 <see cref="AxiosConfig.SerializationSettings.JsonOptions"/>（未设置时用 <see cref="AxiosJson.Options"/>）。
-/// net8.0 目标在配了 <c>TypeInfoResolver</c> 时走 <c>JsonSerializerOptions.GetTypeInfo</c>（AOT 元数据）；
-/// 没配时（以及 net6.0 目标，它没有该 API）回退反射重载，见 <see cref="AxiosNet.Reflection.JsonSerializerJit"/>。
+/// 选项取 <see cref="AxiosConfig.SerializationSettings.JsonOptions"/>（未设置时用 <see cref="AxiosJson.Options"/>）；
+/// net8.0 配了 <c>TypeInfoResolver</c> 时走 AOT 元数据，否则（含 net6.0）回退反射重载。
 /// </remarks>
 public sealed class SystemTextJsonSerializer : IContentSerializer
 {
@@ -37,11 +34,10 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
     /// <inheritdoc />
     public string Serialize(object? value, Type type, AxiosConfig config)
     {
-        // null 请求体与类型无关：不需要任何元数据，按 STJ 默认输出 null（否则空体会被误报为缺元数据）。
+        // null 请求体与类型无关，直接输出 null 字面量。
         if (value is null)
         {
-            // 但 null 传给非可空值类型仍是非法调用：判定放在两个目标框架共用的这里，
-            // 否则 net6.0 会由 STJ 的 Type 重载抛出 JsonException，与 net8.0 的异常类型不一致。
+            // 非可空值类型传 null 是非法调用。
             if (type.IsValueType && Nullable.GetUnderlyingType(type) is null)
             {
                 throw new System.ArgumentNullException(nameof(value), $"类型 {type.FullName} 是非可空值类型，不能序列化 null。");
@@ -53,14 +49,8 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
         return SerializeCore(value, type, AxiosJson.GetOptions(config));
     }
 
-    /// <summary>
-    /// JSON 的字节出口：直接产出 UTF-8 正文，不经文本中转。
-    /// </summary>
-    /// <remarks>
-    /// 生效编码不是 UTF-8 时返回 <c>null</c>（显式 <c>Serialization.TextEncoding</c>，或 <c>Content-Type</c>
-    /// 声明了非 UTF-8 的 charset）：那两种情况由文本入口负责编码与 charset 头。
-    /// 返回非 <c>null</c> 时正文完全由这份字节决定，<c>Content-Type</c> 与文本入口写出的一致。
-    /// </remarks>
+    /// <summary>JSON 的字节出口：直接产出 UTF-8 正文，不经文本中转。</summary>
+    /// <remarks>生效编码不是 UTF-8 时返回 <c>null</c>（由文本入口负责编码与 charset 头）；返回非 <c>null</c> 时正文完全由这份字节决定。</remarks>
     public ReadOnlyMemory<byte>? SerializeToBytes(object? value, Type type, AxiosConfig config)
     {
         if (!EmitsUtf8(config))
@@ -70,7 +60,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
 
         if (value is null)
         {
-            // 与文本入口同一套合法性判定，避免两条出口对「null + 非可空值类型」给出不同异常。
+            // 与文本入口同一套合法性判定。
             if (type.IsValueType && Nullable.GetUnderlyingType(type) is null)
             {
                 throw new System.ArgumentNullException(nameof(value), $"类型 {type.FullName} 是非可空值类型，不能序列化 null。");
@@ -96,8 +86,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
         using (var writer = new Utf8JsonWriter(buffer, writerOptions))
         {
             writer.WriteStartObject();
-            // 单成员且不展开时不可能出现重复键，省掉这一份集合。
-            // 大小写不敏感：JSON 反序列化默认如此，仅大小写不同的两个键会落到同一个成员上。
+            // 多于 1 个键或存在展开时才需要去重集合（大小写不敏感）。
             var names = body.Members.Length > 1 || (body.Members.Length == 1 && body.Members[0].Spread)
                 ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                 : null;
@@ -134,7 +123,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
             return;
         }
 
-        // 先按声明类型序列化一次，再判断根是对象还是其它 JSON 形态。
+        // 先按声明类型序列化一次，再判定根是对象还是其它形态。
         using var buffer = new MemoryStream(128);
         using (var inner = new Utf8JsonWriter(buffer))
         {
@@ -190,7 +179,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
 
     /// <summary>
     /// 成员级 <c>[Format]</c> 与实例钩子（<see cref="AxiosConfig.SerializationSettings.ValueText"/>）的 JSON 形态：
-    /// 标量 / 二进制 → 字符串，集合 → 字符串数组；两层都没处理（或字典 / 结构化对象）时返回 <c>false</c> 交给序列化器。
+    /// 标量 / 二进制 → 字符串，集合 → 字符串数组；未处理（或字典 / 结构化对象）时返回 <c>false</c>。
     /// </summary>
     private static bool TryWriteFormatted(
         Utf8JsonWriter writer,
@@ -221,7 +210,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
             return false;
         }
 
-        // 集合：成员级 [Format] 逐元素格式化整列；只有实例钩子时逐个元素问，没命中的元素按原类型写出。
+        // 集合：成员级 [Format] 逐元素格式化；只有实例钩子时逐个询问，未命中的按原类型写出。
         writer.WriteStartArray();
         foreach (var item in enumerable)
         {
@@ -262,7 +251,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
 #if NET8_0_OR_GREATER
         if (options.TypeInfoResolver is not null)
         {
-            // 成员类型没进 AOT 图（如接口式标量参数）时不必失败：标量按 STJ 默认形态直接写出。
+            // 成员类型没进 AOT 图时退回标量出口，结构化类型则报缺元数据。
             JsonTypeInfo? info = null;
             try
             {
@@ -270,7 +259,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
             }
             catch (NotSupportedException)
             {
-                // 交给下面的标量出口；结构化类型走不过去时由末尾统一报缺元数据。
+                // 交给下面的标量出口。
             }
 
             if (info is not null)
@@ -346,19 +335,16 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
         }
     }
 
-    /// <summary>
-    /// 正文是否一定按 UTF-8 产出：显式指定了 <c>Serialization.TextEncoding</c>，或 <c>Content-Type</c>
-    /// 声明了非 UTF-8 的 charset 时为 <c>false</c>（由正文工厂改走文本入口）。
-    /// </summary>
+    /// <summary>正文是否一定按 UTF-8 产出；显式 <c>Serialization.TextEncoding</c> 或 <c>Content-Type</c> 声明非 UTF-8 时为 <c>false</c>。</summary>
     internal static bool EmitsUtf8(AxiosConfig config)
     {
-        // 显式编码由文本入口负责（连同 charset 头）：哪怕写的就是 UTF-8，也走文本路径保持一致。
+        // 显式编码由文本入口负责，哪怕写的就是 UTF-8。
         if (config.SerializationOrNull?.TextEncoding is not null)
         {
             return false;
         }
 
-        // 声明的 charset 优先于库默认值，非 UTF-8 时正文必须按它编码。
+        // 声明的 charset 优先于库默认值。
         var declared = RequestContentType.ResolveCharset(config.ContentType, config);
         return declared is null || declared.CodePage == Encoding.UTF8.CodePage;
     }
@@ -372,7 +358,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
     {
         var span = data.Span;
 
-        // 非文本 Content-Type 也可能声明 charset：与接口默认实现保持同一优先级。
+        // 显式编码与声明的非 UTF-8 charset 都走文本解码。
         var forced = config.SerializationOrNull?.TextEncoding;
         var charSet = config.Response?.CharSet;
         if (forced is not null
@@ -448,8 +434,8 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
 
 #if NET8_0_OR_GREATER
     /// <summary>
-    /// 取声明类型的 <see cref="JsonTypeInfo"/>；缺元数据时按「最近祖先」回退。
-    /// 只有在调用方显式配置了 <see cref="JsonSerializerOptions.TypeInfoResolver"/>（源生成 / 组合解析器）时才走这里。
+    /// 取声明类型的 <see cref="JsonTypeInfo"/>；缺元数据时回退到最近的有元数据的祖先。
+    /// 仅当调用方配置了 <see cref="JsonSerializerOptions.TypeInfoResolver"/> 时走这里。
     /// </summary>
     private static JsonTypeInfo Resolve(JsonSerializerOptions options, Type type)
     {
@@ -457,8 +443,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
         {
             if (current == typeof(object) && type != typeof(object))
             {
-                // object 的元数据只描述 object：拿它序列化派生实例会按「未注册的运行时类型」报错，
-                // 而且错误文本指向 STJ 内部，不如直接报缺元数据。
+                // 不用 object 的元数据序列化派生实例。
                 break;
             }
 

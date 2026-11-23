@@ -19,7 +19,7 @@ public sealed class ApiClientRegistrationTests
         return services.BuildServiceProvider();
     }
 
-    // ---- 自建模式：AddApiClient(baseAddress, ...) ----
+    // 自建模式：AddApiClient(baseAddress, ...)
 
     [Fact]
     public void AddApiClient_WithBaseAddress_RegistersSingleton()
@@ -191,7 +191,7 @@ public sealed class ApiClientRegistrationTests
         Assert.Equal("trace-di", received.Headers["X-Trace"]);
     }
 
-    // ---- 门面模式：AddApiClient(configure) 复用已注册的 AxiosClient ----
+    // 门面模式：AddApiClient(configure) 复用已注册的 AxiosClient
 
     [Fact]
     public async Task AddApiClient_Facade_WrapsRegisteredAxiosClient()
@@ -249,7 +249,7 @@ public sealed class ApiClientRegistrationTests
         Assert.Equal(200, response.Status);
     }
 
-    // ---- 参数守卫与链式返回 ----
+    // 参数守卫与链式返回
 
     [Fact]
     public void AddApiClient_ReturnsSameServiceCollection()

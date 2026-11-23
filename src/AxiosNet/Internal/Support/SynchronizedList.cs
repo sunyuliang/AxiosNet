@@ -8,7 +8,7 @@ namespace AxiosNet.Internal.Support;
 /// </summary>
 internal sealed class SynchronizedList<T> : IList<T>
 {
-    // 空数组单例：清空 / 初始状态都指向它，避免反复分配。
+    // 空数组单例。
     private static readonly T[] Empty = Array.Empty<T>();
 
     /// <summary>索引越界消息（中文，语义与 <see cref="List{T}"/> 的同名错误一致）。</summary>

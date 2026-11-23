@@ -4,14 +4,11 @@ using System.Runtime.CompilerServices;
 namespace AxiosNet.WebAPI;
 
 /// <summary>
-/// 声明式入口：<c>Axios.Create(url).Create&lt;IUserApi&gt;()</c> / <c>client.RequestAsync(request)</c>。
-/// 同一个客户端实例既是原始 HTTP 入口，也是声明式入口。需要凭据提供方 / 强类型错误工厂时先构造 <see cref="ApiClient"/>；
-/// 门面按需创建并缓存，后续扩展调用复用同一个门面。
+/// 声明式入口：<c>Axios.Create(url).Create&lt;IUserApi&gt;()</c> / <c>client.RequestAsync(request)</c>；门面按需创建并缓存，后续扩展调用复用同一个门面。
 /// </summary>
 public static class AxiosClientDeclarativeExtensions
 {
-    // 按 AxiosClient 缓存门面：凭据提供方 / 错误工厂 / RetryOnUnauthorized 都在门面上，
-    // 每次扩展调用临时 new 一个会让这些状态静默失效。弱键表同时不延长客户端寿命。
+    // 按 AxiosClient 缓存门面：凭据提供方 / 错误工厂等状态挂在门面上；弱键表不延长客户端寿命。
     private static readonly ConditionalWeakTable<AxiosClient, ApiClient> Wrappers = new();
 
     /// <summary>登记调用方自建的门面：同一个客户端只保留第一个登记的门面。</summary>
@@ -91,7 +88,6 @@ public static class AxiosClientDeclarativeExtensions
         => Wrap(client).RequestStreamAsync(request, format, configure, cancellationToken);
 
     // 门面只是同一客户端的一层包装，不拥有客户端；按客户端缓存，首次使用时创建。
-    // 工厂用 register: false 避免在缓存工厂里重入登记。
     private static ApiClient Wrap(AxiosClient client)
     {
         ArgumentNullException.ThrowIfNull(client);

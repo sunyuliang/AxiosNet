@@ -60,9 +60,7 @@ public sealed class HeadersTests
         Assert.All(server.Received, r => Assert.False(r.Headers.ContainsKey("X-Trace")));
     }
 
-    // ------------------------------------------------------------------
-    // 6) 附加回归：COW 头存储的模型对比 / Bearer 的 scheme 处理
-    // ------------------------------------------------------------------
+// 6) 附加回归：COW 头存储的模型对比 / Bearer 的 scheme 处理
 
     /// <summary>
     /// 让 <see cref="AxiosHeaders"/> 的实例树与「朴素字典树」并行执行同一串随机操作，每一步校验全部实例。
@@ -243,9 +241,7 @@ public sealed class HeadersTests
         await mutation;
     }
 
-    // ---------------------------------------------------------------
-    // 头集合的增删：configure 拿到的就是生效配置，删除 / 清空必须真的生效
-    // ---------------------------------------------------------------
+// 头集合的增删：configure 拿到的就是生效配置，删除 / 清空必须真的生效
 
     [Fact]
     public async Task Configure_CanDeleteInstanceDefaultHeader_OnBothEntries()
@@ -716,9 +712,7 @@ public sealed class HeadersTests
         Assert.Equal("1", response.Data.GetProperty("perRequest").GetString());
     }
 
-    // ---------------------------------------------------------------
-    // P0-2：运行期改默认请求头（Token 刷新）不能打死并发请求
-    // ---------------------------------------------------------------
+// P0-2：运行期改默认请求头（Token 刷新）不能打死并发请求
 
     [Fact]
     public async Task ConcurrentDefaultsHeaderMutation_DoesNotBreakInFlightRequests()
@@ -826,9 +820,7 @@ public sealed class HeadersTests
     }
 
 
-    // ---------------------------------------------------------------
-    // 辅助
-    // ---------------------------------------------------------------
+// 辅助
 
     /// <summary>
     /// 正文读取阶段的超时预算。必须同时满足两头：

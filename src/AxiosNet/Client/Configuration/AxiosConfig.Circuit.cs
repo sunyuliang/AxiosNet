@@ -4,10 +4,8 @@ namespace AxiosNet;
 
 public sealed partial class AxiosConfig
 {
-    /// <summary>
-    /// 熔断（<see cref="AxiosConfig.ResilienceSettings.Circuit"/>）：下游持续故障时连请求都不发，直接以 <c>ERR_CIRCUIT_OPEN</c> 失败。
-    /// 不设置 <see cref="Policy"/> 时不熔断；熔断闸门在每次尝试之前，重试循环的下一次尝试会被立刻拦下。
-    /// </summary>
+    /// <summary>熔断（<see cref="AxiosConfig.ResilienceSettings.Circuit"/>）：命中时直接以 <c>ERR_CIRCUIT_OPEN</c> 失败，不发出请求；闸门在每次尝试之前。</summary>
+    /// <remarks>不设置 <see cref="Policy"/> 时不熔断；重试循环的下一次尝试会被立刻拦下。</remarks>
     public sealed class CircuitSettings
     {
         private IAxiosCircuitPolicy? _policy;

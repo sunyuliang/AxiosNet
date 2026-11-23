@@ -139,9 +139,7 @@ public sealed class ResponseBodyTests
         Assert.Equal(200, ex.Response!.Status);
     }
 
-    // ---------------------------------------------------------------
-    // 流式正文：逐字节读取仍受长度上限约束
-    // ---------------------------------------------------------------
+// 流式正文：逐字节读取仍受长度上限约束
 
     [Fact]
     public async Task StreamResponse_ReadByte_EnforcesMaxResponseBytes()
@@ -167,9 +165,7 @@ public sealed class ResponseBodyTests
         Assert.Null(ex.Response);
     }
 
-    // ---------------------------------------------------------------
-    // 截断正文：声明长度没读满就断流，必须归一到 ERR_NETWORK
-    // ---------------------------------------------------------------
+// 截断正文：声明长度没读满就断流，必须归一到 ERR_NETWORK
 
     [Fact]
     public async Task TruncatedResponseBody_IsWrappedAsNetworkError()
@@ -269,9 +265,7 @@ public sealed class ResponseBodyTests
         Assert.Equal(AxiosException.ErrCanceled, error.Code);
     }
 
-    // ------------------------------------------------------------------
-    // 2. 段式累积：跨多个池化段装配后字节一致
-    // ------------------------------------------------------------------
+// 2. 段式累积：跨多个池化段装配后字节一致
 
     [Fact]
     public async Task UndeclaredLength_MultiSegment_AssemblesExactBytes()
@@ -536,9 +530,7 @@ public sealed class ResponseBodyTests
         }
     }
 
-    // ---------------------------------------------------------------
-    // 辅助
-    // ---------------------------------------------------------------
+// 辅助
 
     /// <summary>
     /// 正文读取阶段的超时预算。必须同时满足两头：

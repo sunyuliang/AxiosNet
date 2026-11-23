@@ -50,9 +50,7 @@ public sealed class InterceptorTests
         Assert.Empty(server.Received);
     }
 
-    // ------------------------------------------------------------------
-    // 自动切换后移 + transform 去重语义
-    // ------------------------------------------------------------------
+// 自动切换后移 + transform 去重语义
 
     [Fact]
     public async Task Interceptor_ReplacingConfig_KeepsAutoStreamSwitch()
@@ -68,9 +66,7 @@ public sealed class InterceptorTests
         Assert.IsAssignableFrom<Stream>(response.Data);
     }
 
-    // ---------------------------------------------------------------
-    // 拦截器：OnRejected 可以从网络层错误恢复（不只是错误状态码）
-    // ---------------------------------------------------------------
+// 拦截器：OnRejected 可以从网络层错误恢复（不只是错误状态码）
 
     [Fact]
     public async Task ResponseInterceptor_RejectedCanRecoverFromNetworkError()
@@ -100,9 +96,7 @@ public sealed class InterceptorTests
         Assert.Equal("fallback", Assert.IsType<string>(response.Data));
     }
 
-    // ------------------------------------------------------------------
-    // 拦截器返回 null
-    // ------------------------------------------------------------------
+// 拦截器返回 null
 
     [Fact]
     public async Task RequestInterceptor_ReturningNull_ThrowsBadOptionValue_NotNullReference()
@@ -551,9 +545,7 @@ public sealed class InterceptorTests
         Assert.Single(server.Received);
     }
 
-    // ---------------------------------------------------------------
-    // 请求拦截器的 rejected 语义（与 axios 的有意分歧）
-    // ---------------------------------------------------------------
+// 请求拦截器的 rejected 语义（与 axios 的有意分歧）
 
     [Fact]
     public async Task RequestInterceptor_OnRejected_DoesNotSwallowSendStageErrors()
@@ -615,9 +607,7 @@ public sealed class InterceptorTests
     // ===============================================================
 
 
-    // ------------------------------------------------------------------
-    // 测试辅助
-    // ------------------------------------------------------------------
+// 测试辅助
 
 
     private static HttpResponseMessage StreamResponse()

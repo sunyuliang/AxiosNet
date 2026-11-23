@@ -1,7 +1,7 @@
 namespace AxiosNet.Internal.Support;
 
 /// <summary>
-/// 失败分类的唯一判定：重试「是否瞬态」与熔断「是否计入故障」共用同一张表，避免两处名单漂移。
+/// 失败分类的唯一判定：重试「是否瞬态」与熔断「是否计入故障」共用同一张表。
 /// 纯类型判定，无委托 / 装箱 / 分配。
 /// </summary>
 internal static class FailureClassifier

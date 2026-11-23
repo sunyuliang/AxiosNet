@@ -22,19 +22,14 @@ public sealed class ApiAuthContext
 /// <summary>凭据扩展点：每次请求发送前调用一次，返回的凭据描述决定库把值写到哪里、以及 401 后能否重放。</summary>
 /// <remarks>
 /// <para>托管落点（<see cref="ApiCredential.Token"/> / <see cref="ApiCredential.Header(string, string?)"/> / <see cref="ApiCredential.Query"/>）由库写入，401 后自动作废、重取、重放一次。</para>
-/// <para>显式 <c>Authorization</c> 头与本接口（或已设置的 <c>Transport.Auth</c>）同时存在视为配置冲突并报错，不静默覆盖；只设其一时按该来源生效。</para>
-/// <para>值依赖请求本身的场景（HMAC / SigV4 等签名、令牌放正文、一次写多个头）返回 <see cref="ApiCredential.Custom()"/>：自己写配置，库不接管也不重放。</para>
+/// <para>与显式 <c>Authorization</c> 头或 <c>Transport.Auth</c> 同时设置报配置冲突；值依赖请求本身时返回 <see cref="ApiCredential.Custom()"/>，库不接管也不重放。</para>
 /// </remarks>
 public interface IApiCredentialProvider
 {
-    /// <summary>取本次请求的凭据；也可直接写 <see cref="ApiAuthContext.Config"/> 后返回 <see cref="ApiCredential.Custom()"/>。</summary>
-    /// <param name="context">本次请求的上下文（模型实例与已合并的配置）。</param>
-    /// <param name="cancellationToken">调用方的取消令牌。</param>
-    /// <returns>凭据描述；<see cref="ApiCredential.None"/> 表示本次不写凭据。</returns>
+    /// <summary>取本次请求的凭据；也可直接写 <see cref="ApiAuthContext.Config"/> 后返回 <see cref="ApiCredential.Custom()"/>。<see cref="ApiCredential.None"/> 表示本次不写凭据。</summary>
     ValueTask<ApiCredential> GetCredentialAsync(ApiAuthContext context, CancellationToken cancellationToken);
 
-    /// <summary>作废当前凭据；401 之后由库调用，让下一次取凭据必然拿到新值。只有托管落点形态才会被调用。</summary>
-    /// <param name="staleToken">刚才被拒的值（<see cref="ApiCredential.Value"/>），拿不到时为 <c>null</c>，表示无条件作废。</param>
+    /// <summary>作废当前凭据；401 之后由库调用，只有托管落点形态才会被调用。<paramref name="staleToken"/> 为 <c>null</c> 表示无条件作废。</summary>
 #if NETSTANDARD2_0
     void Invalidate(string? staleToken = null);
 #else
@@ -85,30 +80,24 @@ public readonly record struct ApiCredential
     /// <summary>本次不带凭据。</summary>
     public static ApiCredential None => default;
 
-    /// <summary>令牌：库按声明的 scheme 拼 <c>Authorization</c> 头。空白值视为 <see cref="None"/>。</summary>
-    /// <param name="token">令牌本身（不含 scheme）；<c>null</c> / 空白表示本次不带凭据。</param>
+    /// <summary>令牌：库按声明的 scheme 拼 <c>Authorization</c> 头；<c>null</c> / 空白视为 <see cref="None"/>。</summary>
     public static ApiCredential Token(string? token)
         => string.IsNullOrWhiteSpace(token) ? None : new ApiCredential(ApiCredentialKind.Token, null, token);
 
-    /// <summary>完整的 <c>Authorization</c> 头值：等价于 <c>Header("Authorization", value)</c>。空白值视为 <see cref="None"/>。</summary>
-    /// <param name="value">形如 <c>Basic dXNlcjpwYXNz</c> 的完整头值；<c>null</c> / 空白表示本次不带凭据。</param>
+    /// <summary>完整的 <c>Authorization</c> 头值：等价于 <c>Header("Authorization", value)</c>；<c>null</c> / 空白视为 <see cref="None"/>。</summary>
     public static ApiCredential Header(string? value)
         => Header("Authorization", value);
 
-    /// <summary>请求头：库写 <c>{name}: {value}</c>（覆盖同名头）。空白值视为 <see cref="None"/>。</summary>
-    /// <remarks>
-    /// <paramref name="name"/> 是 <c>Authorization</c>（忽略大小写）时值原样发送、不拼 scheme，并走内核凭据槽位：
-    /// 与显式 <c>Authorization</c> 头同时存在时报冲突。
-    /// </remarks>
+    /// <summary>请求头：库写 <c>{name}: {value}</c>（覆盖同名头）；<c>null</c> / 空白值视为 <see cref="None"/>。<paramref name="name"/> 为 <c>Authorization</c>（忽略大小写）时值原样发送、不拼 scheme。</summary>
     /// <param name="name">请求头名，如 <c>X-Api-Key</c>。</param>
-    /// <param name="value">落点值；<c>null</c> / 空白表示本次不带凭据。</param>
+    /// <param name="value">落点值。</param>
     /// <exception cref="ArgumentException"><paramref name="name"/> 是 <c>null</c> 或空白。</exception>
     public static ApiCredential Header(string name, string? value)
         => string.IsNullOrWhiteSpace(value) ? None : new ApiCredential(ApiCredentialKind.Header, ValidateName(name), value);
 
-    /// <summary>查询参数：库写 <c>?{name}={value}</c>（覆盖同名参数）。空白值视为 <see cref="None"/>。</summary>
+    /// <summary>查询参数：库写 <c>?{name}={value}</c>（覆盖同名参数）；<c>null</c> / 空白值视为 <see cref="None"/>。</summary>
     /// <param name="name">查询参数名，如 <c>access_token</c>。</param>
-    /// <param name="value">落点值；<c>null</c> / 空白表示本次不带凭据。</param>
+    /// <param name="value">落点值。</param>
     /// <exception cref="ArgumentException"><paramref name="name"/> 是 <c>null</c> 或空白。</exception>
     public static ApiCredential Query(string name, string? value)
         => string.IsNullOrWhiteSpace(value) ? None : new ApiCredential(ApiCredentialKind.Query, ValidateName(name), value);
@@ -116,8 +105,7 @@ public readonly record struct ApiCredential
     /// <summary>提供方已自行写好配置（签名、正文令牌、多个头），库不写落点也不重放。</summary>
     public static ApiCredential Custom() => new(ApiCredentialKind.Custom, null, null);
 
-    /// <summary>落点名不能为空：空白名会让库写到无意义的位置，比启动期报错更难查。</summary>
-    /// <param name="name">待校验的落点名。</param>
+    /// <summary>校验落点名非空白；空白抛 <see cref="ArgumentException"/>。</summary>
     private static string ValidateName(string name)
         => string.IsNullOrWhiteSpace(name)
             ? throw new ArgumentException("落点名不能为空白。", nameof(name))

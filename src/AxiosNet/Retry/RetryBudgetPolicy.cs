@@ -7,10 +7,8 @@ namespace AxiosNet.Retry;
 /// 全局重试预算：给任意 <see cref="IAxiosRetryPolicy"/> 套一层共享的令牌桶，限制整个客户端实例的重试速率。
 /// </summary>
 /// <remarks>
-/// 只拦重试不拦首发：内层策略说要重试时才扣令牌，扣不到就放弃重试，把失败原样抛给调用方。
-/// 令牌桶按策略对象共享，挂到 <c>Defaults.Resilience.Retry.Policy</c> 上时本实例所有请求共用一只桶。
-/// 线程安全、判定路径不分配；<see cref="RefusedRetries"/> 与 <see cref="OnBudgetExhausted"/> 供本地观测，
-/// 进程级指标为 <c>axiosnet.client.retry.budget_exhausted</c>（受 <c>Observability.Capture</c> 控制）。
+/// 只拦重试不拦首发：内层策略说要重试时才扣令牌，扣不到就放弃重试，把失败原样抛给调用方。令牌桶按策略对象共享，挂到 <c>Defaults.Resilience.Retry.Policy</c> 上时全部请求共用一只桶。
+/// 线程安全；<see cref="RefusedRetries"/> 与 <see cref="OnBudgetExhausted"/> 供本地观测，进程级指标为 <c>axiosnet.client.retry.budget_exhausted</c>（受 <c>Observability.Capture</c> 控制）。
 /// </remarks>
 /// <example>
 /// <code>
@@ -104,9 +102,7 @@ public sealed class RetryBudgetPolicy : IAxiosRetryPolicy
     }
 
     /// <summary>预算不足、某次重试被拒时触发：入参是那次失败的尝试上下文（与 <c>Retry.OnRetry</c> 同形）。</summary>
-    /// <remarks>
-    /// 在请求线程上同步执行且不在锁内，抛出的异常会原样冒给调用方。
-    /// </remarks>
+    /// <remarks>在请求线程上同步执行且不在锁内，抛出的异常会原样冒给调用方。</remarks>
     public Action<AxiosRetryContext>? OnBudgetExhausted { get; set; }
 
     /// <inheritdoc />
@@ -129,7 +125,7 @@ public sealed class RetryBudgetPolicy : IAxiosRetryPolicy
         Interlocked.Increment(ref _refusedRetries);
         AxiosTelemetry.Dispatch.RetryBudgetRefused(context.Config);
 
-        // 锁外回调：调用方的代码不该在内部锁里跑。
+        // 锁外回调。
         OnBudgetExhausted?.Invoke(context);
         return false;
     }
@@ -137,20 +133,16 @@ public sealed class RetryBudgetPolicy : IAxiosRetryPolicy
     /// <inheritdoc />
     public TimeSpan GetDelay(AxiosRetryContext context) => _inner.GetDelay(context);
 
-    /// <summary>
-    /// 退回一个已扣的令牌：重试决定已做出，但这次重试没发出去（总预算已耗尽 / 回调抛错 / 退避被取消）；
-    /// 预算套预算时内层同样被扣过一次，一起退。
-    /// </summary>
+    /// <summary>退回一个已扣的令牌：重试已决定但没发出去（总预算耗尽 / 回调抛错 / 退避被取消）时调用；预算套预算时内层一起退。</summary>
     internal void Refund()
     {
         lock (_sync)
         {
             Refill(Stopwatch.GetTimestamp());
 
-            // 补完再封顶，避免越过容量。
+            // 补完再封顶。
             _tokens = Math.Min(_capacity, _tokens + 1d);
 
-            // 预算包预算时内层同样被扣过一次，一起退。
             (_inner as RetryBudgetPolicy)?.Refund();
         }
     }

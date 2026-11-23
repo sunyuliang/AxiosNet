@@ -5,25 +5,18 @@ namespace AxiosNet;
 // AxiosClient 的配置合并（Defaults → 单次请求）与请求头分流：Content-* 落到 content，其余落到 request。
 public sealed partial class AxiosClient
 {
-    // ------------------------------------------------------------------
-    // 配置合并 / Header 处理
-    // ------------------------------------------------------------------
+// 配置合并 / Header 处理
 
-    /// <summary>
-    /// 把调用方传入的按请求配置落到实例默认值上；产物不带 <see cref="AxiosConfig.EffectiveMerged"/>（它描述的是调用方输入，不是库产出）。
-    /// </summary>
+    /// <summary>把调用方传入的按请求配置落到实例默认值上；产物不带 <see cref="AxiosConfig.EffectiveMerged"/>。</summary>
     /// <remarks>
-    /// 与 <see cref="PreparePerCall"/> 互逆、<b>不可合并</b>：本方法只处理调用方自己传入的普通配置
-    /// （<c>EffectiveMerged</c> 为 <c>false</c>）；库产出的已合并配置（<c>true</c>，如回放 <c>response.Config</c>）
-    /// 由 <see cref="PreparePerCall"/> 先重新合并。两处判断条件方向相反，删掉任意一个都会让另一半配置得不到合并。
+    /// 只处理调用方传入的普通配置（<c>EffectiveMerged</c> 为 <c>false</c>）；
+    /// 库产出的已合并配置由 <see cref="PreparePerCall"/> 先重新合并。
     /// </remarks>
     private AxiosConfig MergeConfig(AxiosConfig? perCall)
     {
         var merged = Defaults.Clone();
 
-        // 可观测性回调组的 *Set 标记只描述「显式写过」：Defaults.Clone() 带过来的标记是来源实例默认值，
-        // 不是按请求意图。不清掉的话，回放 response.Config 会把来源实例的回调 / 清空意图搬到目标实例上
-        // （与缓存、CancellationToken 同一套「实例来源不搬运」口径）。只清标记、留值，本次请求照常继承。
+        // *Set 标记只描述「显式写过」：只清标记、留值。
         merged.ObservabilityOrNull?.ClearSetFlags();
 
         // 标记实例级选项来自本实例默认值。
@@ -33,7 +26,7 @@ public sealed partial class AxiosClient
         merged.ResolvedAuthorization = null;
         merged.ResolvedCredentialIdentity = null;
 
-        // 401 重放的正文持有标记只来自本次按请求的 WebAPI 门面，不继承实例默认值。
+        // 401 重放的正文持有标记只来自本次按请求的门面。
         merged.RetainBodyContent = perCall?.RetainBodyContent ?? false;
 
         if (perCall is null)
@@ -44,8 +37,7 @@ public sealed partial class AxiosClient
             return merged;
         }
 
-        // 库产出的配置（快捷方法 / 合并产物 / 克隆）按「实例来源」对待：
-        // BaseAddress 与连接级选项沿用本实例的值。
+        // 库产出的配置按「实例来源」对待：BaseAddress 与连接级选项沿用本实例的值。
         var instanceSourced = perCall.InstanceOptionsInherited || perCall.EffectiveMerged;
 
         MergeScalarSettings(merged, perCall, instanceSourced);
@@ -61,8 +53,7 @@ public sealed partial class AxiosClient
     /// <param name="instanceSourced">按请求配置是否由库产出（实例来源）。</param>
     private static void MergeScalarSettings(AxiosConfig merged, AxiosConfig perCall, bool instanceSourced)
     {
-        // 门面提供方绑定的是按请求模型实例，随调用方配置搬运；库产出的配置不搬来源实例的提供方
-        // （与 Transport.Auth 同一规则，避免回放把来源实例的凭据带进另一条客户端）。
+        // 库产出的配置不搬来源实例的提供方。
         merged.InternalCredentialProvider = instanceSourced ? null : perCall.InternalCredentialProvider;
 
         merged.Url = perCall.Url ?? merged.Url;
@@ -78,10 +69,8 @@ public sealed partial class AxiosClient
             merged.Body = perCall.Body;
         }
 
-        // 格式化钩子是实例级默认值：按请求没写就保留（写 null 不能把它冲掉，否则实例级钩子被任何按请求配置静默摘除）。
-        // 库产出的配置（回放 response.Config / 快捷方法产物）按「实例来源」处理：钩子描述的是来源实例的默认值，
-        // 不能跟着配置搬到目标实例上（否则回放会把来源实例的闭包 / 租户上下文泄漏到另一条客户端）。
-        // 调用方自己 new 的配置不受此限：写了就用，仍是「写什么用什么」。
+        // 格式化钩子是实例级默认值：按请求没写就保留。
+        // 库产出的配置不搬来源实例的钩子；调用方自己 new 的配置写了就用。
         if (!instanceSourced && perCall.SerializationOrNull is { ValueTextSet: true } perCallSerializationForValueText)
         {
             merged.Serialization.ValueText = perCallSerializationForValueText.ValueText;
@@ -93,8 +82,7 @@ public sealed partial class AxiosClient
             merged.ShortCircuit = perCall.ShortCircuit;
         }
 
-        // 缓存是实例级的共享状态：按请求项给了就用它，否则沿用实例默认。
-        // 库产出的配置（回放 response.Config 等）不搬来源实例的缓存，否则目标实例会直接命中来源实例的条目。
+        // 缓存是实例级共享状态：库产出的配置不搬来源实例的缓存。
         if (!instanceSourced && perCall.Caching is not null)
         {
             merged.Caching = perCall.Caching;
@@ -124,38 +112,35 @@ public sealed partial class AxiosClient
 
         ApplyRemoveHeaders(merged);
 
-        // 只在显式设置时赋值。
         if (perCall.ContentTypeSet)
         {
             merged.ContentType = perCall.ContentType;
         }
 
-        // 按 *Set 标记判断显式设置。
         if (perCall.TimeoutSet)
         {
             merged.Timeout = perCall.Timeout;
         }
 
-        // 只在显式设置时覆盖（setter 会置 ResponseTypeSet）。
+        // setter 会置 ResponseTypeSet。
         if (perCall.ResponseTypeSet)
         {
             merged.ResponseType = perCall.ResponseType;
         }
 
-        // 请求体压缩属按请求项；显式 None 或显式 null 都用于关掉实例默认的压缩。
-        // 压缩与正文 / 令牌 / Content-Type 同一口径：显式赋 null 也会摘掉实例默认值。
+        // 显式 None 或显式 null 都关掉实例默认的压缩。
         if (perCall.CompressionSet)
         {
             merged.Compression = perCall.Compression;
         }
 
-        // 取消令牌同属「实例来源」，不搬到目标实例；setter 会置 CancellationTokenSet，故只在显式设置时赋值。
+        // 取消令牌属实例来源，只在显式设置时赋值。
         if (!instanceSourced && perCall.CancellationTokenSet)
         {
             merged.CancellationToken = perCall.CancellationToken;
         }
 
-        // 组对象为 null 表示本请求没碰这一组；ValidateStatus 是顶层项，单独合并。
+        // 组对象为 null 表示本请求没碰这一组。
         if (perCall.ObservabilityOrNull is { } incomingObservability)
         {
             merged.Observability.MergeFrom(incomingObservability);
@@ -173,8 +158,7 @@ public sealed partial class AxiosClient
     /// <param name="instanceSourced">按请求配置是否由库产出（实例来源）。</param>
     private static void MergeGroupSettings(AxiosConfig merged, AxiosConfig perCall, bool instanceSourced)
     {
-        // 治理项（重试 / 熔断 / 对冲 / 备用端点 / 并发 / 幂等键）属按请求项：
-        // 没碰这一组就沿用实例默认（懒创建），碰了就按 *Set 覆盖。
+        // 治理项按 *Set 覆盖；没碰这一组就沿用实例默认。
         if (perCall.ResilienceOrNull is { } incomingResilience)
         {
             merged.Resilience.MergeFrom(incomingResilience);
@@ -182,7 +166,7 @@ public sealed partial class AxiosClient
 
         if (perCall.SerializationOrNull is { } incomingSerialization)
         {
-            // 注册表属实例级：库产出的配置（回放 response.Config 等）沿用本实例的登记，不搬来源实例的。
+            // 注册表属实例级：库产出的配置沿用本实例的登记。
             var ownRegistry = merged.SerializationOrNull?.BodySerializersOrNull;
 
             merged.Serialization.MergeFrom(incomingSerialization);
@@ -200,10 +184,10 @@ public sealed partial class AxiosClient
 
         var perCallTransport = perCall.TransportOrNull;
 
-        // HttpVersion / VersionPolicy / Profile / MaxRate 属按请求项，库产出的配置同样合并。
+        // HttpVersion / VersionPolicy / Profile / MaxRate 按请求合并，库产出的配置同样合并。
         if (perCallTransport is not null)
         {
-            // 版本两项按 *Set 标记合并：显式 null 是「回到库默认」，与「未设置（沿用实例默认）」区分开。
+            // 版本两项按 *Set 合并：显式 null 表示回到库默认。
             if (perCallTransport.HttpVersionSet)
             {
                 merged.Transport.HttpVersion = perCallTransport.HttpVersion;
@@ -214,7 +198,6 @@ public sealed partial class AxiosClient
                 merged.Transport.VersionPolicy = perCallTransport.VersionPolicy;
             }
 
-            // 显式写 null 表示本次回到默认档。
             if (perCallTransport.ProfileSet)
             {
                 merged.Transport.Profile = perCallTransport.Profile;
@@ -226,8 +209,7 @@ public sealed partial class AxiosClient
             }
         }
 
-        // 实例级选项需合并：ValidatePerRequestOptions 校验的是生效配置；库产出的配置沿用本实例默认值。
-        // Auth = null 表示本次不带认证。
+        // 库产出的配置沿用本实例默认值；Auth = null 表示本次不带认证。
         if (!instanceSourced && perCallTransport is not null)
         {
             merged.Transport.MergeFrom(perCallTransport);
@@ -239,8 +221,7 @@ public sealed partial class AxiosClient
     /// <param name="perCall">调用方传入的按请求配置。</param>
     private static void MergeTransformChains(AxiosConfig merged, AxiosConfig perCall)
     {
-        // transform 链按「实例默认 + 本次追加」组合，顺序稳定；去重只覆盖 perCall 登记的继承段。
-        // 继承段长度必须在追加之前取。
+        // 顺序稳定：实例默认段 + 本次追加；继承段长度必须在追加之前取。
         var inheritedRequestCount = merged.TransformRequestCount;
         var inheritedResponseCount = merged.TransformResponseCount;
 
@@ -277,20 +258,19 @@ public sealed partial class AxiosClient
         merged.TransformInheritedResponse = inheritedResponseCount;
     }
 
-    /// <summary>解析凭据来源：静态槽位直接映射；槽位为空时调用门面挂进来的内部提供方（每请求一次）；结果只存在配置内部，发送前才写到请求头。</summary>
+    /// <summary>解析凭据来源：静态槽位直接映射；槽位为空时调用内部提供方（每请求一次）；结果只存在配置内部，发送前才写到请求头。</summary>
     private static async ValueTask ResolveCredentialAsync(AxiosConfig config)
     {
-        // 槽位里有静态凭据时以槽位为准；槽位为空（包括按请求显式清空）才回落到门面挂进来的内部提供方
-        // （它不占槽位，省掉每请求的槽位组与包装对象）。两处都只在本次请求调用一次。
+        // 槽位里有静态凭据时以槽位为准，槽位为空才用内部提供方。
         var slot = config.TransportOrNull?.Auth;
         var provider = slot is null ? config.InternalCredentialProvider : null;
 
-        // 上一次解析出的落点身份作废：提供方可能在本次改落点（甚至不再带凭据）。
+        // 上一次解析出的落点身份作废。
         config.ResolvedCredentialIdentity = null;
 
         if (slot is null && provider is null)
         {
-            // 槽位为空（例如拦截器显式清空）：之前解析出的头值一并作废。
+            // 槽位为空：之前的头值一并作废。
             config.ResolvedAuthorization = null;
             return;
         }
@@ -347,13 +327,13 @@ public sealed partial class AxiosClient
         // 没有头就整段跳过（Headers 延迟创建）。
         if (config.HasHeaders)
         {
-            // 整段用同一版快照：并发 Set 换的是整个数组，逐次读字段会拿到撕裂的组合。
+            // 整段用同一版快照。
             var headers = config.Headers.Snapshot();
             foreach (var header in headers)
             {
                 if (!ContentHeaderNames.Contains(header.Name))
                 {
-                    // 非 Content-* 头：先给请求头，请求头不认的再退回内容头。
+                    // 非 Content-* 头：先给请求头，不认的再退回内容头。
                     if (!request.Headers.TryAddWithoutValidation(header.Name, header.Value) && content is not null)
                     {
                         content.Headers.TryAddWithoutValidation(header.Name, header.Value);
@@ -373,7 +353,7 @@ public sealed partial class AxiosClient
                 {
                     if (content is null || contentIsSynthetic)
                     {
-                        // 没有真实正文时跳过（不为它造正文）。
+                        // 没有真实正文时跳过。
                         continue;
                     }
 
@@ -385,7 +365,6 @@ public sealed partial class AxiosClient
                             throw AxiosException.InvalidOption($"Content-Length 头（{header.Value.Trim()}）与请求体实际长度（{known} 字节）不一致。" + "内容长度已知时该头由库按实际字节数生成，请删掉这一行。", config);
                         }
 
-                        // 一致时无需重写。
                         continue;
                     }
 
@@ -416,7 +395,7 @@ public sealed partial class AxiosClient
             }
         }
 
-        // 凭据槽位已在管线里解析（提供方只在那时调用一次）；显式 Authorization 头存在时不再写。
+        // 已有显式 Authorization 头时不再写。
         if (config.ResolvedAuthorization is { } credential
             && !request.Headers.Contains(AuthorizationHeader.Name))
         {
@@ -429,12 +408,10 @@ public sealed partial class AxiosClient
         => long.TryParse(headerValue.Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
             && parsed == actual;
 
-    /// <summary>
-    /// 条件请求头：旧条目的 <c>ETag</c> 写成 <c>If-None-Match</c>（更强的校验器），没有才用 <c>Last-Modified</c> 写 <c>If-Modified-Since</c>。
-    /// </summary>
+    /// <summary>条件请求头：<c>ETag</c> 写 <c>If-None-Match</c>，没有才用 <c>Last-Modified</c> 写 <c>If-Modified-Since</c>。</summary>
     /// <remarks>
-    /// 写在请求消息上而不是配置头里：配置头会随 <see cref="AxiosResponse.Config"/> 回放给下一条请求，条件头不该跟着走。
-    /// 两个校验器都写不进去时清掉 <see cref="AxiosConfig.RevalidationEntry"/>，终端就不会把召回的 304 当成本库的条件请求结果。
+    /// 写在请求消息上而不是配置头里：配置头会随 <see cref="AxiosResponse.Config"/> 回放给下一条请求。
+    /// 两个校验器都写不进去时清掉 <see cref="AxiosConfig.RevalidationEntry"/>。
     /// </remarks>
     private static void ApplyConditionalHeaders(HttpRequestMessage request, AxiosConfig config)
     {
@@ -462,7 +439,7 @@ public sealed partial class AxiosClient
 
         try
         {
-            // 存储可能来自共享后端：值同样挡 C0 注入。
+            // 值来自共享后端，同样挡 C0 注入。
             AxiosHeaders.ValidateHeaderValue(name, value);
         }
         catch (ArgumentException)
@@ -543,7 +520,7 @@ public sealed partial class AxiosClient
             throw AxiosException.InvalidOption("幂等键工厂返回了空白：每个逻辑请求必须有一个非空键。", config);
         }
 
-        // 写回配置：重试 / 换端点 / 对冲共用这一份键（一个逻辑请求一个键）。
+        // 写回配置，重发沿用同一个键。
         settings.GeneratedKey = key;
         return key;
     }

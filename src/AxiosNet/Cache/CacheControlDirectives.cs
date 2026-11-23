@@ -4,18 +4,14 @@ using System.Text;
 
 namespace AxiosNet.Cache;
 
-/// <summary>
-/// 解析后的 <c>Cache-Control</c> 指令（请求头与响应头共用；指令名大小写不敏感）。头不存在时各项都是「未出现」。
-/// </summary>
+/// <summary>解析后的 <c>Cache-Control</c> 指令（请求头与响应头共用；指令名大小写不敏感）。头不存在时各项都是「未出现」。</summary>
 /// <remarks>
-/// 只做解析，不做取舍：库自己按 <see cref="AxiosCacheOptions.FreshnessMode"/> 使用其中一部分，
-/// 其余（<c>private</c> / <c>s-maxage</c> / <c>stale-*</c> / 扩展指令）原样交给 <see cref="IAxiosCacheStore"/>，自建存储可以按自己的策略用。
-/// 数字指令按秒解析，其中 <c>max-age</c> / <c>s-maxage</c> 非法或负数按零（RFC 9111 §4.2.1：无效的新鲜期信息按已过期处理），
-/// <c>stale-*</c> 非法或负数按「未出现」处理（<c>null</c>）。
+/// 只解析不取舍：库按 <see cref="AxiosCacheOptions.FreshnessMode"/> 用其中一部分，其余原样交给自建存储。
+/// 数字指令按秒解析；<c>max-age</c> / <c>s-maxage</c> 非法或负数按零，<c>stale-*</c> 非法或负数按「未出现」。
 /// </remarks>
 public sealed class CacheControlDirectives
 {
-    /// <summary>没有 <c>Cache-Control</c> 时共用的空实例（不可变，避免每次解析都新建）。</summary>
+    /// <summary>没有 <c>Cache-Control</c> 时共用的空实例（不可变）。</summary>
     internal static readonly CacheControlDirectives Empty = new()
     {
         Extensions = new ReadOnlyDictionary<string, string?>(
@@ -28,7 +24,7 @@ public sealed class CacheControlDirectives
     /// <summary><c>no-store</c>：任何缓存都不得保存这条响应。</summary>
     public bool NoStore { get; internal init; }
 
-    /// <summary><c>no-cache</c>：可以保存，但每次复用前都必须向源服务器验证（库只在「查不到新鲜条目」时走条件请求，命中即直接交付，故解析模式下与 <c>no-store</c> 同样不落库）。</summary>
+    /// <summary><c>no-cache</c>：可以保存，但每次复用前须向源验证；本库解析模式下与 <c>no-store</c> 同样不落库。</summary>
     public bool NoCache { get; internal init; }
 
     /// <summary><c>private</c>：只允许私有缓存保存。进程内存储天然是私有的；接共享存储时可据此拒绝落库。</summary>
@@ -133,8 +129,7 @@ public sealed class CacheControlDirectives
                     case "no-transform":
                         noTransform = true;
                         break;
-                    // 无效的新鲜期按零（RFC 9111 §4.2.1）：请求侧演变成绕开缓存，响应侧演变成不落库。
-                    // 重复出现时非法值不覆盖前面解析出的合法值（有合法新鲜期信息就不算无效）。
+                    // 无效新鲜期按零；重复出现时非法值不覆盖已有合法值。
                     case "max-age":
                         maxAge = ParseSeconds(argument) ?? maxAge ?? TimeSpan.Zero;
                         break;
@@ -237,7 +232,7 @@ public sealed class CacheControlDirectives
             return null;
         }
 
-        // 直接按秒换算可能超出 TimeSpan 上限：超出就按「无限长」处理。
+        // 超出 TimeSpan 上限按无限长。
         return seconds > long.MaxValue / TimeSpan.TicksPerSecond
             ? TimeSpan.MaxValue
             : TimeSpan.FromTicks(seconds * TimeSpan.TicksPerSecond);

@@ -1,9 +1,6 @@
 namespace AxiosNet.Cache;
 
-/// <summary>
-/// 一条响应里与缓存相关的 HTTP 信息（解析结果）：新鲜期、剩余新鲜期、龄期、<c>Cache-Control</c>、<c>Date</c> / <c>Expires</c> / <c>Vary</c>。
-/// 只在需要时解析 —— 解析模式算 TTL 时，或自建存储读取 <see cref="AxiosCacheEntryPolicy"/> 的 HTTP 字段时。
-/// </summary>
+/// <summary>一条响应里与缓存相关的 HTTP 信息（解析结果）：新鲜期、剩余新鲜期、龄期、<c>Cache-Control</c>、<c>Date</c> / <c>Expires</c> / <c>Vary</c>。</summary>
 internal sealed class HttpCacheInfo
 {
     internal HttpCacheInfo(

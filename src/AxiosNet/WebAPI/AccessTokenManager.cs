@@ -1,12 +1,10 @@
 namespace AxiosNet.WebAPI;
 
 /// <summary>
-/// 访问令牌管理器：缓存令牌、到期前刷新、并发刷新只发一次（单飞）。
-/// 实现 <see cref="IApiCredentialProvider"/>，直接挂到 <see cref="ApiClient.CredentialProvider"/> 即可。
+/// 访问令牌管理器：缓存令牌、到期前刷新、并发刷新只发一次（单飞）；实现 <see cref="IApiCredentialProvider"/>，可直接挂到 <see cref="ApiClient.CredentialProvider"/>。
 /// </summary>
 /// <remarks>
-/// <para>刷新任务不跟随调用方的取消令牌：一个调用方断开不会让同批等待者一起失败，也不会白刷一次。</para>
-/// <para>刷新回调抛的异常原样抛给全部等待者；返回 <c>null</c> / 空白令牌转成 <see cref="InvalidOperationException"/>。失败不缓存 —— 下一次取令牌会重新尝试。</para>
+/// <para>刷新任务不跟随调用方的取消令牌。刷新回调的异常原样抛给全部等待者；返回 <c>null</c> / 空白令牌转成 <see cref="InvalidOperationException"/>，失败不缓存。</para>
 /// <para>过期时间取自 <see cref="AccessToken.ExpiresAt"/>；提前量 = min(<see cref="AccessTokenOptions.RefreshAhead"/>, 令牌寿命的一半)。</para>
 /// </remarks>
 /// <example>
@@ -59,15 +57,12 @@ public sealed class AccessTokenManager : IApiCredentialProvider, IDisposable
         => GetTokenAsyncCore(cancellationToken);
 
     /// <summary>取当前可用令牌：<paramref name="context"/> 不参与取令牌，等价于 <see cref="GetTokenAsync(CancellationToken)"/>。</summary>
-    /// <param name="context">本次请求的上下文；取令牌本身不需要它。</param>
-    /// <param name="cancellationToken">等待期间可取消；刷新本身继续，结果仍会缓存。</param>
     /// <exception cref="ObjectDisposedException">管理器已释放。</exception>
     /// <exception cref="OperationCanceledException">等待期间 <paramref name="cancellationToken"/> 被取消；刷新本身继续，结果仍会缓存。</exception>
     public ValueTask<string?> GetTokenAsync(ApiAuthContext context, CancellationToken cancellationToken)
         => GetTokenAsyncCore(cancellationToken);
 
     /// <summary>取当前可用令牌的本体：缓存命中直接返回，否则加入（或发起）唯一一次刷新。</summary>
-    /// <param name="cancellationToken">等待期间可取消；刷新本身继续，结果仍会缓存。</param>
     private async ValueTask<string?> GetTokenAsyncCore(CancellationToken cancellationToken)
     {
         Task<AccessToken> refreshing;
@@ -92,8 +87,7 @@ public sealed class AccessTokenManager : IApiCredentialProvider, IDisposable
         return token.Value;
     }
 
-    /// <summary>作废当前令牌：下一次取令牌会重新获取（已有刷新在途时等它完成）。401 之后调用。</summary>
-    /// <param name="staleToken">只作废这个令牌值（并发下避免把别人刚刷新的新令牌也作废）；<c>null</c> 表示无条件作废。</param>
+    /// <summary>作废当前令牌：下一次取令牌会重新获取（已有刷新在途时等它完成）；<paramref name="staleToken"/> 为 <c>null</c> 表示无条件作废。</summary>
     public void Invalidate(string? staleToken = null)
     {
         lock (_gate)
@@ -132,11 +126,7 @@ public sealed class AccessTokenManager : IApiCredentialProvider, IDisposable
         return _clock() >= expiresAt - _refreshAhead;
     }
 
-    /// <summary>
-    /// 在 <see cref="_gate"/> 内启动一次刷新：内部令牌源独立于调用方，超时由配置控制。
-    /// 先占位再启动 —— 回调可能同步完成，若等 <c>async</c> 方法返回再赋值，<c>finally</c> 会先清掉槽位，
-    /// 随后这个已完成的 Task 又粘回字段，下一次取令牌就会拿到旧结果。
-    /// </summary>
+    /// <summary>在 <see cref="_gate"/> 内启动一次刷新：先占位再启动。</summary>
     private Task<AccessToken> StartRefresh()
     {
         var tcs = new TaskCompletionSource<AccessToken>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -183,7 +173,7 @@ public sealed class AccessTokenManager : IApiCredentialProvider, IDisposable
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
-            // 释放导致的取消不是超时：分开报，否则调用方会以为 token 端点太慢。
+            // 释放导致的取消单独报。
             tcs.TrySetException(Volatile.Read(ref _disposed)
                 ? new ObjectDisposedException(nameof(AccessTokenManager))
                 : new TimeoutException($"刷新访问令牌超过 {_options.RefreshTimeout?.TotalSeconds:0.###} 秒。", new OperationCanceledException()));

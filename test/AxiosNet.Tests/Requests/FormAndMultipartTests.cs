@@ -519,7 +519,7 @@ public sealed class FormAndMultipartTests
     [Fact]
     public void FormUrlEncoded_Utf8_MatchesEscapeDataString_ForEveryAsciiAndUnicodeSample()
     {
-        // 新单趟编码器与旧实现（EscapeDataString + 空格替换）逐字符对拍：全部 ASCII 可打印字符 + 典型样本。
+        // 单趟编码器与参照实现（EscapeDataString + 空格替换）逐字符对拍：全部 ASCII 可打印字符 + 典型样本。
         var mismatches = new List<string>();
 
         void Check(string value)
@@ -560,7 +560,7 @@ public sealed class FormAndMultipartTests
         }
     }
 
-    /// <summary>旧实现：键名编码后再把方括号换回字面量。</summary>
+    /// <summary>参照实现：键名编码后再把方括号换回字面量。</summary>
     private static string LegacyFormKey(Encoding encoding) => LegacyFormValue("v", encoding).Replace("%5B", "[").Replace("%5D", "]");
 
     private static string LegacyFormValue(string value, Encoding encoding)
@@ -602,9 +602,7 @@ public sealed class FormAndMultipartTests
         public string Drop { get; set; } = string.Empty;
     }
 
-    // ------------------------------------------------------------------
-    // multipart：字段名校验失败时，调用方的流必须被释放
-    // ------------------------------------------------------------------
+// multipart：字段名校验失败时，调用方的流必须被释放
 
     [Fact]
     public void FormFile_InvalidFieldName_ThrowsAtConstruction()
@@ -696,9 +694,7 @@ public sealed class FormAndMultipartTests
         Assert.Empty(server.Received);
     }
 
-    // ------------------------------------------------------------------
-    // XML：声明里的 encoding 必须与头、正文三者一致
-    // ------------------------------------------------------------------
+// XML：声明里的 encoding 必须与头、正文三者一致
 
     [Fact]
     public async Task Xml_ContentTypeCharset_DrivesDeclarationAndBody()
@@ -785,9 +781,7 @@ public sealed class FormAndMultipartTests
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }
 
-    // ---------------------------------------------------------------
-    // 15：boundary 错误分类
-    // ---------------------------------------------------------------
+// 15：boundary 错误分类
 
     [Fact]
     public async Task Multipart_BoundaryTooLong_ReportsOptionError()
@@ -907,9 +901,7 @@ public sealed class FormAndMultipartTests
         Assert.True(events > 0);
     }
 
-    // ---------------------------------------------------------------
-    // multipart / form：JSON 树（JsonElement）作为数据源
-    // ---------------------------------------------------------------
+// multipart / form：JSON 树（JsonElement）作为数据源
 
     [Fact]
     public async Task Multipart_RootDictionaryWithJsonElementValues_SendsFields()
@@ -992,9 +984,7 @@ public sealed class FormAndMultipartTests
         Assert.Empty(server.Received[0].Body);
     }
 
-    // ------------------------------------------------------------------
-    // HttpContent + multipart
-    // ------------------------------------------------------------------
+// HttpContent + multipart
 
     [Fact]
     public async Task HttpContentWithoutContentType_UnderMultipartConfig_ThrowsBadOptionValue()
@@ -1073,9 +1063,7 @@ public sealed class FormAndMultipartTests
         Assert.Contains("application/octet-stream", body);
     }
 
-    // ------------------------------------------------------------------
-    // L8：multipart Content-Type + 原始内容请求体（头部/正文自相矛盾）
-    // ------------------------------------------------------------------
+// L8：multipart Content-Type + 原始内容请求体（头部/正文自相矛盾）
 
     [Fact]
     public async Task RawString_UnderMultipartContentType_ThrowsBadOptionValue()
@@ -1118,9 +1106,7 @@ public sealed class FormAndMultipartTests
         Assert.Equal(payload, sent.Body);
     }
 
-    // ------------------------------------------------------------------
-    // L9：multipart 部件自带的 Content-Disposition（name/filename）
-    // ------------------------------------------------------------------
+// L9：multipart 部件自带的 Content-Disposition（name/filename）
 
     [Fact]
     public async Task Multipart_UserPartWithoutName_GetsFieldName()
@@ -1707,9 +1693,7 @@ public sealed class FormAndMultipartTests
 
     private static string BodyOf(TestRequest request) => Encoding.UTF8.GetString(request.Body);
 
-    // ---------------------------------------------------------------
-    // 测试模型与序列化器夹具
-    // ---------------------------------------------------------------
+// 测试模型与序列化器夹具
 
 
     private sealed class Node_AuditRegression

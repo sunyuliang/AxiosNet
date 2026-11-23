@@ -2,7 +2,7 @@ namespace AxiosNet;
 
 /// <summary>
 /// 错误码的枚举形式（<see cref="AxiosException.ErrorCode"/>）：与 <see cref="AxiosException.Code"/> 的字符串常量一一对应，
-/// <c>switch</c> 能直接穷举、不会把字面量拼错，跨语言对照仍看字符串码。
+/// <c>switch</c> 可直接穷举。
 /// </summary>
 public enum AxiosErrorCode
 {
@@ -46,7 +46,7 @@ public enum AxiosErrorCode
     TooManyRedirects
 }
 
-/// <summary>字符串错误码与枚举的映射：两侧必须同步（由用例锁定每个内置常量都能映射到非 <see cref="AxiosErrorCode.Unknown"/>）。</summary>
+/// <summary>字符串错误码与枚举的映射，两侧必须同步。</summary>
 internal static class AxiosErrorCodes
 {
     /// <summary>字符串错误码 → 枚举；未知码归 <see cref="AxiosErrorCode.Unknown"/>。</summary>

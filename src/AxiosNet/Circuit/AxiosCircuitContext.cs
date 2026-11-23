@@ -1,10 +1,7 @@
 
 namespace AxiosNet.Circuit;
 
-/// <summary>
-/// 一次尝试的熔断上下文：<see cref="IAxiosCircuitPolicy.ShouldAllow"/> 据此决定放不放行，
-/// <see cref="IAxiosCircuitPolicy.Record"/> 据此判断这次尝试算不算下游故障（只读结构体，栈上传递）。
-/// </summary>
+/// <summary>一次尝试的熔断上下文：<see cref="IAxiosCircuitPolicy.ShouldAllow"/> 据此决定放行，<see cref="IAxiosCircuitPolicy.Record"/> 据此判断是否下游故障。</summary>
 public readonly struct AxiosCircuitContext
 {
     /// <param name="host">计数维度：默认是 <c>uri.Authority</c>（<c>host:port</c>）。</param>
@@ -30,13 +27,11 @@ public readonly struct AxiosCircuitContext
         Exception = exception;
         RetryAfter = retryAfter;
 
-        // 状态码在这里固定下来：响应对象可能被后续尝试复用 / 改写。
+        // 固定快照。
         StatusCode = statusCode ?? (exception as AxiosException)?.Status;
     }
 
-    /// <summary>
-    /// 计数维度，默认取 <c>uri.Authority</c>（<c>host:port</c>）；可用 <see cref="CircuitBreaker.KeySelector"/> 改写。
-    /// </summary>
+    /// <summary>计数维度，默认取 <c>uri.Authority</c>（<c>host:port</c>），可用 <see cref="CircuitBreaker.KeySelector"/> 改写。</summary>
     public string Host { get; }
 
     /// <summary>本次请求的最终地址（已合并 baseURL 与 params，与线上请求行一致）。</summary>
@@ -51,10 +46,7 @@ public readonly struct AxiosCircuitContext
     /// <summary>HTTP 状态码（有响应时可用），构造时的快照。</summary>
     public int? StatusCode { get; }
 
-    /// <summary>
-    /// 库内错误码（<c>ERR_NETWORK</c> / <c>ECONNABORTED</c> / <c>ERR_BAD_RESPONSE</c> / <c>ERR_POOL_EXHAUSTED</c> 等）；
-    /// 非 <see cref="AxiosException"/> 时为 <c>null</c>。被熔断拒绝不会进 <see cref="IAxiosCircuitPolicy.Record"/>，所以不会是 <c>ERR_CIRCUIT_OPEN</c>。
-    /// </summary>
+    /// <summary>库内错误码（<c>ERR_NETWORK</c> / <c>ECONNABORTED</c> 等）；非 <see cref="AxiosException"/> 时为 <c>null</c>。被熔断拒绝不会进 <see cref="IAxiosCircuitPolicy.Record"/>，故不会是 <c>ERR_CIRCUIT_OPEN</c>。</summary>
     public string? ErrorCode => (Exception as AxiosException)?.Code;
 
     /// <summary>请求方法。</summary>
@@ -66,21 +58,11 @@ public readonly struct AxiosCircuitContext
     /// <summary>本次尝试是否成功：没有异常，且状态码小于 400（3xx 视为成功）；没有状态码时按成功处理（准入上下文本来就没有响应）。</summary>
     public bool IsSuccess => Exception is null && (StatusCode is null || StatusCode < 400);
 
-    /// <summary>
-    /// 本次尝试是否「一次都没发出」：<see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/> 在排队或入口处就耗尽了
-    /// （<c>ECONNABORTED</c>，对应 <see cref="AxiosException.IsTotalTimeoutExceeded"/>，下游连一个字节都没收到）。
-    /// </summary>
-    /// <remarks>
-    /// 自定义策略若要自己记账，用它排除：过载时排队变长就足以让每条请求都撞上它。
-    /// 发送中途被总预算截断走的是普通超时（同样是 <c>ECONNABORTED</c>），不带这个标记、照常算故障。
-    /// </remarks>
+    /// <summary>本次尝试是否「一次都没发出」：<see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/> 在排队或入口处耗尽（<c>ECONNABORTED</c>，<see cref="AxiosException.IsTotalTimeoutExceeded"/>）。</summary>
+    /// <remarks>自定义策略记账时应排除它；发送中途被截断走普通超时，不带此标记、照常算故障。</remarks>
     public bool TotalTimeoutExpiredBeforeSend => Exception is AxiosException { IsTotalTimeoutExceeded: true };
 
-    /// <summary>
-    /// 本次尝试是否算下游故障（熔断计数的唯一口径）：网络错误 / 超时 / <see cref="HttpRequestException"/> /
-    /// <see cref="IOException"/> / 5xx 计入；取消、全部 4xx（含 408 / 429）与
-    /// <see cref="TotalTimeoutExpiredBeforeSend"/>（请求从未发出）不计入。
-    /// </summary>
+    /// <summary>本次尝试是否算下游故障（熔断计数的唯一口径）：网络错误 / 超时 / <see cref="HttpRequestException"/> / <see cref="IOException"/> / 5xx 计入；取消、全部 4xx（含 408 / 429）与请求从未发出不计入。</summary>
     public bool IsFailure
     {
         get
@@ -101,7 +83,7 @@ public readonly struct AxiosCircuitContext
                 return false;
             }
 
-            // 总预算在请求发出之前就耗尽：本地约束先到期，不是下游不响应。
+            // 总预算在发出前耗尽，属本地约束。
             if (TotalTimeoutExpiredBeforeSend)
             {
                 return false;

@@ -1,12 +1,11 @@
 namespace AxiosNet.Internal.Headers;
 
 /// <summary>
-/// 媒体类型的文本 / 二进制判定（请求与响应共用）：只看媒体类型主值（忽略 <c>charset</c> / <c>boundary</c> 等参数），
-/// 没有 Content-Type 时按<b>文本</b>处理。
+/// 媒体类型的文本 / 二进制判定：只看主值（忽略 <c>charset</c> / <c>boundary</c> 等参数），没有 Content-Type 时按文本处理。
 /// </summary>
 internal static class MediaTypes
 {
-    // 文本类型判定用的字面前缀 / 后缀与常见文本媒体类型。
+    // 文本判定用的前后缀与常见文本媒体类型。
     private const string TextPrefix = "text/";
     private const string JsonSuffix = "+json";
     private const string XmlSuffix = "+xml";
@@ -31,7 +30,7 @@ internal static class MediaTypes
         return main.Length == 0 ? null : main.ToLowerInvariant();
     }
 
-    /// <summary>媒体类型主值是否等于 <paramref name="expected"/>（忽略参数、空白与大小写）；<paramref name="expected"/> 必须是主值本身。</summary>
+    /// <summary>主值是否等于 <paramref name="expected"/>（忽略参数、空白与大小写）；<paramref name="expected"/> 须是主值本身。</summary>
     public static bool Is(string? mediaType, string expected)
         => SpanComparisons.EqualsIgnoreCase(MainValue(mediaType), expected);
 
@@ -47,7 +46,6 @@ internal static class MediaTypes
     /// <summary>是否为文本类媒体类型（<c>null</c> / 空视为文本）。</summary>
     public static bool IsTextual(string? mediaType)
     {
-        // 直接在原串上切片比较，不切子串、不转小写。
         var main = MainValue(mediaType);
         if (main.Length == 0)
         {
@@ -73,7 +71,7 @@ internal static class MediaTypes
             || SpanComparisons.EqualsIgnoreCase(main, GraphQl)
             || SpanComparisons.EqualsIgnoreCase(main, Sql);
 
-    /// <summary>媒体类型主值（去掉参数与两端空白，不做分配）。</summary>
+    /// <summary>媒体类型主值（去掉参数与两端空白）。</summary>
     private static ReadOnlySpan<char> MainValue(string? mediaType)
     {
         if (string.IsNullOrWhiteSpace(mediaType))

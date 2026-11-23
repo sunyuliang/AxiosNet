@@ -8,10 +8,7 @@ using System.Xml.Serialization;
 
 namespace AxiosNet.Serialization;
 
-/// <summary>
-/// 系统内置的 <b>XML</b> 序列化器（<see cref="System.Xml.Serialization.XmlSerializer"/>，零第三方依赖），
-/// 与默认的 <see cref="SystemTextJsonSerializer"/> 同级。
-/// </summary>
+/// <summary>系统内置的 XML 序列化器（<see cref="System.Xml.Serialization.XmlSerializer"/>，零第三方依赖），与默认的 <see cref="SystemTextJsonSerializer"/> 同级。</summary>
 /// <example>
 /// <code>
 /// AxiosContent.Default = XmlContentSerializer.Instance;                          // 进程兜底（只在按媒体类型查不到时用）
@@ -22,10 +19,7 @@ namespace AxiosNet.Serialization;
 /// var order = (await http.GetAsync&lt;Order&gt;("orders/1")).Data;
 /// </code>
 /// </example>
-/// <remarks>
-/// 目标类型必须有公开无参构造，只序列化公开可读写成员；基础类型不经过这里；
-/// <c>dynamic</c> 不支持；依赖运行时反射，不支持 Native AOT。
-/// </remarks>
+/// <remarks>目标类型必须有公开无参构造，只序列化公开可读写成员；基础类型不经过这里；<c>dynamic</c> 不支持；依赖运行时反射，不支持 Native AOT。</remarks>
 [UnconditionalSuppressMessage(
     "Trimming",
     "IL2026",
@@ -35,7 +29,7 @@ public sealed class XmlContentSerializer : IContentSerializer
     /// <summary>无状态单例，可安全并发共享（内部按类型缓存 <see cref="XmlSerializer"/>）。</summary>
     public static XmlContentSerializer Instance { get; } = new();
 
-    // 类型 → 已生成的 XmlSerializer：建一次很贵，且可重复使用。
+    // 类型 → 已生成的 XmlSerializer（按类型复用）。
     private static readonly ConcurrentDictionary<Type, XmlSerializer> Cache = new();
 
     private XmlContentSerializer()
@@ -68,7 +62,7 @@ public sealed class XmlContentSerializer : IContentSerializer
 
         var serializer = For(type);
 
-        // XML 声明里的 encoding 必须与实际写 socket 的字节编码一致，解析优先级与 RequestBodyFactory 相同。
+        // 声明的 encoding 与实际写出的字节编码保持一致，优先级同 RequestBodyFactory。
         var encoding = RequestContentType.ResolveCharset(config.ContentType, config)
             ?? config.SerializationOrNull?.TextEncoding
             ?? Encoding.UTF8;
@@ -112,11 +106,11 @@ public sealed class XmlContentSerializer : IContentSerializer
 
 #if NETSTANDARD2_0
     /// <summary>XML 走文本出口，不提供二进制序列化；返回 <c>null</c> 让库改用 <see cref="Serialize(object, Type, AxiosConfig)"/>。</summary>
-    /// <remarks>显式实现而不是依赖接口默认方法：netstandard2.0 兼容资产不支持默认接口实现。</remarks>
+    /// <remarks>netstandard2.0 兼容资产不支持默认接口实现，因此显式实现。</remarks>
     public ReadOnlyMemory<byte>? SerializeToBytes(object? value, Type type, AxiosConfig config) => null;
 
     /// <summary>字节入口按响应字符集解码后转调文本入口，与接口默认实现同一优先级。</summary>
-    /// <remarks>显式实现而不是依赖接口默认方法：netstandard2.0 兼容资产不支持默认接口实现。</remarks>
+    /// <remarks>netstandard2.0 兼容资产不支持默认接口实现，因此显式实现。</remarks>
     public object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config)
         => Deserialize(
             ResponseTextDecoder.Decode(data.Span, config.Response?.CharSet, config.SerializationOrNull?.TextEncoding),
@@ -124,7 +118,7 @@ public sealed class XmlContentSerializer : IContentSerializer
             config);
 #endif
 
-    /// <summary>AOT / 裁剪下把「序列化器不工作」提前成一条可读错误，而不是运行期随机失败。</summary>
+    /// <summary>AOT / 裁剪下提前抛出可读错误。</summary>
     private static void EnsureSupported()
     {
         if (RuntimeSupport.ForceNoDynamicCode || !RuntimeFeature.IsDynamicCodeSupported)
@@ -144,7 +138,7 @@ public sealed class XmlContentSerializer : IContentSerializer
     /// <summary>根元素使用「空前缀 + 类型声明的命名空间」。</summary>
     private static XmlSerializerNamespaces NamespacesFor(Type type)
     {
-        // 命名空间实例每次新建：XmlSerializer 序列化过程中可能往里补条目，共享一个可变实例有竞态。
+        // 每次新建：XmlSerializer 序列化时会往里补条目。
         var declared = RootNamespaces.GetOrAdd(type, static t =>
             t.GetCustomAttribute<XmlRootAttribute>(inherit: false)?.Namespace
             ?? t.GetCustomAttribute<XmlTypeAttribute>(inherit: false)?.Namespace

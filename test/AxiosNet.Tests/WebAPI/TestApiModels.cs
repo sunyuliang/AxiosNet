@@ -109,7 +109,7 @@ public sealed class AbsoluteUrlRequest : IApiRequest<Person>
     public int Port { get; set; }
 }
 
-// ---- 默认 Body（POST/PUT/PATCH：全部未标注成员按键名聚合成一个对象）----
+// 默认 Body（POST/PUT/PATCH：全部未标注成员按键名聚合成一个对象）
 
 [Post("orders")]
 public sealed class DefaultBodyRequest : IApiRequest<Person>
@@ -164,7 +164,7 @@ public sealed class DeleteDefaultStaysQueryRequest : IApiRequest<Person>
     public Person? Payload { get; set; }
 }
 
-// ---- [ApiIgnore]：把属性从绑定中完全排除 ----
+// [ApiIgnore]：把属性从绑定中完全排除
 
 [Get("profile")]
 public sealed class IgnoredQueryRequest : IApiRequest<Person>
@@ -195,7 +195,7 @@ public sealed class IgnoreWithQueryRequest : IApiRequest<Person>
     public int Page { get; set; }
 }
 
-// ---- 多特性并存：同一属性绑定到多处 ----
+// 多特性并存：同一属性绑定到多处
 
 [Get("users/{id}/scores")]
 public sealed class PathHeaderRequest : IApiRequest<Person>
@@ -259,7 +259,7 @@ public sealed record ReportPayload(long ReportId, string Title);
 /// <summary>表单编码用例的负载模型。</summary>
 public sealed record UserPayload(string Name, int Age);
 
-// ---- 边界场景补充 ----
+// 边界场景补充
 
 /// <summary>占位符与绑定名大小写不敏感匹配：[Path("UID")] ↔ 模板 {uid}。</summary>
 [Get("users/{uid}")]
@@ -378,7 +378,7 @@ public sealed class BlankPathRequest : IApiRequest<object>
 {
 }
 
-// ---- 声明式绑定的边界形态样例（原先与流式替身放在同一个文件里） ----
+// 声明式绑定的边界形态样例（原先与流式替身放在同一个文件里）
 
 [Get("items")]
 public sealed class AllNullQueryRequest : IApiRequest<Person>

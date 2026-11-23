@@ -87,7 +87,7 @@ public interface IAuthorizedAuthApi
         CancellationToken cancellationToken = default);
 }
 
-// ---- 故意写错的声明：只用于演示 ValidateInterfaces 的报错，不会被实际调用 ----
+// 故意写错的声明：只用于演示 ValidateInterfaces 的报错，不会被实际调用
 
 /// <summary>缺少路由特性。</summary>
 public interface IMissingRouteAuthApi

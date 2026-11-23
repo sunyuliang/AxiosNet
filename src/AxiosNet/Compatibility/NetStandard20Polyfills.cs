@@ -2,18 +2,13 @@
 // 兼容包里带有几个 internal 的编译器特性类型，本程序集补一份同名私有版本；
 // 按 C# 规则同程序集类型优先，这里抑制「与导入类型冲突」的 CS0436。
 #pragma warning disable CS0436
-// netstandard2.0 兼容资产的编译期补位：这里只补「编译器要认、但契约里没有」的类型，
-// 不引入任何运行时行为。它们全是 internal，只在 AxiosNet 自己的编译期可见，
-// 不会与 .NET Core 3.x / .NET 5+ 运行时自带的同名公共类型产生类型标识冲突。
-// 真正影响行为的降级（传输层、版本协商、流式 override）分散在各自的源码文件里用 NETSTANDARD2_0 分支处理。
+// netstandard2.0 兼容资产的编译期补位：只补「编译器要认、但契约里没有」的类型，不引入运行时行为。
+// 它们全是 internal，只在本程序集编译期可见。
 using System;
 
 namespace System
 {
-    /// <summary>
-    /// C# 8 范围语法需要的 <c>System.Index</c>：netstandard2.0 契约里没有，System.Memory 包也不带。
-    /// 定义成库内私有类型，编译器优先用同程序集的定义，不会与 .NET Core 3.x 运行时自带的公共类型混淆。
-    /// </summary>
+    /// <summary>C# 8 范围语法需要的 <c>System.Index</c>：netstandard2.0 契约与 System.Memory 包都没有。</summary>
     internal readonly struct Index
     {
         // 从末尾计数时把值取反存起来：0 与 ^0 必须是不同的两个值。
@@ -104,23 +99,13 @@ namespace System
 
 namespace System.Runtime.CompilerServices
 {
-    /// <summary>
-    /// C# 9 的 init 访问器要求运行时存在本类型；netstandard2.0 契约里没有它。
-    /// 只作为编译期标记，JIT 不会读取它的任何成员。
-    /// </summary>
+    /// <summary>C# 9 的 init 访问器需要的编译期标记；JIT 不读取它的成员。</summary>
     internal static class IsExternalInit
     {
     }
 
-    /// <summary>
-    /// 模块初始化器标记（WebAPI 的 FormatRegistration 用它注册格式化读取器）。
-    /// Roslyn 会把带本标记的方法编进 &lt;Module&gt;.cctor，CLR 从 .NET Framework 1.0 起就执行它。
-    /// </summary>
-    /// <remarks>
-    /// 必须保持 <c>internal</c>：一旦公开，引用本兼容资产的 net5+ 编译里
-    /// <c>System.Runtime</c> 与 AxiosNet 会各有一份同名公共类型，生成代码绑定该名字时直接 CS0433。
-    /// 消费方的生成代码由源生成器按需补一份同名 <c>internal</c> 声明（见 <c>SourceGen</c> 的模块初始化器补位）。
-    /// </remarks>
+    /// <summary>模块初始化器标记（WebAPI 的 FormatRegistration 用它注册格式化读取器）；Roslyn 会把带本标记的方法编进 &lt;Module&gt;.cctor。</summary>
+    /// <remarks>必须保持 <c>internal</c>：公开会与 <c>System.Runtime</c> 的同名公共类型冲突（CS0433）。</remarks>
     [AttributeUsage(AttributeTargets.Method, Inherited = false)]
     internal sealed class ModuleInitializerAttribute : Attribute
     {
@@ -141,14 +126,9 @@ namespace System.Runtime.CompilerServices
 
 namespace System.Diagnostics.CodeAnalysis
 {
-    /// <summary>
-    /// 裁剪 / AOT 元数据标注的成员种类位标志。
-    /// netstandard2.0 的引用程序集把这些标注做成 internal，库无法访问；这里补一份库内私有版本。
-    /// 兼容资产不跑裁剪分析器，这些标注只保留源码一致性，没有运行时语义。
-    /// </summary>
+    /// <summary>裁剪 / AOT 元数据标注的成员种类位标志；兼容资产不跑裁剪分析器，这些标注只保留源码一致性。</summary>
     /// <remarks>
-    /// 每个 <c>Public*</c> 成员等价于 BCL 的 <c>Public | Instance | DeclaredOnly | &lt;种类&gt;</c>；
-    /// <c>NonPublic*</c> 等价于对应的 <c>NonPublic | Instance | DeclaredOnly | &lt;种类&gt;</c>。
+    /// <c>Public*</c> 等价于 BCL 的 <c>Public | Instance | DeclaredOnly | &lt;种类&gt;</c>，<c>NonPublic*</c> 同理换成 <c>NonPublic</c>。
     /// </remarks>
     [Flags]
     internal enum DynamicallyAccessedMemberTypes

@@ -1,9 +1,7 @@
 namespace AxiosNet.Telemetry;
 
-/// <summary>
-/// <c>AxiosNet.RequestStart</c> 事件的载荷：请求已成型（拦截器与 transformRequest 跑完、URL 已拼好），即将进入发送阶段。
-/// <see cref="Config"/> 是本次请求独占的生效配置，事件结束后仍可安全读取。
-/// </summary>
+/// <summary><c>AxiosNet.RequestStart</c> 事件的载荷：请求已成型（拦截器与 transformRequest 跑完、URL 已拼好），即将发送。</summary>
+/// <remarks><see cref="Config"/> 是本次请求独占的生效配置，事件结束后仍可安全读取。</remarks>
 public sealed class AxiosRequestStartEvent
 {
     internal AxiosRequestStartEvent(HttpMethod method, Uri uri, AxiosConfig config)
@@ -23,10 +21,7 @@ public sealed class AxiosRequestStartEvent
     public AxiosConfig Config { get; }
 }
 
-/// <summary>
-/// <c>AxiosNet.RequestStop</c> 事件的载荷：请求成功结束（含 <see cref="AxiosConfig.ValidateStatus"/>
-/// 接受的非 2xx 状态）。
-/// </summary>
+/// <summary><c>AxiosNet.RequestStop</c> 事件的载荷：请求成功结束（含 <see cref="AxiosConfig.ValidateStatus"/> 接受的非 2xx）。</summary>
 public sealed class AxiosRequestStopEvent
 {
     internal AxiosRequestStopEvent(HttpMethod method, Uri uri, AxiosResponse response, TimeSpan elapsed)
@@ -50,9 +45,7 @@ public sealed class AxiosRequestStopEvent
     public TimeSpan Elapsed { get; }
 }
 
-/// <summary>
-/// <c>AxiosNet.RequestFailed</c> 事件的载荷：请求以异常结束。
-/// </summary>
+/// <summary><c>AxiosNet.RequestFailed</c> 事件的载荷：请求以异常结束。</summary>
 public sealed class AxiosRequestFailedEvent
 {
     internal AxiosRequestFailedEvent(
@@ -90,11 +83,11 @@ public sealed class AxiosRequestFailedEvent
     public TimeSpan Elapsed { get; }
 }
 
-/// <summary>
-/// <c>AxiosNet.AttemptStop</c> / <c>AxiosNet.AttemptFailed</c> 事件的载荷：一次尝试（单次发送）的结果。
-/// 只有链上装了 <see cref="Pipeline.Attempt.Audit"/> 时才产生，且只覆盖真正到达终端的尝试。
-/// 对冲每条分支、备用端点每个端点各一条事件；<see cref="EndpointIndex"/> 只区分端点。被胜出者取消的败者不发失败事件。
-/// </summary>
+/// <summary><c>AxiosNet.AttemptStop</c> / <c>AxiosNet.AttemptFailed</c> 事件的载荷：一次尝试（单次发送）的结果。</summary>
+/// <remarks>
+/// 仅链上装了 <see cref="Pipeline.Attempt.Audit"/> 时产生，只覆盖到达终端的尝试；对冲每条分支、备用端点每个端点各一条，
+/// <see cref="EndpointIndex"/> 只区分端点，被胜出者取消的败者不发失败事件。
+/// </remarks>
 public sealed class AxiosAttemptEvent
 {
     internal AxiosAttemptEvent(
@@ -117,14 +110,10 @@ public sealed class AxiosAttemptEvent
         Exception = exception;
     }
 
-    /// <summary>第几次尝试（从 1 开始）。换端点与对冲分支都不推进它，所以它只是尝试序号，不是事件条数。</summary>
+    /// <summary>第几次尝试（从 1 开始）；换端点与对冲分支都不推进它。</summary>
     public int AttemptNumber { get; }
 
-    /// <summary>
-    /// 第几个端点（从 <c>0</c> 开始）：<c>0</c> = 请求自己的地址，<c>n</c> = 端点表里第 n 个备用端点。
-    /// 换端点不推进 <see cref="AttemptNumber"/>，所以同一个尝试号下可能有多条事件，靠这一项区分；
-    /// 对冲分支不推进它，同一端点下的分支事件序号相同。
-    /// </summary>
+    /// <summary>第几个端点（从 <c>0</c> 开始）：<c>0</c> = 请求自己的地址，<c>n</c> = 端点表第 n 个备用端点；对冲分支序号相同。</summary>
     public int EndpointIndex { get; }
 
     /// <summary>请求方法。</summary>
@@ -133,10 +122,7 @@ public sealed class AxiosAttemptEvent
     /// <summary>本次尝试的请求地址。</summary>
     public Uri Uri { get; }
 
-    /// <summary>
-    /// 本次尝试的耗时：审计中间件装在推荐位置（闸门之后）时，从进入终端前到终端返回（流式响应只到响应头），
-    /// 不含闸门排队与退避等待，但包含取连接租约与缓冲响应读完正文的时间；装在更外层时会连它内层的耗时一起算。
-    /// </summary>
+    /// <summary>本次尝试的耗时：审计装在闸门之后时不含排队与退避等待，含取租约与缓冲响应读完正文的时间。</summary>
     public TimeSpan Elapsed { get; }
 
     /// <summary>HTTP 状态码（拿到响应时可用）；无响应时为 <c>null</c>。</summary>

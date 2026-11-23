@@ -5,16 +5,10 @@ using AxiosNet.Telemetry;
 
 namespace AxiosNet.Pooling;
 
-/// <summary>
-/// 网络连接池：按 origin（scheme://host:port）隔离复用 Handler 与 HttpClient，
-/// 控制单站点并发上限并后台驱逐长期空闲的节点；同一个池可被多个 AxiosClient 共享。
-/// </summary>
+/// <summary>网络连接池：按 origin（scheme://host:port）隔离复用 Handler 与 HttpClient，控制单站点并发上限并后台驱逐长期空闲节点；可被多个 AxiosClient 共享。</summary>
 public sealed class HttpConnectionPool : IDisposable
 {
-    /// <summary>
-    /// 进程级命名池表：key 由调用方给（不做配置指纹），生命周期到 <see cref="Release"/> 为止。
-    /// 表里的池不归任何 <see cref="AxiosClient"/> 所有——客户端释放不会关掉它。
-    /// </summary>
+    /// <summary>进程级命名池表：key 由调用方给，生命周期到 <see cref="Release"/> 为止；表里的池不归任何 <see cref="AxiosClient"/> 所有。</summary>
     private static readonly ConcurrentDictionary<string, HttpConnectionPool> SharedPools = new(StringComparer.Ordinal);
 
     private readonly ConcurrentDictionary<OriginKey, PooledEndpoint> _endpoints = new();
@@ -43,7 +37,6 @@ public sealed class HttpConnectionPool : IDisposable
     /// <summary>按选项建池（内部保存副本）；不传时用默认选项。选项非法时抛 <c>ERR_BAD_OPTION_VALUE</c>。</summary>
     public HttpConnectionPool(ConnectionPoolOptions? options = null)
     {
-        // 克隆：调用方之后修改自己持有的 options 不影响已建成的池。
         _options = (options ?? new ConnectionPoolOptions()).Clone();
         ConnectionPoolOptionsValidator.Validate(_options);
 
@@ -55,7 +48,6 @@ public sealed class HttpConnectionPool : IDisposable
 
         _defaultTransport = _options.ProjectDefaultTransport();
 
-        // Cookie 容器按「档」隔离：默认档一份，每个打开 UseCookies 的命名档各一份。
         if (_defaultTransport.UseCookies)
         {
             _cookies[DefaultProfile] = CreateCookieContainer(_options);
@@ -74,28 +66,22 @@ public sealed class HttpConnectionPool : IDisposable
             _evictionTimer = new Timer(EvictIdleEndpoints, state: null, dueTime: _options.EvictionInterval, period: _options.EvictionInterval);
         }
 
-        // 存活池数（进程级水位）：先校验后计数。
         AxiosTelemetry.Dispatch.EnterPool();
     }
 
-    // ---- 命名共享池 ----
+    // 命名共享池
 
     /// <summary>命名池表里的条目数（<see cref="GetOrCreate"/> 建出来、还没被 <see cref="Release"/> 的池）。</summary>
     public static int SharedCount => SharedPools.Count;
 
-    /// <summary>
-    /// 按 key 取进程级共享池：没有就建一条登记进去，有就直接返回同一条。
-    /// </summary>
-    /// <param name="key">池的名字（区分大小写、按原文比较）；同名的池共享 Handler 与连接。</param>
-    /// <param name="options">
-    /// 只在首次创建时生效。只想取池就传 <c>null</c>；同一 key 上再传一份**不同**的配置会抛
-    /// <c>ERR_BAD_OPTION_VALUE</c>（引用成员按同一实例判定）。
-    /// </param>
+    /// <summary>按 key 取进程级共享池：没有就建一条登记进去，有就直接返回同一条。</summary>
+    /// <param name="key">池的名字（区分大小写）；同名的池共享 Handler 与连接。</param>
+    /// <param name="options">只在首次创建时生效；同一 key 再传不同配置会抛 <c>ERR_BAD_OPTION_VALUE</c>（引用成员按同一实例判定）。</param>
     public static HttpConnectionPool GetOrCreate(string key, ConnectionPoolOptions? options = null)
     {
         ValidateSharedKey(key);
 
-        // 循环重试：登记与 Release 可能并发，落选后表里可能已没有这一项。
+        // 登记与 Release 可能并发，落选后表里可能已没有这一项。
         while (true)
         {
             if (SharedPools.TryGetValue(key, out var existing))
@@ -104,7 +90,6 @@ public sealed class HttpConnectionPool : IDisposable
                 return existing;
             }
 
-            // 先建后登记：选项合法性由构造函数统一收口（非法时抛 ERR_BAD_OPTION_VALUE）。
             var created = new HttpConnectionPool(options);
 
             if (SharedPools.TryAdd(key, created))
@@ -112,15 +97,11 @@ public sealed class HttpConnectionPool : IDisposable
                 return created;
             }
 
-            // 竞态落选：释放自己这条，再重走一遍复核配置。
             created.Dispose();
         }
     }
 
-    /// <summary>
-    /// 按 key 取已登记的池；没有则 <c>false</c>（不创建）。key 为 <c>null</c> 或空白同样返回 <c>false</c>——
-    /// Try 语义不抛，与 <see cref="GetOrCreate"/> / <see cref="Release"/> 的严格校验区分开。
-    /// </summary>
+    /// <summary>按 key 取已登记的池；没有（或 key 为 <c>null</c> / 空白）则返回 <c>false</c>，不创建也不抛。</summary>
     public static bool TryGet(string key, [NotNullWhen(true)] out HttpConnectionPool? pool)
     {
         if (string.IsNullOrWhiteSpace(key))
@@ -132,11 +113,7 @@ public sealed class HttpConnectionPool : IDisposable
         return SharedPools.TryGetValue(key, out pool);
     }
 
-    /// <summary>
-    /// 摘除命名池并优雅释放它（空闲节点立即释放，在途请求的节点等租约归还）；返回是否命中。
-    /// 摘除后仍在用这条池的客户端发请求会拿到 <c>ERR_CANCELED</c>，只有直接调 <see cref="Lease(Uri)"/>
-    /// 才会看到裸的 <see cref="ObjectDisposedException"/>。
-    /// </summary>
+    /// <summary>摘除命名池并优雅释放它（空闲节点立即释放，在途请求的节点等租约归还）；返回是否命中。摘除后在用这条池的客户端会拿到 <c>ERR_CANCELED</c>。</summary>
     public static bool Release(string key)
     {
         ValidateSharedKey(key);
@@ -150,7 +127,7 @@ public sealed class HttpConnectionPool : IDisposable
         return true;
     }
 
-    // 共享池名必须非空且稳定：写错名字会让两处客户端意外共用同一个池。
+    // 共享池名必须非空。
     private static void ValidateSharedKey(string key)
     {
         if (key is null)
@@ -255,22 +232,11 @@ public sealed class HttpConnectionPool : IDisposable
     /// <summary>池实际生效的选项（副本；修改它不会影响池）。</summary>
     public ConnectionPoolOptions Options => _options.Clone();
 
-    /// <summary>
-    /// 默认档当前使用的 Cookie 容器：默认档打开 <see cref="ConnectionTransportOptions.UseCookies"/> 时非空，否则为 <c>null</c>。
-    /// </summary>
-    /// <remarks>
-    /// 每个传输档各有一份容器（按域 / 路径隔离，不按业务身份隔离），线程安全，可在请求进行中读写。
-    /// 命名档的容器用 <see cref="GetCookies(string)"/> 取。
-    /// 典型用途：启动时预置 cookie、排查某个 cookie 为什么没发出去；登出请用 <see cref="ClearCookies()"/>
-    /// （容器没有删除 API，只能整体替换，替换后这里读到的引用会变）。
-    /// 开启容器后请求上的 <c>Cookie</c> 头与容器内容<em>合并</em>发送而不是覆盖；
-    /// <see cref="Clear"/> 与 <see cref="Dispose"/> 都不会清空容器。
-    /// </remarks>
+    /// <summary>默认档当前使用的 Cookie 容器：默认档打开 <see cref="ConnectionTransportOptions.UseCookies"/> 时非空，否则为 <c>null</c>。</summary>
+    /// <remarks>每个传输档各有一份容器（按域 / 路径隔离），线程安全；请求上的 <c>Cookie</c> 头与容器内容合并发送。</remarks>
     public CookieContainer? Cookies => GetCookies(DefaultProfile);
 
-    /// <summary>
-    /// 取某个传输档的 Cookie 容器：未打开 <c>UseCookies</c> 或档名未登记时返回 <c>null</c>。
-    /// </summary>
+    /// <summary>取某个传输档的 Cookie 容器：未打开 <c>UseCookies</c> 或档名未登记时返回 <c>null</c>。</summary>
     /// <param name="transport">传输档名；<c>null</c> / 空串表示默认档。</param>
     public CookieContainer? GetCookies(string? transport)
     {
@@ -278,14 +244,9 @@ public sealed class HttpConnectionPool : IDisposable
         return _cookies.TryGetValue(profile, out var container) ? container : null;
     }
 
-    /// <summary>
-    /// 清空<b>所有档</b>的 Cookie（登出）：换新的空容器并优雅回收现有 origin 节点，后续请求用新容器重建连接。
-    /// </summary>
+    /// <summary>清空<b>所有档</b>的 Cookie（登出）：换新的空容器并优雅回收现有 origin 节点。</summary>
     /// <remarks>
-    /// 只对打开 <see cref="ConnectionTransportOptions.UseCookies"/> 的档有效，一个都没开时无操作。
-    /// <see cref="CookieContainer"/> 没有删除 API，所以实现上是整体换容器 + 回收节点（自定义 Handler 也会按新容器重新创建）。
-    /// 不打断在途请求——它们可能仍带着旧 cookie 完成，节点在最后一条租约归还后销毁；
-    /// 之前从 <see cref="Cookies"/> / <see cref="GetCookies"/> 拿到的引用随之失效，请重新读取。
+    /// 只对打开 <see cref="ConnectionTransportOptions.UseCookies"/> 的档有效。不打断在途请求；之前拿到的容器引用随之失效。
     /// </remarks>
     public void ClearCookies()
     {
@@ -294,7 +255,7 @@ public sealed class HttpConnectionPool : IDisposable
             return;
         }
 
-        // 与节点的「发布到字典」互斥：保证不会出现用旧容器创建、却在换容器之后才发布的节点。
+        // 与节点的「发布到字典」互斥。
         lock (_cookieSync)
         {
             if (_cookies.IsEmpty)
@@ -304,7 +265,6 @@ public sealed class HttpConnectionPool : IDisposable
 
             foreach (var profile in _cookies.Keys)
             {
-                // 只替换仍然开着的档：ClearCookies 期间不会新增档（档表构造期定型）。
                 _cookies[profile] = CreateCookieContainer(_options);
             }
         }
@@ -316,7 +276,6 @@ public sealed class HttpConnectionPool : IDisposable
     private static CookieContainer CreateCookieContainer(ConnectionPoolOptions options)
         => new()
         {
-            // 先设总容量：单域上限必须不大于它（校验已在构造期保证）。
             Capacity = options.CookieCapacity,
             PerDomainCapacity = options.CookiePerDomainCapacity,
             MaxCookieSize = options.CookieMaxCookieSize
@@ -328,17 +287,10 @@ public sealed class HttpConnectionPool : IDisposable
     /// <summary>从池中租用指定 URI 所属 origin 的连接节点。</summary>
     public PoolLease Lease(Uri requestUri) => Lease(requestUri, config: null);
 
-    /// <summary>
-    /// 预建 <paramref name="requestUri"/> 所属 origin 的池节点（Handler 与 HttpClient），<b>不建立任何 TCP 连接</b>：
-    /// 建连仍然发生在第一条真正的请求上。
-    /// </summary>
+    /// <summary>预建 <paramref name="requestUri"/> 所属 origin 的池节点（Handler 与 HttpClient），<b>不建立 TCP 连接</b>。</summary>
     /// <param name="requestUri">绝对 URI；只用它的 scheme / host / port 决定 origin。</param>
-    /// <param name="transport">传输档名；<c>null</c> / 空串表示默认档，指定了未登记的档名抛 <c>ERR_BAD_OPTION_VALUE</c>。</param>
-    /// <remarks>
-    /// 给「首条请求要快」的场景用：Handler 构造与首个节点的发布是固定成本，提前摊掉它，请求就只剩建连与往返。
-    /// 幂等，可重复调用（节点已在时只是一次哈希查找）；节点同样受 <see cref="ConnectionPoolOptions.MaxEndpointCount"/>
-    /// 与空闲驱逐约束，池释放后调用抛 <see cref="ObjectDisposedException"/>。
-    /// </remarks>
+    /// <param name="transport">传输档名；<c>null</c> / 空串表示默认档，未登记的档名抛 <c>ERR_BAD_OPTION_VALUE</c>。</param>
+    /// <remarks>幂等，可重复调用；节点同样受 <see cref="ConnectionPoolOptions.MaxEndpointCount"/> 与空闲驱逐约束。池释放后抛 <see cref="ObjectDisposedException"/>。</remarks>
     public void Prewarm(Uri requestUri, string? transport = null)
     {
         if (Volatile.Read(ref _disposed) == 1)
@@ -394,7 +346,6 @@ public sealed class HttpConnectionPool : IDisposable
 
                 Interlocked.Increment(ref _totalLeases);
 
-                // 只有成功拿到租约才计入指标。
                 AxiosTelemetry.Dispatch.RecordLease(reused: !createdNode);
                 return new PoolLease(this, endpoint, endpointReused: !createdNode);
             }
@@ -404,10 +355,7 @@ public sealed class HttpConnectionPool : IDisposable
         }
     }
 
-    /// <summary>
-    /// 取 origin 对应的节点，没有就建一个（租约与预热共用这一条创建路径）：
-    /// 建节点不建连，Handler 的构造放在锁外。
-    /// </summary>
+    /// <summary>取 origin 对应的节点，没有就建一个（租约与预热共用）：建节点不建连。</summary>
     /// <param name="origin">节点 key。</param>
     /// <param name="profile">已解析的传输档名。</param>
     /// <param name="config">请求配置（池级错误指回调用方用）；预建节点时为 <c>null</c>。</param>
@@ -416,7 +364,6 @@ public sealed class HttpConnectionPool : IDisposable
     {
         created = false;
 
-        // 稳态只做一次哈希查找。
         if (_endpoints.TryGetValue(origin, out var existing))
         {
             return existing;
@@ -426,12 +373,11 @@ public sealed class HttpConnectionPool : IDisposable
 
         var transport = profile.Length == 0 ? _defaultTransport : _transports[profile];
 
-        // 只有 GetOrAdd 胜出才算新建：驱动 EndpointReused 标签与新建指标，别改成「找不到就算新建」。
         while (true)
         {
             var cookies = GetCookies(profile);
 
-            // 创建 Handler 可能较慢（自定义工厂），放在锁外；发布前在锁内复核容器没被 ClearCookies 换掉。
+            // 建 Handler 可能较慢，放在锁外；发布前在锁内复核容器没被换掉。
             var candidate = new PooledEndpoint(this, origin, _options, transport, cookies);
             PooledEndpoint published;
 
@@ -439,12 +385,10 @@ public sealed class HttpConnectionPool : IDisposable
             {
                 if (!ReferenceEquals(cookies, GetCookies(profile)))
                 {
-                    // 用旧容器创建的节点作废（尚未发布、没有租约），按新容器重建。
                     candidate.Dispose();
                     continue;
                 }
 
-                // 竞态下 GetOrAdd 只创建一次，落选的新建节点直接释放。
                 published = _endpoints.GetOrAdd(origin, candidate);
             }
 
@@ -456,7 +400,6 @@ public sealed class HttpConnectionPool : IDisposable
 
             created = true;
 
-            // 节点创建事件：此刻没有持锁，可同步回调。
             AxiosTelemetry.Dispatch.RecordEndpointCreated();
             return published;
         }
@@ -492,7 +435,7 @@ public sealed class HttpConnectionPool : IDisposable
     /// <returns>本次驱逐的节点数。</returns>
     public int EvictIdleEndpoints() => EvictIdle(_options.IdleHandlerLifetime, int.MaxValue, AxiosTelemetry.EvictionReasonManual);
 
-    /// <summary>新建节点前的容量检查：达到上限时先驱逐最久未使用的空闲节点，全部在途才拒绝（抛 <see cref="AxiosException.ErrPoolExhausted"/>，可观测、默认不自动重发）。</summary>
+    /// <summary>新建节点前的容量检查：达到上限时先驱逐最久未用的空闲节点，全在途则抛 <see cref="AxiosException.ErrPoolExhausted"/>（默认不自动重发）。</summary>
     private void EnsureCapacity(OriginKey origin, AxiosConfig? config)
     {
         var max = _options.MaxEndpointCount;
@@ -506,7 +449,7 @@ public sealed class HttpConnectionPool : IDisposable
             return;
         }
 
-        // 运行期资源饱和按「资源错误」报：可观测、默认不自动重发、文案引导退避。
+        // 运行期资源饱和按「资源错误」报。
         throw AxiosException.PoolExhausted(config, request: null, max);
     }
 
@@ -521,13 +464,12 @@ public sealed class HttpConnectionPool : IDisposable
 
         var evicted = 0;
 
-        // 单调时钟：墙钟回拨时 now - LastUsed 会变成负数，连 minIdle = 0 的容量驱逐都会失效。
+        // 单调时钟。
         var now = Stopwatch.GetTimestamp();
         List<PooledEndpoint>? pending = null;
 
         if (limit == int.MaxValue)
         {
-            // 全量清扫：可驱逐性以锁内复核为准，顺序无关。
             foreach (var pair in _endpoints)
             {
                 TryEvictIdle(pair.Key, pair.Value, minIdle, now, ref pending, ref evicted);
@@ -535,7 +477,6 @@ public sealed class HttpConnectionPool : IDisposable
         }
         else
         {
-            // 限额驱逐：每轮挑「最久未使用且此刻可驱逐」的一个，轮数按「条数 + 限额」封顶。
             var maxRounds = _endpoints.Count + limit;
             for (var round = 0; round < maxRounds && evicted < limit; round++)
             {
@@ -568,14 +509,14 @@ public sealed class HttpConnectionPool : IDisposable
             }
         }
 
-        // 关闭 Handler 会断开该 origin 的全部连接、可能耗时，必须放在锁外。
+        // 关闭 Handler 会断开连接、可能耗时，放在锁外。
         if (pending is not null)
         {
             foreach (var endpoint in pending)
             {
                 endpoint.ReleaseResources();
 
-                // 先释放再上报：回调抛异常不能让节点漏掉 Handler。
+                // 先释放再上报，回调异常不会漏掉 Handler。
                 AxiosTelemetry.Dispatch.RecordEndpointEvicted(reason);
             }
         }
@@ -612,7 +553,7 @@ public sealed class HttpConnectionPool : IDisposable
                 return;
             }
 
-            // 先摘字典再置标记，两步都成功才收集起来、锁外统一释放。
+            // 先摘字典再置标记，锁外统一释放。
             if (_endpoints.TryRemove(new KeyValuePair<OriginKey, PooledEndpoint>(key, endpoint))
                 && endpoint.MarkDisposed())
             {
@@ -622,7 +563,7 @@ public sealed class HttpConnectionPool : IDisposable
         }
     }
 
-    // 定时清理：把空闲超时的端点摘掉并释放，避免长期占着连接。
+    // 定时清理：摘掉空闲超时的端点并释放。
     private void EvictIdleEndpoints(object? state)
     {
         if (Volatile.Read(ref _disposed) == 1)
@@ -632,18 +573,16 @@ public sealed class HttpConnectionPool : IDisposable
 
         try
         {
-            // 后台定时清扫（指标标签与手动驱逐不同）。
+            // 后台定时清扫（与手动驱逐指标标签不同）。
             EvictIdle(_options.IdleHandlerLifetime, int.MaxValue, AxiosTelemetry.EvictionReasonIdle);
         }
         catch
         {
-            // 后台清理不应抛出未观察异常
+            // 后台清理不应抛出未观察异常。
         }
     }
 
-    /// <summary>
-    /// 摘除全部 origin 节点：空闲的立即释放，仍有租约的等最后一条租约归还时自行销毁（不打断在途）。
-    /// </summary>
+    /// <summary>摘除全部 origin 节点：空闲的立即释放，仍有租约的等最后一条租约归还时销毁（不打断在途）。</summary>
     private void RetireAllEndpoints(string reason)
     {
         foreach (var pair in _endpoints)
@@ -668,7 +607,7 @@ public sealed class HttpConnectionPool : IDisposable
                 }
             }
 
-            // 关闭 Handler 会断开该 origin 的全部连接、可能耗时，必须放在锁外。
+            // 关闭 Handler 会断开连接、可能耗时，放在锁外。
             if (releaseNow)
             {
                 endpoint.ReleaseResources();
@@ -705,7 +644,7 @@ public sealed class HttpConnectionPool : IDisposable
             })
             .ToArray();
 
-        // EndpointCount 与 Endpoints 必须来自同一次快照。
+        // EndpointCount 与 Endpoints 来自同一次快照。
         return new ConnectionPoolStatistics(endpoints.Length, Interlocked.Read(ref _totalLeases), endpoints);
     }
 
@@ -715,10 +654,7 @@ public sealed class HttpConnectionPool : IDisposable
     private static OriginKey BuildOrigin(Uri uri, string profile)
         => new(uri.Scheme, uri.HostNameType == UriHostNameType.IPv6 ? uri.Host : uri.IdnHost, uri.Port, profile);
 
-    /// <summary>
-    /// 解析本次请求要用的传输档：未指定 = 默认档；指定了但池上没有登记 → <c>ERR_BAD_OPTION_VALUE</c>
-    /// （静默回落默认档会把「以为走了专线」变成安全事故）。
-    /// </summary>
+    /// <summary>解析本次请求要用的传输档：未指定 = 默认档；未登记 → <c>ERR_BAD_OPTION_VALUE</c>（不静默回落）。</summary>
     private string ResolveProfile(AxiosConfig? config) => ResolveProfile(config?.ProfileOrNull, config);
 
     /// <summary>按档名解析传输档（<c>null</c> / 空串 = 默认档，未登记 → <c>ERR_BAD_OPTION_VALUE</c>）：请求与预建节点共用。</summary>
@@ -749,7 +685,6 @@ public sealed class HttpConnectionPool : IDisposable
             return;
         }
 
-        // 与存活池数成对：Dispose 幂等，不会重复减。
         AxiosTelemetry.Dispatch.ExitPool();
 
         _evictionTimer?.Dispose();
@@ -760,7 +695,7 @@ public sealed class HttpConnectionPool : IDisposable
             var endpoint = pair.Value;
             lock (endpoint.SyncRoot)
             {
-                // 锁内只做判定与摘除，释放放到锁外（与 EvictIdle 同一不变式）。
+                // 锁内只做判定与摘除，释放放到锁外。
                 if (endpoint.ActiveLeases == 0
                     && _endpoints.TryRemove(pair)
                     && endpoint.MarkDisposed())
@@ -808,7 +743,7 @@ internal readonly struct OriginKey : IEquatable<OriginKey>
     /// <summary>默认档的 origin 文本（<c>scheme://host:port</c>），可直接拼成 Uri。</summary>
     public string BaseAddress => $"{Scheme}://{Host}:{Port}";
 
-    // 按 (scheme, host, port, 档名) 判等：这正是「能不能复用连接」的粒度。
+    // 按 (scheme, host, port, 档名) 判等，即「能不能复用连接」的粒度。
     public bool Equals(OriginKey other)
         => Port == other.Port
             && string.Equals(Scheme, other.Scheme, StringComparison.Ordinal)
@@ -818,7 +753,7 @@ internal readonly struct OriginKey : IEquatable<OriginKey>
     // 装箱入口转强类型比较：字典查键会走这条。
     public override bool Equals(object? obj) => obj is OriginKey other && Equals(other);
 
-    // 与 Equals 同一组字段，保证相等的键落在同一个桶里。
+    // 与 Equals 同一组字段。
     public override int GetHashCode() => HashCode.Combine(Scheme, Host, Port, Profile);
 
     /// <summary>默认档输出 <c>scheme://host:port</c>；命名档追加 <c>#档名</c>（统计与诊断用）。</summary>

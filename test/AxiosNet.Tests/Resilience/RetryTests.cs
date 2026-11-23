@@ -13,9 +13,7 @@ namespace AxiosNet.Tests.Resilience;
 /// </summary>
 public sealed class RetryTests
 {
-    // ------------------------------------------------------------------
-    // 默认行为：不重试
-    // ------------------------------------------------------------------
+// 默认行为：不重试
 
     [Fact]
     public async Task Default_DoesNotRetry_OnServerError()
@@ -46,9 +44,7 @@ public sealed class RetryTests
         Assert.Single(server.Received);
     }
 
-    // ------------------------------------------------------------------
-    // 内置策略
-    // ------------------------------------------------------------------
+// 内置策略
 
     [Fact]
     public async Task ServerError_IsRetriedUntilSuccess()
@@ -234,9 +230,7 @@ public sealed class RetryTests
         Assert.Single(server.Received);
     }
 
-    // ------------------------------------------------------------------
-    // 间隔 / 退避 / Retry-After
-    // ------------------------------------------------------------------
+// 间隔 / 退避 / Retry-After
 
     [Fact]
     public async Task Delay_IsAppliedBetweenAttempts()
@@ -262,9 +256,7 @@ public sealed class RetryTests
     }
 
 
-    // ------------------------------------------------------------------
-    // 请求体重放
-    // ------------------------------------------------------------------
+// 请求体重放
 
     [Fact]
     public async Task RequestBody_IsResentOnRetry()
@@ -366,9 +358,7 @@ public sealed class RetryTests
         Assert.Single(server.Received);
     }
 
-    // ------------------------------------------------------------------
-    // 回调 / 自定义策略 / 作用域
-    // ------------------------------------------------------------------
+// 回调 / 自定义策略 / 作用域
 
     [Fact]
     public async Task OnRetry_ReportsAttemptsDelaysAndResponse()
@@ -572,9 +562,7 @@ public sealed class RetryTests
         Assert.Empty(server.Received);
     }
 
-    // ------------------------------------------------------------------
-    // 策略行为（幂等判定 / 附加条件）
-    // ------------------------------------------------------------------
+// 策略行为（幂等判定 / 附加条件）
 
     [Fact]
     public async Task Put_IsRetriedByDefault()
@@ -621,9 +609,7 @@ public sealed class RetryTests
     /// <summary>测试用的「零等待」策略：只验证重试语义，不让用例真的等。</summary>
     private static RetryPolicy Immediate(int maxRetries) => new(maxRetries, TimeSpan.Zero);
 
-    // ------------------------------------------------------------------
-    // 辅助
-    // ------------------------------------------------------------------
+// 辅助
 
     /// <summary>只在第 1、2 次失败后重试的自定义策略（验证接口本身可插拔）。</summary>
     private sealed class OnlyOddAttemptsPolicy : IAxiosRetryPolicy

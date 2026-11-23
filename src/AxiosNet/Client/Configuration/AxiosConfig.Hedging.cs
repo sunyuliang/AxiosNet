@@ -2,12 +2,11 @@ namespace AxiosNet;
 
 public sealed partial class AxiosConfig
 {
-    /// <summary>
-    /// 并发对冲（<see cref="AxiosConfig.ResilienceSettings.Hedging"/>）：首次发送之后，按 <see cref="Delay"/> 的间隔再放出一条（或几条）同样的请求，
-    /// <b>第一个成功结果胜出</b>，其余分支取消并收尾；<b>所有分支都失败</b>时把失败交给重试。
-    /// <see cref="MaxHedges"/> 为 <c>0</c>（默认）时不对冲。
-    /// </summary>
-    /// <remarks>流式响应、非幂等方法（未显式允许时）、正文不能并发重放、响应侧带共享状态的请求一律按单次发送处理。</remarks>
+    /// <summary>并发对冲（<see cref="AxiosConfig.ResilienceSettings.Hedging"/>）：按 <see cref="Delay"/> 的间隔追加同样的请求，第一个成功结果胜出，其余分支取消。</summary>
+    /// <remarks>
+    /// <see cref="MaxHedges"/> 为 <c>0</c>（默认）时不对冲；所有分支都失败时把失败交给重试。流式响应、未显式允许的非幂等方法、
+    /// 正文不能并发重放、响应侧带共享状态的请求一律按单次发送处理。
+    /// </remarks>
     public sealed class HedgingSettings
     {
         /// <summary>对冲分支数的上限。</summary>
@@ -15,10 +14,7 @@ public sealed partial class AxiosConfig
 
         private int _maxHedges;
 
-        /// <summary>
-        /// 额外的并发分支数，<c>0</c>（默认）表示不对冲；每条分支各占一个并发槽位，
-        /// <see cref="AxiosClientOptions.MaxInFlight"/> 要按 <c>1 + MaxHedges</c> 倍预留。
-        /// </summary>
+        /// <summary>额外的并发分支数，<c>0</c>（默认）表示不对冲；每条分支占一个槽位，<see cref="AxiosClientOptions.MaxInFlight"/> 需按 <c>1 + MaxHedges</c> 倍预留。</summary>
         public int MaxHedges
         {
             get => _maxHedges;
@@ -34,10 +30,7 @@ public sealed partial class AxiosConfig
 
         private TimeSpan _delay = TimeSpan.FromMilliseconds(80);
 
-        /// <summary>
-        /// 第 n 条对冲分支的起跑延迟 = <c>n × Delay</c>（第 0 条立发），默认 80ms。
-        /// <c>TimeSpan.Zero</c> 表示所有分支同时起跑（同一时刻并发）。
-        /// </summary>
+        /// <summary>第 n 条对冲分支的起跑延迟 = <c>n × Delay</c>（第 0 条立发），默认 80ms；<c>TimeSpan.Zero</c> 表示所有分支同时起跑。</summary>
         public TimeSpan Delay
         {
             get => _delay;

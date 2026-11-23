@@ -35,11 +35,10 @@ internal static class OutputWriter
         // 上次清单记录的文件；读不到或损坏时返回空表并追加警告；Invalid 表示清单存在但无法解析。
         var (previous, manifestInvalid) = ReadManifest(directory, warnings);
 
-        // 没加 --force 时旧文件删不掉，但必须继续留在清单里：否则下次清单重写后它就彻底失联。
+        // 没加 --force 时旧文件删不掉，但仍留在清单里。
         var stale = new List<string>();
 
-        // --force 待删除的旧生成文件：延后到本次写盘成功之后才真正删除，
-        // 否则生成中途失败（例如覆盖保护抛错）会留下「旧文件已删、新文件未写」的半成品目录。
+        // --force 待删除的旧生成文件：延后到本次写盘成功之后才删除。
         var deletions = new List<string>();
         foreach (var name in previous)
         {
@@ -122,7 +121,7 @@ internal static class OutputWriter
                 "上次生成的文件本次不再生成；加 --force 可删除。"));
         }
 
-        // 只写入内容有变化的文件，避免无意义地刷新时间戳。
+        // 只写入内容有变化的文件。
         var written = 0;
         foreach (var file in output)
         {
@@ -136,7 +135,7 @@ internal static class OutputWriter
             written++;
         }
 
-        // 写盘成功后才删除失联文件，避免半途失败时旧产物已经丢了。
+        // 写盘成功后才删除失联文件。
         foreach (var name in deletions)
         {
             File.Delete(Path.Combine(directory, name));
@@ -200,7 +199,7 @@ internal static class OutputWriter
 
         try
         {
-            // 清单按 UTF-8 原始字节读取（存 BOM 时手工剥掉），避免 StreamReader 的 BOM 处理掩盖内容差异。
+            // 清单按 UTF-8 原始字节读取（存 BOM 时手工剥掉）。
             var content = ReadUtf8(path);
             if (content.Length > 0 && content[0] == '\uFEFF')
             {
@@ -209,13 +208,11 @@ internal static class OutputWriter
 
             using var document = JsonDocument.Parse(content);
 
-            // 只接受合法的相对文件名，防止清单被篡改成路径穿越；同名重复项直接忽略，
-            // 否则 stale / --check 报告与重写后的清单都会出现重复条目。
+            // 只接受合法的相对文件名；同名重复项直接忽略。
             var result = new List<string>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
 
-            // 合法 JSON 但缺少 files 数组说明这份清单不是本工具写的：按损坏处理，
-            // 否则会把已经生成的旧文件全部当成失联，反而破坏覆盖保护。
+            // 合法 JSON 但缺少 files 数组：按损坏处理。
             if (!document.RootElement.TryGetProperty("files", out var files)
                 || files.ValueKind != JsonValueKind.Array)
             {
@@ -237,7 +234,7 @@ internal static class OutputWriter
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
-            // 清单损坏或读不出来时不能按首次生成处理：否则下次写清单会覆盖保护失败，用户被迫加 --force。
+            // 清单损坏或读不出来时不能按首次生成处理。
             warnings.Add(new ApiWarning("MANIFEST_INVALID", ManifestName, $"无法读取上次生成的清单：{ex.Message}"));
             return (new List<string>(), true);
         }
@@ -263,10 +260,7 @@ internal static class OutputWriter
                && content.Contains(ToolMarker, StringComparison.Ordinal);
     }
 
-    /// <summary>
-    /// 清单是 JSON，写不进注释标记；用固定文件名 + 固定的 generator 字段识别为本工具所有，
-    /// 否则文件集合变化时清单永远无法按正常流程更新。清单上次读取失败（损坏）时同样视为可覆盖。
-    /// </summary>
+    /// <summary>清单是 JSON：用固定文件名 + 固定的 generator 字段识别为本工具所有；上次读取失败（损坏）时视为可覆盖。</summary>
     private static bool IsOwnedFile(string name, string content, bool manifestInvalid)
     {
         if (HasMarker(content))

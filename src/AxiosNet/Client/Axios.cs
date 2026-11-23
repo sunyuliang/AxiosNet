@@ -11,9 +11,9 @@ namespace AxiosNet;
 /// </summary>
 public static class Axios
 {
-    // 默认实例的懒创建锁：只在首次创建与 Dispose 后重建时进入。
+    // 默认实例的懒创建锁。
     private static readonly object DefaultClientLock = new();
-    // 进程级默认实例；Dispose 后置回 null，下次访问重建。
+    // 进程级默认实例；Dispose 后置回 null。
     private static AxiosClient? _defaultClient;
 
     /// <summary>全局默认实例（对应 axios.defaults / axios.interceptors 所在实例）。</summary>
@@ -38,9 +38,8 @@ public static class Axios
     /// 重置全局默认实例：释放当前实例，下次访问 <see cref="DefaultClient"/> 时按全新配置重建。
     /// </summary>
     /// <remarks>
-    /// 在途请求不受影响（<see cref="AxiosClient.Dispose"/> 不打断它们，资源等最后一个请求结束再释放）；
-    /// 重置后新请求走新实例，旧的 <see cref="AxiosConfig"/> / <see cref="AxiosInterceptors"/> 一并丢弃。
-    /// 典型场景：测试之间隔离全局状态，或默认实例被误释放后恢复（释放过的实例对所有请求恒抛 <c>ERR_CANCELED</c>）。
+    /// 在途请求不受影响，资源等最后一个请求结束再释放；重置后新请求走新实例。
+    /// 释放过的实例对所有请求恒抛 <c>ERR_CANCELED</c>。
     /// </remarks>
     public static void Reset()
     {
@@ -58,10 +57,7 @@ public static class Axios
     /// 预热全局默认实例：静态首用与 <see cref="AxiosConfig.BaseAddress"/> 所属 origin 的池节点提前建好，
     /// 不建立任何 TCP 连接。对应 <see cref="AxiosClient.Warmup"/>，返回本次是否真的做了预热。
     /// </summary>
-    /// <remarks>
-    /// 进程启动后、第一条请求之前调用一次即可。预热标记记在默认实例上：重复调用直接返回 <c>false</c>；
-    /// <see cref="Reset"/> 换掉默认实例后标记随之重置，需要重新预热。
-    /// </remarks>
+    /// <remarks>预热标记记在默认实例上：重复调用返回 <c>false</c>，<see cref="Reset"/> 后需重新预热。</remarks>
     public static bool Warmup() => DefaultClient.Warmup();
 
     /// <summary>对应 axios.defaults。</summary>
@@ -71,9 +67,8 @@ public static class Axios
     public static AxiosInterceptors Interceptors => DefaultClient.Interceptors;
 
     /// <summary>
-    /// 对应 axios.create(config)。注入 <paramref name="handler"/> 时不使用连接池。
-    /// <paramref name="pool"/> 与 <paramref name="poolOptions"/> / <paramref name="handler"/> 互斥（同时传入抛 <c>ERR_BAD_OPTION_VALUE</c>）。
-    /// <paramref name="options"/> 是实例级选项（代理 / 凭据 / Cookie / 重定向 / 并发容量），构造期固化。
+    /// 对应 axios.create(config)。注入 <paramref name="handler"/> 时不使用连接池，它与
+    /// <paramref name="pool"/> / <paramref name="poolOptions"/> 互斥（同时传入抛 <c>ERR_BAD_OPTION_VALUE</c>）。
     /// <paramref name="pipeline"/> 为 <c>null</c> 时用 <see cref="AxiosAttemptPipeline.Default"/>。
     /// </summary>
     public static AxiosClient Create(
@@ -243,7 +238,6 @@ public static class Axios
     public static Task<AxiosResponse<T>> PatchAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.PatchAsync<T>(url, data, configure, cancellationToken);
 
-    // 对应 axios postForm / putForm / patchForm：默认 multipart/form-data
     /// <summary>对应 axios.postForm（multipart/form-data），返回非泛型响应。</summary>
     public static Task<AxiosResponse> PostFormAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.PostFormAsync(url, data, configure, cancellationToken);
@@ -268,7 +262,7 @@ public static class Axios
     public static Task<AxiosResponse<T>> PatchFormAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.PatchFormAsync<T>(url, data, configure, cancellationToken);
 
-    // 令牌直接作第二个参数的重载：与实例方法一致。
+    // 令牌直接作第二个参数的重载。
     /// <summary>对应 axios.get 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public static Task<AxiosResponse> GetAsync(string url, CancellationToken cancellationToken)
         => DefaultClient.GetAsync(url, cancellationToken);

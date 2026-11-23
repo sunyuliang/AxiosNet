@@ -5,41 +5,29 @@ using AxiosNet.WebAPI.Attributes;
 
 namespace AxiosNet.WebAPI;
 
-/// <summary>声明式 API 客户端：请求模型描述「怎么访问」，授权描述「凭什么访问」。本类是 <see cref="AxiosClient"/> 的薄门面，请求模型绑定成 AxiosConfig 后走完整管线；深度定制直接取 <see cref="Axios"/>。</summary>
+/// <summary>声明式 API 客户端：请求模型描述「怎么访问」，授权描述「凭什么访问」；本类是 <see cref="AxiosClient"/> 的薄门面。</summary>
 public sealed partial class ApiClient : IDisposable, IAsyncDisposable
 {
     private readonly bool _ownsAxiosClient;
 
-    // 按值复用不可变的凭据映射对象：提供方仍每请求调用一次，只有「形态 + 值 + scheme」完全不变时才复用。
     private readonly ApiCredentialCache _credentialCache = new();
 
     /// <summary>底层 AxiosNet 客户端（实例默认值、拦截器、连接池都从它进入）。</summary>
     public AxiosClient Axios { get; }
 
-    /// <summary>
-    /// 凭据提供方：每次请求发送前调用一次，返回的凭据描述决定落头，<c>null</c> 表示匿名访问。
-    /// 挂在内核中性的凭据来源位上（不占 <see cref="AxiosConfig.TransportSettings.Auth"/> 槽位）；与显式 <c>Authorization</c> 头
-    /// 或 <c>Transport.Auth</c> 同时存在时报配置冲突。声明 <see cref="AllowAnonymousAttribute"/> 会清空本次的凭据来源。
-    /// </summary>
+    /// <summary>凭据提供方：每次请求发送前调用一次，<c>null</c> 表示匿名访问；与显式 <c>Authorization</c> 头或 <c>Transport.Auth</c> 同时设置时报配置冲突。</summary>
     public IApiCredentialProvider? CredentialProvider { get; set; }
 
-    /// <summary>
-    /// 收到 401 时用新凭据重放一次，默认开启（仅当提供方返回托管凭据时生效）。
-    /// 缓冲的 <c>HttpContent</c> 在 401 后才做正文快照（受 <c>Limits.MaxRequestBytes</c> 约束）；流与 multipart 不重放；
-    /// 非幂等方法需打开 <c>Resilience.AllowUnsafeRetry</c>。
-    /// </summary>
+    /// <summary>收到 401 时用新凭据重放一次，默认 <c>true</c>（仅托管凭据生效）；流与 multipart 不重放，非幂等方法需打开 <c>Resilience.AllowUnsafeRetry</c>。</summary>
     public bool RetryOnUnauthorized { get; set; } = true;
 
-    /// <summary>HTTP 状态码错误的异常工厂：非 null 时，状态码不合法的请求先交给它构造异常；返回 <c>null</c> 表示仍抛原始 <see cref="AxiosException"/>。内置实现见 <see cref="ApiErrorFactory{TError}"/>。</summary>
+    /// <summary>HTTP 状态码错误的异常工厂：非 <c>null</c> 时状态码不合法的请求先交给它构造异常；返回 <c>null</c> 表示仍抛原始 <see cref="AxiosException"/>。</summary>
     public IApiErrorFactory? ErrorFactory { get; set; }
 
     /// <summary>以 baseAddress 创建自管的 AxiosClient。</summary>
     /// <param name="baseAddress">API 基地址（合并规则与 AxiosNet 的 BaseAddress 一致，请求模型可写绝对 URL 覆盖）。</param>
     /// <param name="configureDefaults">实例默认配置（超时、头、序列化器等），null 表示全默认。</param>
-    /// <param name="options">
-    /// 底层客户端的实例级选项（代理 / 凭据 / Cookie / 重定向次数 / 自建池 / 并发容量）：构造期固化，
-    /// 写不进 <paramref name="configureDefaults"/>。
-    /// </param>
+    /// <param name="options">底层客户端的实例级选项（代理 / 凭据 / Cookie / 重定向次数 / 自建池 / 并发容量）：构造期固化，写不进 <paramref name="configureDefaults"/>。</param>
     public ApiClient(string baseAddress, Action<AxiosConfig>? configureDefaults = null, AxiosClientOptions? options = null)
     {
         if (string.IsNullOrWhiteSpace(baseAddress))
@@ -62,10 +50,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     {
     }
 
-    /// <summary>
-    /// 构造门面。<paramref name="register"/> 为 false 时只创建不登记：声明式扩展用它按需创建缓存门面，
-    /// 避免在缓存工厂里重入登记（那样会丢掉调用方已经设置好的凭据提供方 / 错误工厂）。
-    /// </summary>
+    /// <summary>构造门面；<paramref name="register"/> 为 <c>false</c> 时只创建不登记。</summary>
     internal ApiClient(AxiosClient axiosClient, bool ownsAxiosClient, bool register)
     {
         ArgumentNullException.ThrowIfNull(axiosClient);
@@ -73,8 +58,6 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         _ownsAxiosClient = ownsAxiosClient;
         if (register)
         {
-            // 同一个 AxiosClient 复用第一个门面：调用方先构造并设置凭据提供方 / 错误工厂，
-            // 再走扩展入口时这些状态跟着走，不会静默变成另一个匿名门面。
             AxiosClientDeclarativeExtensions.Register(Axios, this);
         }
     }
@@ -103,7 +86,6 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         Action<AxiosConfig>? configure,
         CancellationToken cancellationToken = default)
     {
-        // 装配期异常按异步方法的时序交给返回的 Task：调用方 await 时才看到，不在这里同步抛出。
         try
         {
             ArgumentNullException.ThrowIfNull(request);
@@ -121,7 +103,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         }
     }
 
-    /// <summary>按请求模型拼出最终 URL（含路径替换、查询参数与 BaseAddress 合并），不发请求。可用于日志与签名；返回实际发送形态（已转义）。</summary>
+    /// <summary>按请求模型拼出最终 URL（路径替换、查询参数与 BaseAddress 合并），不发请求；返回实际发送形态（已转义）。</summary>
     /// <param name="request">请求模型实例；<typeparamref name="TResponse"/> 只决定响应类型，不参与 URL。</param>
     /// <returns>拼好并转义后的绝对 URL。</returns>
     [UnconditionalSuppressMessage(
@@ -141,19 +123,8 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
             static state => state.client.GetUri(state.config));
     }
 
-    /// <summary>
-    /// 取请求模型的绑定元数据，并把「模型声明非法」改写成 <see cref="AxiosException"/>。
-    /// </summary>
-    /// <param name="requestType">请求模型类型。</param>
-    /// <returns>构建好的元数据。</returns>
-    /// <remarks>
-    /// 为什么要在这一层改写：<see cref="RequestModelMetadata.Get"/> 内部抛的是裸 <see cref="InvalidOperationException"/>，
-    /// 而它又在 <see cref="BuildConfig"/> <b>之前</b>被调用，因此不受绑定错误那条统一出口保护 ——
-    /// 用户写 <c>catch (AxiosException)</c> 抓不到，异常会一路裸奔到全局处理器。
-    /// <see cref="AxiosAotMetadataException"/> 例外：它是给「源生成器没启用」专用的类型，调用方可能专门捕获它，
-    /// 改写成通用错误码反而丢信息，所以原样透传。
-    /// </remarks>
-    /// <exception cref="AxiosException">模型声明非法（<c>ERR_BAD_OPTION_VALUE</c>），原始异常在 <c>Cause</c>。</exception>
+    /// <summary>取请求模型的绑定元数据，并把「模型声明非法」改写成 <see cref="AxiosException"/>。</summary>
+    /// <exception cref="AxiosException">模型声明非法（<c>ERR_BAD_OPTION_VALUE</c>），原始异常在 <c>Cause</c>；<see cref="AxiosAotMetadataException"/> 原样透传。</exception>
     private static RequestModelMetadata AcquireMetadata(
         [DynamicallyAccessedMembers(RequestModelMetadata.ModelMembers)] Type requestType)
     {
@@ -178,22 +149,20 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         Action<AxiosConfig>? configure,
         CancellationToken cancellationToken)
     {
-        // 格式化钩子只有一个来源（客户端的实例默认值）：绑定参数时就要用它，所以这里先取定。
-        // 配置从实例默认值的副本起步（与快捷方法同一条起点），本次请求项只覆盖它需要改的部分。
+        // 格式化钩子只有实例默认值一个来源，绑定参数时就要用。
         var formatter = Axios.Defaults.Serialization.ValueText;
         var target = request.GetType().Name;
         var config = Axios.NewEffectiveConfig();
         config.Method = metadata.Method;
 
         // 声明式装配失败统一归 ERR_BAD_REQUEST（路径 / 查询 / 头 / 正文同口径）。
-        // 各步骤以状态元组传参，静态 lambda 无捕获。
         config.Url = BindingErrors.Run(
             config,
             target,
             (metadata, request, formatter),
             static state => state.metadata.ResolveUrl(state.request, state.formatter));
 
-        // 没有查询参数时不写：合并层把显式 null 当成摘掉实例默认值。
+        // 无查询参数时不写：显式 null 表示摘掉实例默认值。
         if (BindingErrors.Run(
                 config,
                 target,
@@ -212,7 +181,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
             config.Body = body;
         }
 
-        // 类级静态头先写，属性上的 [Header] / [HeaderCollection] 覆盖同名项
+        // 类级静态头先写，属性上的 [Header] / [HeaderCollection] 覆盖同名项。
         BindingErrors.Run(
             config,
             target,
@@ -225,7 +194,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
             (metadata, request, config, formatter),
             static state => state.metadata.ApplyHeaders(state.request, state.config, state.formatter));
 
-        // 类 / 属性级编码声明是「默认值」：先落地，随后 IApiRequestConfigurable.Configure 与调用方 configure 仍可覆盖。
+        // 类 / 属性级编码声明是默认值，可被 Configure 与调用方 configure 覆盖。
         if (metadata.ContentType is { } declaredContentType)
         {
             config.ContentType = declaredContentType;
@@ -236,7 +205,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
             config.Serialization.CollectionFormat = declaredCollectionFormat;
         }
 
-        // 仅在调用方传入可取消的令牌时才写入：None 会覆盖实例默认令牌
+        // 仅在调用方传入可取消的令牌时才写入：None 会覆盖实例默认令牌。
         if (cancellationToken.CanBeCanceled)
         {
             config.CancellationToken = cancellationToken;
@@ -245,8 +214,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         (request as IApiRequestConfigurable)?.Configure(config);
         configure?.Invoke(config);
 
-        // 钩子在绑定期就已经用过（路径 / 查询 / 头 / 正文全部定型），这里再换只会让同一个请求出现两个钩子：
-        // 一路是「已经写进 URL 与头的文本」，一路是「发送期的表单 / multipart / 正文」。报错，不留静默半生效。
+        // 绑定期后再改 ValueText 会让 URL / 头 / 正文分属两个钩子，直接报错。
         if (!ReferenceEquals(config.Serialization.ValueText, formatter))
         {
             throw AxiosException.InvalidOption(
@@ -256,22 +224,18 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
                 config);
         }
 
-        // [Multipart] 模型：Content-Type 由库设定（调用方/Configure 显式设置过则保留，可自带 boundary）
+        // [Multipart] 模型：Content-Type 由库设定；调用方或 Configure 显式设置过则保留。
         if (metadata.IsMultipart && !config.ContentTypeSet)
         {
             config.ContentType = AxiosContentType.MultipartFormData;
         }
 
-        // 与快捷方法同一顺序：所有头都写完（含声明级删头的撤销）再执行删头。
+        // 顺序与快捷方法一致：先写完头，再执行删头。
         AxiosClient.ApplyRemoveHeaders(config);
         return config;
     }
 
-    /// <summary>授权链路：<see cref="AllowAnonymousAttribute"/> 清空凭据来源；提供方挂成内核内部提供方（不占槽位），落头由内核完成。</summary>
-    /// <param name="authorization">声明的授权策略（模式与 scheme）。</param>
-    /// <param name="request">请求载荷（模型实例或 <see cref="ApiInterfaceInvocation"/>），原样交给提供方。</param>
-    /// <param name="config">本次请求的生效配置。</param>
-    /// <returns>本次请求的凭据适配器（401 重放据此判断能否刷新、取旧值）；<c>null</c> 表示本次没走托管凭据。</returns>
+    /// <summary>授权链路：<see cref="AllowAnonymousAttribute"/> 清空凭据来源；返回的适配器 <c>null</c> 表示本次没走托管凭据。</summary>
     internal ApiCredentialProviderAdapter? ApplyAuthorization(
         ApiAuthorization authorization,
         object request,
@@ -279,8 +243,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     {
         if (authorization.Mode == ApiAuthorizationMode.Anonymous)
         {
-            // 匿名 = 本次请求不使用凭据：清空门面提供方；实例默认的静态槽位要用显式 null 压住。
-            // 按请求显式设置的 Transport.Auth 属于调用方显式覆盖，保持不动。
+            // 匿名：清空凭据来源；实例默认的静态槽位用显式 null 压住，按请求显式设置的 Transport.Auth 保持不动。
             if (config.TransportOrNull?.AuthSet != true && Axios.Defaults.TransportOrNull?.Auth is not null)
             {
                 config.Transport.Auth = null;
@@ -290,14 +253,12 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
             return null;
         }
 
-        // 同一个槽位不能被两个来源各写一遍。这里只看「生效的静态槽位」：
-        // 按请求显式设置（含显式清空）压过实例默认值，和内核 MergeFrom 的优先级一致。
+        // 只看生效的静态槽位：按请求显式设置（含显式清空）压过实例默认值。
         var effectiveAuth = config.TransportOrNull is { AuthSet: true } transport
             ? transport.Auth
             : Axios.Defaults.TransportOrNull?.Auth;
 
-        // 声明里写了 scheme 时，静态槽位的方案必须一致。不一致不做「以槽位为准」的静默改写：
-        // 头值会与声明（以及服务端的预期）不符，属于配置错误，发出前直接报。
+        // 声明里写了 scheme 时，静态槽位的方案必须一致。
         if (authorization.Mode == ApiAuthorizationMode.Required
             && effectiveAuth?.Scheme is { } slotScheme
             && !string.Equals(slotScheme, authorization.Scheme, StringComparison.OrdinalIgnoreCase))
@@ -323,17 +284,12 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
                 config);
         }
 
-        // 提供方直接挂到内核的内部提供方位：不创建槽位组与 AxiosCredential.Provider 包装对象。
         var adapter = new ApiCredentialProviderAdapter(CredentialProvider, request, authorization.Scheme, _credentialCache);
         config.InternalCredentialProvider = adapter;
         return adapter;
     }
 
-    /// <summary>发送请求；「服务端给了响应却是错误状态码」时交给 <see cref="ErrorFactory"/>。</summary>
-    /// <param name="request">请求载荷。</param>
-    /// <param name="config">本次请求的生效配置。</param>
-    /// <param name="auth">授权链路挂到凭据槽位的适配器（401 重放的判定依据），<c>null</c> 表示本次没有托管凭据。</param>
-    /// <param name="cancellationToken">调用方的取消令牌。</param>
+    /// <summary>发送请求；「服务端给了响应却是错误状态码」时交给 <see cref="ErrorFactory"/>；<paramref name="auth"/> 为 <c>null</c> 表示本次没有托管凭据。</summary>
     internal Task<AxiosResponse<TResponse>> SendAsync<TResponse>(
         object request,
         AxiosConfig config,
@@ -342,10 +298,6 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         => SendCoreAsync(request, config, auth, cancellationToken, TypedSender<TResponse>.Send);
 
     /// <summary>发送请求并交付非泛型响应（正文按 <see cref="System.Text.Json.JsonElement"/>）；错误处理同 <see cref="SendAsync{TResponse}"/>。</summary>
-    /// <param name="request">请求载荷。</param>
-    /// <param name="config">本次请求的生效配置。</param>
-    /// <param name="auth">授权链路挂到凭据槽位的适配器。</param>
-    /// <param name="cancellationToken">调用方的取消令牌。</param>
     internal Task<AxiosResponse> SendUntypedAsync(
         object request,
         AxiosConfig config,
@@ -354,10 +306,6 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         => SendCoreAsync(request, config, auth, cancellationToken, ResponseSenders.Untyped);
 
     /// <summary>只完成请求、不装配正文（接口声明返回 <c>Task</c>）；错误处理同 <see cref="SendAsync{TResponse}"/>。</summary>
-    /// <param name="request">请求载荷。</param>
-    /// <param name="config">本次请求的生效配置。</param>
-    /// <param name="auth">授权链路挂到凭据槽位的适配器。</param>
-    /// <param name="cancellationToken">调用方的取消令牌。</param>
     internal async Task SendWithoutBodyAsync(
         object request,
         AxiosConfig config,
@@ -367,18 +315,17 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         var response = await SendCoreAsync(request, config, auth, cancellationToken, ResponseSenders.Void)
             .ConfigureAwait(false);
 
-        // 显式把 responseType 配成 Stream 时正文归我们：Task 方法的调用方拿不到这个响应对象。
-        // 短路响应（Request 为 null）的 Data 归调用方，不能释放。
+        // 正文归调用方时（responseType 配成 Stream）在这里释放；短路响应的 Data 归调用方，不释放。
         if (response.Request is not null)
         {
             (response.Data as IDisposable)?.Dispose();
         }
     }
 
-    /// <summary>按返回类型缓存的发送委托：静态 lambda 无捕获，每请求只多一次间接调用。</summary>
+    /// <summary>按返回类型缓存的发送委托。</summary>
     private static class TypedSender<T>
     {
-        /// <summary>按 <typeparamref name="T"/> 缓存的泛型发送委托。</summary>
+        /// <summary>泛型发送委托（按 <typeparamref name="T"/> 缓存）。</summary>
         internal static readonly Func<AxiosClient, AxiosConfig, Task<AxiosResponse<T>>> Send =
             static (client, config) => client.SendPreparedTypedAsync<T>(config);
     }
@@ -396,11 +343,6 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>发送一次并在同一条链路里收尾：401 重放（仅托管凭据）、装配失败改判、错误工厂接管。</summary>
-    /// <param name="request">请求载荷。</param>
-    /// <param name="config">本次请求的生效配置。</param>
-    /// <param name="auth">授权链路挂到凭据槽位的适配器。</param>
-    /// <param name="cancellationToken">调用方的取消令牌。</param>
-    /// <param name="send">真正发送的委托（重放时再调一次）。</param>
     private async Task<TResult> SendCoreAsync<TResult>(
         object request,
         AxiosConfig config,
@@ -410,13 +352,12 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     {
         try
         {
-            // 首次发送前只算一个布尔结论：默认路径（没 401）不能读正文——1KB 正文的快照会白付两份缓冲。
             var bodyReplayable = CanPrepareReplay(config, auth);
             var bodyIsContent = config.Body is HttpContent;
 
             if (bodyReplayable && bodyIsContent)
             {
-                // 不预读正文：让管线在 401 收尾保留正文，只有真要重放时才读。
+                // 不预读正文：管线在 401 收尾保留正文，只在真要重放时读。
                 config.RetainBodyContent = true;
             }
 
@@ -428,7 +369,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
             }
             catch (AxiosException error) when (CanReplayForAuth(error, auth, bodyReplayable))
             {
-                // 401 收尾没有释放正文，快照在这里读；真正发送的正文可能经过 transformRequest，取失败配置里的那份。
+                // 401 收尾没有释放正文，快照在这里读；取失败配置里的那份（可能经过 transformRequest）。
                 retained = TakeRetainedBody(error);
 
                 // 重放是同一个逻辑请求：沿用上次实际发出的幂等键。
@@ -459,29 +400,29 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
                         }
                         catch (Exception)
                         {
-                            // 快照只是重放前置动作：读不出来就不重放，原样抛出本次 401。
+                            // 快照读不出来就不重放，原样抛出本次 401。
                             snapshot = null;
                         }
                     }
 
-                    // 读不出来或超 MaxRequestBytes（未知长度正文不提前拦截）：不截断正文，本次退成不可重放。
+                    // 读不出来或超 MaxRequestBytes（未知长度正文不提前拦截）：本次退成不可重放。
                     if (snapshot is null)
                     {
                         throw;
                     }
 
-                    // 重放前换成一份新的内容实例：管线的保留缓冲不再复用。
+                    // 重放前换成新的内容实例：管线的保留缓冲不复用。
                     config.Body = snapshot.CreateContent();
                 }
 
-                // 第二次发送自己会释放新正文，不要再次保留。
+                // 第二次发送自己会释放新正文，不要再保留。
                 config.RetainBodyContent = false;
 
                 return await send(Axios, config).ConfigureAwait(false);
             }
             catch (AxiosException error)
             {
-                // 这次 401 不重放：把管线保留的正文取走，交给 finally 释放。
+                // 本次 401 不重放：取走管线保留的正文，交给 finally 释放。
                 retained = TakeRetainedBody(error);
                 throw;
             }
@@ -493,7 +434,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         }
         catch (AxiosException error) when (error.IsRequestConstructionFailure)
         {
-            // 查询展平阶段的取值 / 格式化失败：WebAPI 口径是「请求装配失败」，改判 ERR_BAD_REQUEST，原因保留原始异常。
+            // 查询展平阶段的取值 / 格式化失败：改判 ERR_BAD_REQUEST，原因保留原始异常。
             throw RequestBindingErrors.Create(
                 error.Config,
                 request: null,
@@ -516,10 +457,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         }
     }
 
-    /// <summary>
-    /// 首次发送前判定 401 重放是否值得准备。四个前提同时成立才继续：重放开、已装配可刷新的托管提供方、
-    /// 内核分类器判定正文可重放、方法幂等或配置级放行。这里只做判定，不读正文。
-    /// </summary>
+    /// <summary>首次发送前判定 401 重放是否值得准备（四项前提同时成立）；只做判定，不读正文。</summary>
     private bool CanPrepareReplay(AxiosConfig config, ApiCredentialProviderAdapter? auth)
     {
         if (!RetryOnUnauthorized
@@ -543,7 +481,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         };
     }
 
-    /// <summary>取走发送管线在 401 收尾保留的正文，并清掉失败配置上的引用（异常不该继续持有正文）。</summary>
+    /// <summary>取走发送管线在 401 收尾保留的正文，并清掉失败配置上的引用。</summary>
     private static HttpContent? TakeRetainedBody(AxiosException error)
     {
         var config = error.Config;
@@ -563,14 +501,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
             ? limits.MaxRequestBytes
             : Axios.Defaults.LimitsOrNull?.MaxRequestBytes;
 
-    /// <summary>这次 401 值不值得重放：首次发送前的判定说正文可重放，且本次凭据由库托管（落点与值都由库掌握）。</summary>
-    /// <remarks>
-    /// 幂等 / 放行开关 / 正文分类已在 <see cref="CanPrepareReplay"/> 里与内核同一口径算好；
-    /// 内核在凭据槽位是提供方形态时不再重试 401（见 <see cref="RetryPolicy.ShouldRetry"/>），刷新与重放只在这里发生一次。
-    /// </remarks>
-    /// <param name="error">本次失败。</param>
-    /// <param name="auth">授权链路挂到凭据槽位的适配器。</param>
-    /// <param name="bodyReplayable">首次发送前算好的正文可重放结论。</param>
+    /// <summary>这次 401 值不值得重放：首次发送前的判定说正文可重放，且本次凭据由库托管。</summary>
     private static bool CanReplayForAuth(AxiosException error, ApiCredentialProviderAdapter? auth, bool bodyReplayable)
         => bodyReplayable
             && auth is not null
@@ -578,20 +509,16 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
             && error.Status == 401;
 
     /// <summary>401 后作废旧凭据并重取一次；返回 <c>false</c> 表示没拿到新值（重放没有意义）。</summary>
-    /// <param name="auth">授权链路挂到凭据槽位的适配器。</param>
-    /// <param name="config">本次请求的生效配置（按请求原件，合并由下一次发送重新做）。</param>
-    /// <param name="cancellationToken">调用方的取消令牌。</param>
     private static async ValueTask<bool> ReauthorizeAsync(
         ApiCredentialProviderAdapter auth,
         AxiosConfig config,
         CancellationToken cancellationToken)
     {
-        // 旧值由适配器记录，与落点无关：查询参数 / 自定义头也能按值作废。
-        // 完整 Authorization 头值拿不到令牌本体，提供方无法拿它比较，按无条件作废。
+        // 旧值由适配器记录，与落点无关；完整 Authorization 头值按无条件作废。
         var previousValue = auth.LastValue;
         auth.Invalidate(auth.LastValueIsCompleteAuthorization ? null : previousValue);
 
-        // 重取只取值；落点留到重放那次发送时写进合并后的配置（写请求原件会覆盖实例默认查询参数）。
+        // 重取只取值；落点留到重放那次发送时写进合并后的配置。
         var next = await auth.RefreshAsync(config, cancellationToken).ConfigureAwait(false);
         return next is { Value: { } value }
             && !string.Equals(value, previousValue, StringComparison.Ordinal);

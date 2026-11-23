@@ -1,9 +1,6 @@
 namespace AxiosNet.Pooling;
 
-/// <summary>
-/// 一次请求对连接池节点的租约，Dispose 后归还：通常只释放占用计数（TCP 连接仍留在池中复用），
-/// 节点已被池摘除时则随最后一次归还销毁。
-/// </summary>
+/// <summary>一次请求对连接池节点的租约，Dispose 后归还：通常只释放占用计数，节点已被池摘除时随最后一次归还销毁。</summary>
 public sealed class PoolLease : IDisposable
 {
     private readonly HttpConnectionPool _pool;
@@ -24,10 +21,7 @@ public sealed class PoolLease : IDisposable
     /// <summary>租约对应的 origin（scheme://host:port）。</summary>
     public string Origin => _endpoint.Origin;
 
-    /// <summary>
-    /// 本次租约是否复用了池中已存在的 origin 节点；<c>false</c> 表示顺手新建了节点。
-    /// 它不是「TCP 连接是否复用」，连接级复用发生在 <c>SocketsHttpHandler</c> 内部。
-    /// </summary>
+    /// <summary>本次租约是否复用了池中已存在的 origin 节点；<c>false</c> 表示顺手新建了节点（不代表 TCP 连接复用）。</summary>
     public bool EndpointReused { get; }
 
     /// <summary>归还租约（幂等）；节点若已被池摘除，这次归还会触发它的销毁。</summary>

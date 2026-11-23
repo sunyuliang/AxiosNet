@@ -140,9 +140,7 @@ public sealed class ReviewProbeTests
         Assert.Equal("q=x", received.Query);
     }
 
-    // ------------------------------------------------------------------
-    // 探针专用模型
-    // ------------------------------------------------------------------
+// 探针专用模型
 
     [Get("items/{id}")]
     public sealed class ProbeRouteRequest : IApiRequest<Person>

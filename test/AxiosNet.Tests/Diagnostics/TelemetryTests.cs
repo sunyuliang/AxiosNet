@@ -18,9 +18,7 @@ namespace AxiosNet.Tests.Diagnostics;
 [Collection(TelemetryCollection.Name)]
 public sealed class TelemetryTests
 {
-    // ------------------------------------------------------------------
-    // 链路：span 与语义约定标签
-    // ------------------------------------------------------------------
+// 链路：span 与语义约定标签
 
     [Fact]
     public async Task Span_CarriesSemanticConventionTags()
@@ -217,9 +215,7 @@ public sealed class TelemetryTests
         Assert.Contains(caller!.TraceId.ToHexString(), traceParent, StringComparison.OrdinalIgnoreCase);
     }
 
-    // ------------------------------------------------------------------
-    // 指标：重试原因 / 闸门排队深度 / 熔断状态
-    // ------------------------------------------------------------------
+// 指标：重试原因 / 闸门排队深度 / 熔断状态
 
     [Fact]
     public async Task Metrics_RetryReason_UsesLibraryCodeWhenThereIsNoStatus()
@@ -633,9 +629,7 @@ public sealed class TelemetryTests
         Assert.Fail("等待条件超时（5 秒）");
     }
 
-    // ------------------------------------------------------------------
-    // 连接池：租约 / 节点 / 驱逐
-    // ------------------------------------------------------------------
+// 连接池：租约 / 节点 / 驱逐
 
     [Fact]
     public async Task Span_RecordsWhetherPoolEndpointWasReused()
@@ -899,9 +893,7 @@ public sealed class TelemetryTests
         Assert.All(leases, measurement => Assert.Equal(1d, measurement.Value));
     }
 
-    // ------------------------------------------------------------------
-    // 重试
-    // ------------------------------------------------------------------
+// 重试
 
     [Fact]
     public async Task Retry_SetsResendCount_EmitsEvent_AndCountsMetric()
@@ -954,9 +946,7 @@ public sealed class TelemetryTests
         Assert.Equal(AxiosException.ErrBadResponse, context.ErrorCode);
     }
 
-    // ------------------------------------------------------------------
-    // 指标
-    // ------------------------------------------------------------------
+// 指标
 
     [Fact]
     public async Task Metrics_RecordsDurationWithLowCardinalityTags()
@@ -1315,9 +1305,7 @@ public sealed class TelemetryTests
             $"指标 {duration.Value:0.000}s 与 span {span.Duration.TotalSeconds:0.000}s 口径不一致。");
     }
 
-    // ------------------------------------------------------------------
-    // 诊断事件
-    // ------------------------------------------------------------------
+// 诊断事件
 
     [Fact]
     public async Task Diagnostics_EmitStartAndStop()
@@ -1360,9 +1348,7 @@ public sealed class TelemetryTests
         Assert.Empty(probe.Events.Where(e => e.Name == AxiosTelemetry.RequestStopEventName));
     }
 
-    // ------------------------------------------------------------------
-    // 配置：开关 / URL 采集 / 合并
-    // ------------------------------------------------------------------
+// 配置：开关 / URL 采集 / 合并
 
     [Fact]
     public async Task CaptureUrl_False_OmitsFullUrlButKeepsPath()
@@ -1547,9 +1533,7 @@ public sealed class TelemetryTests
         Assert.Equal(TelemetryCapture.Off, config.Observability.Capture);
     }
 
-    // ------------------------------------------------------------------
-    // 隔离性：遥测出错不能影响请求
-    // ------------------------------------------------------------------
+// 隔离性：遥测出错不能影响请求
 
     [Fact]
     public async Task ThrowingActivityListener_DoesNotBreakRequest()

@@ -161,10 +161,7 @@ internal static class Swagger2Converter
         return RewriteDefinitionRefs(SpecNode.Obj(result));
     }
 
-    /// <summary>
-    /// Swagger 2 的 <c>#/definitions/X</c> 归一化后位于 <c>#/components/schemas/X</c>；
-    /// 复制进 paths / requestBody / responses 的 schema 仍带旧指针，必须整体改写，否则读取期全部 BROKEN_REF。
-    /// </summary>
+    /// <summary>Swagger 2 的 <c>#/definitions/X</c> 归一化后位于 <c>#/components/schemas/X</c>；复制进 paths / requestBody / responses 的旧指针必须整体改写。</summary>
     private static SpecNode RewriteDefinitionRefs(SpecNode node)
     {
         if (node.IsObject)
@@ -431,7 +428,7 @@ internal static class Swagger2Converter
         WarningCollector warnings,
         string location)
     {
-        // 文档常省略 consumes；有 file 参数时按 multipart 处理，否则文件会被编进 urlencoded 表单。
+        // 文档常省略 consumes；有 file 参数时按 multipart 处理。
         var isMultipart = consumes.Any(media =>
                               media.StartsWith("multipart/", StringComparison.OrdinalIgnoreCase))
                           || form.Any(parameter => parameter["type"]?.AsString() == "file");

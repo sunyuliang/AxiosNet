@@ -110,7 +110,7 @@ internal static class SpecParser
         return SpecNode.Obj(result);
     }
 
-    /// <summary>读取 JSON 数字：优先 double；超出范围时保留原文（避免精度丢失），仍不可解析则退回字符串。</summary>
+    /// <summary>读取 JSON 数字：优先 double；超出范围时保留原文，仍不可解析则退回字符串。</summary>
     private static SpecNode Number(JsonElement element)
     {
         if (element.TryGetDouble(out var value))

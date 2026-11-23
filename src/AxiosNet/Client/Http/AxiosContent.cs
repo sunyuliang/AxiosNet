@@ -7,20 +7,19 @@ namespace AxiosNet;
 /// 请求体 / 响应体的内容格式入口，内置 JSON（默认）与 XML 两个实现。
 /// </summary>
 /// <remarks>
-/// 选择优先级固定为三层：实例注册表（<see cref="AxiosConfig.SerializationSettings.BodySerializers"/>，先按媒体类型、后表内默认项）
-/// → 进程注册表（<see cref="Register"/> 按媒体类型登记，<see cref="Default"/> 只做兜底）→ 内置 JSON。
-/// 请求方向按 <see cref="AxiosConfig.ContentType"/> 查表，响应方向按响应的 <c>Content-Type</c> 查表。
-/// <para>全局注册表是进程级的（测试之间会互相影响）；按实例隔离请用 <see cref="AxiosConfig.SerializationSettings.BodySerializers"/>。</para>
+/// 选择优先级固定为三层：实例注册表（先按媒体类型、后表内默认项）→ 进程注册表（<see cref="Register"/> 按媒体类型，
+/// <see cref="Default"/> 只做兜底）→ 内置 JSON。请求方向按 <see cref="AxiosConfig.ContentType"/> 查表，响应方向按响应的 <c>Content-Type</c> 查表。
+/// <para>全局注册表是进程级的；按实例隔离请用 <see cref="AxiosConfig.SerializationSettings.BodySerializers"/>。</para>
 /// </remarks>
 public static class AxiosContent
 {
-    // 媒体类型 → 序列化器（进程级，用户注册入口）；空表时走内置快路径。
+    // 媒体类型 → 序列化器（进程级）。
     private static readonly ConcurrentDictionary<string, IContentSerializer> Registry = new(StringComparer.Ordinal);
 
     /// <summary>注册表条目数，只用于 <see cref="Lookup"/> 的空表快路径判定。</summary>
     private static int _registeredCount;
 
-    // 进程级兜底序列化器：null = 未注入，按媒体类型查不到时回落到内置 JSON。
+    // 进程级兜底序列化器；null = 未注入。
     private static IContentSerializer? _default;
 
     /// <summary>
@@ -44,7 +43,7 @@ public static class AxiosContent
 
         if (!Registry.TryAdd(key, serializer))
         {
-            // 重复注册以最后一次为准：覆盖已有项，计数不变。
+            // 重复注册以最后一次为准。
             Registry[key] = serializer;
             return;
         }
@@ -81,7 +80,7 @@ public static class AxiosContent
 
     /// <summary>全局注册表的查表：精确匹配 → 别名 → 结构化后缀回落；未注册返回 <c>null</c>。</summary>
     private static IContentSerializer? Lookup(string? mediaType)
-        // 注册表为空时直接返回，不做归一化。
+        // 注册表为空时直接返回。
         => Volatile.Read(ref _registeredCount) == 0
             ? null
             : ContentSerializerRegistry.Lookup(Registry, mediaType);

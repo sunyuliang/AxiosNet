@@ -6,15 +6,12 @@ namespace AxiosNet.WebAPI.Attributes;
 /// 路由声明：HTTP 方法 + 路径模板。请求模型标在类上、接口级声明标在接口方法上，每份声明必须且只能标注一个本特性或其子类。
 /// </summary>
 /// <remarks>
-/// 路径模板中的 <c>{name}</c> 占位符由 <see cref="PathAttribute"/> 属性 / 参数填充（值做 URL 转义）；模板可以是相对路径（合并实例 BaseAddress）或绝对 URL。
-/// 可直接传字符串方法名（归一化为大写），也可用内置子类；自定义谓词继承本类。
+/// 路径模板中的 <c>{name}</c> 占位符由 <see cref="PathAttribute"/> 填充（值做 URL 转义）；模板可相对（合并实例 BaseAddress）或绝对 URL。自定义谓词继承本类。
 /// </remarks>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, Inherited = false, AllowMultiple = false)]
 public class HttpApiAttribute : Attribute
 {
-    /// <summary>HTTP 方法与路径模板。两个参数都要求非空。</summary>
-    /// <param name="method">HTTP 方法（BCL <see cref="HttpMethod"/> 实例，内置子类传 <see cref="HttpMethod.Get"/> 等）。</param>
-    /// <param name="path">路径模板，含 <c>{name}</c> 占位符；相对路径或绝对 URL。</param>
+    /// <summary>HTTP 方法与路径模板，两个参数都要求非空。</summary>
     protected HttpApiAttribute(HttpMethod method, string path)
     {
         if (method is null)
@@ -31,9 +28,7 @@ public class HttpApiAttribute : Attribute
         Path = path.Trim();
     }
 
-    /// <summary>HTTP 方法与路径模板（字符串形式，可免子类直接使用）；方法名归一化为大写。</summary>
-    /// <param name="method">HTTP 方法名，大小写不敏感（如 <c>"get"</c> / <c>"POST"</c>）。</param>
-    /// <param name="path">路径模板，含 <c>{name}</c> 占位符；相对路径或绝对 URL。</param>
+    /// <summary>HTTP 方法与路径模板（字符串形式，可免子类直接使用）；方法名归一化为大写，大小写不敏感。</summary>
     public HttpApiAttribute(string method, string path)
         : this(CreateMethod(method), path)
     {

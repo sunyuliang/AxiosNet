@@ -3,8 +3,7 @@ using System.Text;
 namespace AxiosNet.Internal.Headers;
 
 /// <summary>
-/// <c>Authorization</c> 头的唯一映射实现：内核的 <see cref="AxiosConfig.TransportSettings.Auth"/> 与
-/// WebAPI 的凭据提供方都经这里落头，避免两套拼接规则漂移。这里只做「凭据值 → 头值」，不关心凭据从哪来。
+/// <c>Authorization</c> 头的唯一映射实现：内核配置与 WebAPI 凭据提供方都经这里落头。只做「凭据值 → 头值」。
 /// </summary>
 internal static class AuthorizationHeader
 {

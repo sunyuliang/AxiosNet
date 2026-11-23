@@ -6,8 +6,8 @@ using System.Net;
 
 namespace AxiosNet.Tests.WebAPI;
 
-// ---- 流式用例公用替身 ----
-// 分帧用例曾经每个阶段各带一套 Handler / 流 / 工厂（能力互相嵌套），这里收成一份并集：
+// 流式用例公用替身
+// 分帧用例共用的一套 Handler / 流 / 工厂：
 // 需要「逐块延迟」「读一半断流」「读完挂起」「换 Content-Type」都只是同一个类换参数。
 
 /// <summary>

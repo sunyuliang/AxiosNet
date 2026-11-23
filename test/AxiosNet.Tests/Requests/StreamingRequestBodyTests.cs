@@ -328,9 +328,7 @@ public sealed class StreamingRequestBodyTests
         Assert.Equal(AxiosException.ErrCanceled, ex.Code);
     }
 
-    // ------------------------------------------------------------------
-    // 辅助
-    // ------------------------------------------------------------------
+// 辅助
 
     private static async IAsyncEnumerable<byte[]> ByteChunks(params byte[][] chunks)
     {

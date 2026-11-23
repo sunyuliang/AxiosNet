@@ -45,7 +45,7 @@ internal static class MultipartFormAssembler
         }
         catch
         {
-            // 还没交给 MultipartBodyBuilder：已取得的流 / 内容必须就地释放，否则会随异常泄漏。
+            // 还没交给 MultipartBodyBuilder：已取得的流 / 内容必须就地释放。
             form.DisposeOwned();
             throw;
         }

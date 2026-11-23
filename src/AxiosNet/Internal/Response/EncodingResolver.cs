@@ -1,9 +1,6 @@
 namespace AxiosNet.Internal.Response;
 
-/// <summary>
-/// charset 名 → <see cref="Encoding"/> 的唯一解析：请求侧（写正文编码）与响应侧（解码正文）共用同一张内置表与同一套失败口径，
-/// 避免一侧认 <c>utf-8</c>、另一侧认不出来。
-/// </summary>
+/// <summary>charset 名 → <see cref="Encoding"/> 的唯一解析：请求侧与响应侧共用同一张内置表与同一套失败口径。</summary>
 internal static class EncodingResolver
 {
     private const string Utf8Name = "utf-8";
@@ -25,7 +22,6 @@ internal static class EncodingResolver
             return null;
         }
 
-        // 常见 charset 直接用内置实例。
         if (SpanComparisons.EqualsIgnoreCase(trimmed, Utf8Name))
         {
             return Encoding.UTF8;
@@ -47,7 +43,7 @@ internal static class EncodingResolver
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
         {
-            // 未知 charset / 未注册的代码页：交给调用点兜底。
+            // 未知 charset / 未注册代码页：交给调用点兜底。
             return null;
         }
     }

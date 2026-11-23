@@ -8,7 +8,7 @@ namespace AxiosNet;
 /// <summary>请求 / 实例配置，字段与 axios 的 config 一一对应。</summary>
 public sealed partial class AxiosConfig
 {
-    // 按领域分组的可选设置：首次读取才分配，Clone 时各自复制。
+    // 按领域分组的可选设置：首次读取才分配。
     private SerializationSettings? _serialization;
     private TransportSettings? _transport;
     private LimitsSettings? _limits;
@@ -26,7 +26,7 @@ public sealed partial class AxiosConfig
         set => _serialization = value;
     }
 
-    /// <summary>传输相关设置：代理 / 凭据 / 连接池 / HTTP 版本与协商策略 / 传输档 / Basic 认证 / 凭据开关 / 重定向次数 / 限速；首次读取时懒创建。</summary>
+    /// <summary>传输相关设置：代理 / 凭据 / 连接池 / HTTP 版本与协商策略 / 传输档 / Basic 认证 / 重定向次数 / 限速；首次读取时懒创建。</summary>
     public TransportSettings Transport
     {
         get => _transport ??= new TransportSettings();
@@ -40,10 +40,10 @@ public sealed partial class AxiosConfig
         set => _observability = value;
     }
 
-    /// <summary>未设置时为 <c>null</c>；读取不触发懒创建（公共 getter 会建对象，库内一律走这几个）。</summary>
+    /// <summary>未设置时为 <c>null</c>，读取不触发懒创建。</summary>
     internal SerializationSettings? SerializationOrNull => _serialization;
 
-    /// <summary>未设置时为 <c>null</c>；读取不触发懒创建。</summary>
+    /// <summary>未设置时为 <c>null</c>，读取不触发懒创建。</summary>
     internal TransportSettings? TransportOrNull => _transport;
 
     /// <summary>本次请求选中的传输档名（<c>null</c> / 空串 = 默认档）；不懒创建传输组。</summary>
@@ -70,10 +70,7 @@ public sealed partial class AxiosConfig
     /// <summary>未设置时为 <c>null</c>；读取不触发懒创建。</summary>
     internal FailoverSettings? FailoverOrNull => _failover;
 
-    /// <summary>
-    /// 体积与流式分帧上限（真分组）：<see cref="LimitsSettings.MaxRequestBytes"/> / <see cref="LimitsSettings.MaxResponseBytes"/> /
-    /// <see cref="LimitsSettings.MaxStreamFrameBytes"/> 的唯一入口；首次读取时懒创建。
-    /// </summary>
+    /// <summary>体积与流式分帧上限：<see cref="LimitsSettings.MaxRequestBytes"/> / <see cref="LimitsSettings.MaxResponseBytes"/> / <see cref="LimitsSettings.MaxStreamFrameBytes"/> 的唯一入口。</summary>
     public LimitsSettings Limits
     {
         get => _limits ??= new LimitsSettings();
@@ -103,7 +100,7 @@ public sealed partial class AxiosConfig
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
     internal bool MethodSet { get; private set; }
 
-    // 集合成员延迟创建：字段为 null 表示还没有内容，首次读写才创建；库内读路径先用 Has* 判定。
+    // 集合成员延迟创建：字段为 null 表示还没有内容。
     private AxiosHeaders? _headers;
 
     /// <summary>对应 axios headers（大小写不敏感）；序列化器可在 <see cref="IContentSerializer.Serialize"/> 里写入，正文构造完成后统一应用。</summary>
@@ -149,11 +146,8 @@ public sealed partial class AxiosConfig
     /// <summary>是否被显式赋值过（包括赋 <c>null</c>）：合并时区分「没写」与「写了 null」，后者摘掉实例默认值。</summary>
     internal bool ParamsSet { get; private set; }
 
-    /// <summary>
-    /// 追加一个查询参数：<see cref="Params"/> 为空时新建字典，已是键 <see cref="string"/>、值 <see cref="object"/> 的可变字典时原地写入。
-    /// 其它形态（对象 / 查询串 / 只读字典）不静默替换，直接抛错——否则原有查询参数会被悄悄丢掉。
-    /// </summary>
-    /// <param name="name">参数名；序列化时按键转义。</param>
+    /// <summary>追加一个查询参数：<see cref="Params"/> 为空时新建字典，已是可变字典时原地写入；其它形态抛错。</summary>
+    /// <param name="name">参数名。</param>
     /// <param name="value">参数值；<c>null</c> 在序列化时跳过。</param>
     /// <exception cref="AxiosException"><see cref="Params"/> 已是无法原地写入的形态（<c>ERR_BAD_OPTION_VALUE</c>）。</exception>
     public void SetQuery(string name, object? value)
@@ -189,10 +183,7 @@ public sealed partial class AxiosConfig
 
     private string _contentType = JsonContentType;
 
-    /// <summary>
-    /// 请求体媒体类型（Content-Type），默认 <c>application/json</c>；编码格式由本项决定，与 <see cref="Body"/> 的运行时类型无关。
-    /// 未显式设置时由序列化器自报（见 <see cref="IContentSerializer.MediaType"/>）。
-    /// </summary>
+    /// <summary>请求体媒体类型（Content-Type），默认 <c>application/json</c>；未显式设置时由序列化器自报。</summary>
     public string ContentType
     {
         get => _contentType;
@@ -208,7 +199,7 @@ public sealed partial class AxiosConfig
                 throw new ArgumentException("ContentType 不能为空白；不设置时头由序列化器自报（见 IContentSerializer.MediaType），请不要赋值。", nameof(value));
             }
 
-            // 这个值最终写入 Content-Type，与头集合用同一套校验。
+            // 与头集合用同一套校验。
             AxiosHeaders.ValidateHeaderValue("Content-Type", trimmed);
 
             _contentType = trimmed;
@@ -219,10 +210,7 @@ public sealed partial class AxiosConfig
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
     internal bool ContentTypeSet { get; private set; }
 
-    /// <summary>
-    /// 请求体压缩算法（默认 <c>null</c> = 不压缩），压缩后自动补 <c>Content-Encoding</c>；
-    /// 只作用于按字节缓冲的正文，流式正文 / 自带 <see cref="HttpContent"/> / multipart 会抛 <c>ERR_BAD_OPTION_VALUE</c>。
-    /// </summary>
+    /// <summary>请求体压缩算法（默认 <c>null</c> = 不压缩），压缩后自动补 <c>Content-Encoding</c>；只作用于按字节缓冲的正文。</summary>
     public AxiosCompression? Compression
     {
         get => _compression;
@@ -240,10 +228,7 @@ public sealed partial class AxiosConfig
 
     private object? _data;
 
-    /// <summary>
-    /// 对应 axios data：请求体原始数据，按 <see cref="ContentType"/> 编码。
-    /// string / byte[] / Stream / HttpContent 原样发送，<c>IAsyncEnumerable</c> 按块流式发送（长度未知）。
-    /// </summary>
+    /// <summary>对应 axios data：请求体原始数据，按 <see cref="ContentType"/> 编码；string / byte[] / Stream / HttpContent 原样发送。</summary>
     public object? Body
     {
         get => _data;
@@ -257,8 +242,7 @@ public sealed partial class AxiosConfig
     /// <summary>是否被显式赋值过（包括赋 <c>null</c>）：合并时区分「没写」与「写了 null」，后者摘掉实例默认值。</summary>
     internal bool BodySet { get; private set; }
 
-    // 短路 / 缓存相关的四个字段同样只在用到时才分配：默认请求既不短路也不缓存，
-    // 每次请求克隆出来的配置也就不再背这四个字段（它们此前是三个指针加一个标记位）。
+    // 短路 / 缓存相关的状态同样只在用到时才分配。
     private CacheState? _cacheState;
 
     private sealed class CacheState
@@ -275,7 +259,7 @@ public sealed partial class AxiosConfig
         /// <summary>条件请求用的旧条目（带 <c>ETag</c> / <c>Last-Modified</c> 的那份），命中 <c>304</c> 时用它交付正文。</summary>
         internal AxiosShortCircuit? RevalidationEntry;
 
-        /// <summary>按指针浅拷贝：四个引用 / 标记都可独立改写，克隆出的状态不共享可变字段。</summary>
+        /// <summary>按指针浅拷贝。</summary>
         internal CacheState Clone() => (CacheState)MemberwiseClone();
     }
 
@@ -340,10 +324,7 @@ public sealed partial class AxiosConfig
         }
     }
 
-    /// <summary>
-    /// 本次请求要复用的旧缓存条目（条件请求）：管线据此发 <c>If-None-Match</c> / <c>If-Modified-Since</c>，
-    /// 终端收到 <c>304 Not Modified</c> 时用它合并出完整响应。只属于这一次请求，<see cref="Clone"/> 不复制。
-    /// </summary>
+    /// <summary>本次请求要复用的旧缓存条目（条件请求）：管线据此发 <c>If-None-Match</c> / <c>If-Modified-Since</c>，收到 <c>304</c> 时用它交付正文；<see cref="Clone"/> 不复制。</summary>
     internal AxiosShortCircuit? RevalidationEntry
     {
         get => _cacheState?.RevalidationEntry;
@@ -365,11 +346,7 @@ public sealed partial class AxiosConfig
 
     private TimeSpan _timeout = TimeSpan.FromSeconds(100);
 
-    /// <summary>
-    /// 对应 axios timeout：一次尝试的预算（建连 + 响应头 + 正文），默认 100 秒（与 <see cref="HttpClient.Timeout"/> 一致），
-    /// 零表示不超时，负值抛 <c>ERR_BAD_OPTION_VALUE</c>。
-    /// 重试 / 备用端点 / 对冲各复制一份；整条请求的预算见 <see cref="ResilienceSettings.TotalTimeout"/>。
-    /// </summary>
+    /// <summary>对应 axios timeout：一次尝试的预算（建连 + 响应头 + 正文），默认 100 秒；零表示不超时，负值抛 <c>ERR_BAD_OPTION_VALUE</c>。重试 / 备用端点 / 对冲各复制一份。</summary>
     /// <remarks>流式响应的正文也计入本预算。</remarks>
     public TimeSpan Timeout
     {
@@ -386,14 +363,11 @@ public sealed partial class AxiosConfig
 
     private TimeSpan? _totalTimeout;
 
-    /// <summary>
-    /// 整条逻辑请求的总预算（<c>null</c> = 不设，默认），跨重试、备用端点与对冲分支共享。
-    /// 每次尝试上限为 <c>min(Timeout, 剩余预算)</c>，剩余不足时该次尝试不发出并抛 <c>ECONNABORTED</c>。
-    /// </summary>
-    /// <remarks>排队时间与流式正文都在预算之内；<c>Zero</c> 等同 <c>null</c>，负值抛 <c>ERR_BAD_OPTION_VALUE</c>。</remarks>
+    /// <summary>整条逻辑请求的总预算（<c>null</c> = 不设，默认）：跨重试、备用端点与对冲共享，每次尝试上限为 <c>min(Timeout, 剩余预算)</c>。</summary>
+    /// <remarks>排队时间与流式正文都计入；<c>Zero</c> 等同 <c>null</c>，负值抛 <c>ERR_BAD_OPTION_VALUE</c>。</remarks>
     private bool _totalTimeoutSet;
 
-    /// <summary>总预算的生效值（内部读取用，避免库内代码依赖已废弃的顶层属性）。</summary>
+    /// <summary>总预算的生效值（内部读取用）。</summary>
     internal TimeSpan? TotalTimeoutValue => _totalTimeout;
 
     /// <summary>这份配置是否已是合并后的生效配置，管线据此跳过二次合并；<see cref="Clone"/> 不继承它。</summary>
@@ -402,9 +376,7 @@ public sealed partial class AxiosConfig
     /// <summary>这份配置里的实例级项（<c>BaseAddress</c> / <c>CancellationToken</c> / 序列化注册表等）已按实例生效值填好，合并时沿用本实例默认值；随 <see cref="Clone"/> 继承。</summary>
     internal bool InstanceOptionsInherited { get; set; }
 
-    // 401 重放与凭据解析的按请求状态：默认请求从不触碰，故只在真正用到时才分配。
-    // 它们曾经是四个顶层字段，每个配置对象（包括每次请求合并出来的那份）都要背着 32 字节；
-    // 改成懒存储后，普通请求的克隆不再为它们付钱。
+    // 401 重放与凭据解析的按请求状态，只在真正用到时才分配。
     private AuthReplayState? _authReplay;
 
     private sealed class AuthReplayState
@@ -418,20 +390,17 @@ public sealed partial class AxiosConfig
         /// <summary>本次请求已解析出的 <c>Authorization</c> 头值，用于显式头冲突校验与重放前比对。</summary>
         internal string? ResolvedAuthorization;
 
-        /// <summary>凭据提供方落点写入的值（头 / 查询参数）：进响应缓存的键，避免不同凭据共用同一份缓存条目。</summary>
+        /// <summary>凭据提供方落点写入的值（头 / 查询参数），进响应缓存的身份键。</summary>
         internal string? ResolvedCredentialIdentity;
 
         /// <summary>本次请求的凭据提供方（见 <see cref="InternalCredentialProvider"/>），401 时据此触发重取。</summary>
         internal IAxiosCredentialProvider? InternalCredentialProvider;
 
-        /// <summary>按指针浅拷贝：五个字段都可独立改写，克隆出的状态不共享可变项。</summary>
+        /// <summary>按指针浅拷贝。</summary>
         internal AuthReplayState Clone() => (AuthReplayState)MemberwiseClone();
     }
 
-    /// <summary>
-    /// 本次发送收尾不释放模板正文：WebAPI 401 重放需要在第二次发送前继续持有调用方提供的 <c>HttpContent</c>。
-    /// 只在首次发送前设置（合并时显式搬运），<see cref="Clone"/> 不继承。
-    /// </summary>
+    /// <summary>本次发送收尾不释放模板正文：401 重放要在第二次发送前继续持有调用方给的 <c>HttpContent</c>。</summary>
     internal bool RetainBodyContent
     {
         get => _authReplay is { RetainBodyContent: true };
@@ -452,10 +421,7 @@ public sealed partial class AxiosConfig
         }
     }
 
-    /// <summary>
-    /// 被发送管线保留下来、供 401 重放使用的正文。仅当 <see cref="RetainBodyContent"/> 为 <c>true</c>
-    /// 且本次确实是 401 时写入失败配置；门面读走后负责释放。<see cref="Clone"/> 不继承。
-    /// </summary>
+    /// <summary>被发送管线保留下来、供 401 重放使用的正文，由门面读走后负责释放。</summary>
     internal HttpContent? RetainedReplayContent
     {
         get => _authReplay?.RetainedReplayContent;
@@ -504,10 +470,7 @@ public sealed partial class AxiosConfig
         }
     }
 
-    /// <summary>
-    /// 本次请求由托管凭据产生的身份值：落点不是 <c>Authorization</c> 头（自定义头 / 查询参数）时用它进缓存身份键，
-    /// 避免不同身份共用同一条缓存。只参与建键，不写请求。
-    /// </summary>
+    /// <summary>本次请求由托管凭据产生的身份值：落点不是 <c>Authorization</c> 头时用它进缓存身份键。</summary>
     internal string? ResolvedCredentialIdentity
     {
         get => _authReplay?.ResolvedCredentialIdentity;
@@ -527,10 +490,7 @@ public sealed partial class AxiosConfig
         }
     }
 
-    /// <summary>
-    /// 门面（WebAPI）挂进来的凭据提供方：不占 <see cref="TransportSettings.Auth"/> 槽位，
-    /// 省掉每请求一个槽位组与包装对象；显式设置的槽位（含显式清空）优先，<see cref="Clone"/> 不继承。
-    /// </summary>
+    /// <summary>门面（WebAPI）挂进来的凭据提供方：不占 <see cref="TransportSettings.Auth"/> 槽位；显式设置的槽位优先。</summary>
     internal IAxiosCredentialProvider? InternalCredentialProvider
     {
         get => _authReplay?.InternalCredentialProvider;
@@ -634,10 +594,7 @@ public sealed partial class AxiosConfig
     /// <summary>响应 transform 链长度（合并层记录继承段用）。</summary>
     internal int TransformResponseCount => _serialization?.TransformResponseCount ?? 0;
 
-    /// <summary>
-    /// 响应阶段的只读上下文：状态码、响应头、媒体类型与字符集；请求阶段为 <c>null</c>，由库写入、调用方只读。
-    /// <see cref="Clone"/> 不复制它。
-    /// </summary>
+    /// <summary>响应阶段的只读上下文：状态码、响应头、媒体类型与字符集；请求阶段为 <c>null</c>。</summary>
     public AxiosResponseInfo? Response { get; internal set; }
 
     /// <summary>深拷贝（Headers / transform 链 / Params / Data 的字典容器独立；其余引用成员按引用共享）。</summary>
@@ -650,7 +607,7 @@ public sealed partial class AxiosConfig
         clone._headers = _headers?.Clone();
         clone._removeHeaders = _removeHeaders?.ShareIfNotEmpty();
 
-        // 设置分组各自 Clone()；Serialization 的 transform 链在组内写时复制共享。
+        // 设置分组各自 Clone()。
         clone._serialization = _serialization?.Clone();
         clone._transport = _transport?.Clone();
         clone._limits = _limits?.Clone();
@@ -661,39 +618,38 @@ public sealed partial class AxiosConfig
         clone._failover = _failover?.Clone();
         clone._idempotency = _idempotency?.Clone();
 
-        // 并发闸门的懒存储同样是可变状态，克隆体不能与来源共享。
+        // 并发闸门的懒存储不能与来源共享。
         clone._concurrencyState = _concurrencyState?.Clone();
 
-        // 401 重放 / 凭据解析的懒状态：来源没有时为 null（普通请求克隆不分配）；
-        // 有则复制一份，随后由下面的清理语句把「只属于那一次发送」的三项归零。
+        // 401 重放 / 凭据解析的懒状态：有则复制一份，随后的清理语句把只属于那一次发送的项归零。
         clone._authReplay = _authReplay?.Clone();
 
-        // 短路 / 缓存的懒状态：同样只复制不共享，`Caching` 保留，其余三项随后清空。
+        // 短路 / 缓存的懒状态只复制不共享。
         clone._cacheState = _cacheState?.Clone();
 
-        // 分组 facade 持有「创建它的那份配置」的引用，克隆侧必须重建，否则读写会落到来源配置上。
+        // 分组 facade 必须重建。
         clone._resilienceFacade = null;
         clone._concurrencyFacade = null;
 
-        // Params / Data 是可变的调用方容器，克隆时隔离一份。
+        // Params / Data 是可变的调用方容器，隔离一份。
         clone._params = IsolateMutableContainer(_params);
         clone._data = IsolateMutableContainer(_data);
 
-        // 响应上下文属于某一次响应，不随克隆带过去。
+        // 响应上下文不随克隆带过去。
         clone.Response = null;
 
-        // 短路响应只属于那一次请求，克隆时清空。
+        // 短路响应只属于那一次请求。
         clone.ShortCircuit = null;
 
-        // 缓存是实例级共享状态，随克隆保留（MemberwiseClone 已复制，这里只作说明）。
+        // 缓存是实例级共享状态，随克隆保留。
 
-        // 「要不要留原始字节」属于那一次请求的缓存判定，克隆出来的是新请求的输入。
+        // 「要不要留原始字节」属于那一次请求的缓存判定。
         clone.CacheCaptureRawBody = false;
 
-        // 条件请求复用的旧条目只属于那一次请求：克隆是「新请求的输入」，不能带着旧条目走。
+        // 条件请求的旧条目只属于那一次请求。
         clone.RevalidationEntry = null;
 
-        // 已生成的幂等键属于某一次发送：克隆是「新请求的输入」，不能带着旧键走。
+        // 已生成的幂等键属于某一次发送。
         if (clone._idempotency is not null)
         {
             clone._idempotency.GeneratedKey = null;
@@ -724,9 +680,7 @@ public sealed partial class AxiosConfig
         return clone;
     }
 
-    /// <summary>
-    /// 派生一份按尝试隔离的浅拷贝：子设置与集合全部按引用共享，只把 <see cref="Response"/> 清空。
-    /// </summary>
+    /// <summary>派生一份按尝试隔离的浅拷贝：子设置与集合按引用共享，只把 <see cref="Response"/> 清空。</summary>
     internal AxiosConfig CloneForAttempt()
     {
         var clone = (AxiosConfig)MemberwiseClone();
@@ -734,11 +688,8 @@ public sealed partial class AxiosConfig
         return clone;
     }
 
-    /// <summary>
-    /// 把 <see cref="Params"/> / <see cref="Body"/> 里调用方持有的可变字典复制一份，避免克隆体与实例默认值指向同一对象；
-    /// 其余类型（匿名对象 / 集合 / 流 / 字符串）原样共享。
-    /// </summary>
-    /// <remarks>字符串键字典按原类型 + 原 comparer 复制；其余 <see cref="IDictionary{TKey,TValue}"/> 退化成 <see cref="Dictionary{TKey,TValue}"/>（内容与顺序不变，运行时类型会变）。</remarks>
+    /// <summary>把 <see cref="Params"/> / <see cref="Body"/> 里调用方持有的可变字典复制一份，其余类型（匿名对象 / 集合 / 流 / 字符串）原样共享。</summary>
+    /// <remarks>字符串键字典按原类型 + 原 comparer 复制；其余 <see cref="IDictionary{TKey,TValue}"/> 退化成 <see cref="Dictionary{TKey,TValue}"/>。</remarks>
     private static object? IsolateMutableContainer(object? value)
     {
         // 必须在 switch 之前挡掉：null 落到 `_ => value` 分支会被当容器共享。

@@ -351,7 +351,7 @@ public sealed class CacheExample : IExample
                     body: Body,
                     headers: Headers,
 
-                    // 多值字典非空时库只用它建响应头，单值字典整份忽略：两者同源，行为与原来一致。
+                    // 多值字典非空时库只用它建响应头，单值字典整份忽略。
                     multiValueHeaders: MultiValueHeaders.Count > 0
                         ? MultiValueHeaders.ToDictionary(
                             header => header.Key,

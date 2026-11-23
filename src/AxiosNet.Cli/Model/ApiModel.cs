@@ -67,7 +67,7 @@ internal enum ApiTypeKind
 /// <param name="Message">给人看的说明。</param>
 internal sealed record ApiWarning(string Code, string Location, string Message);
 
-/// <summary>警告收集器：去重并设置上限，避免病态文档刷屏。</summary>
+/// <summary>警告收集器：去重并设置上限。</summary>
 internal sealed class WarningCollector
 {
     /// <summary>单次运行的警告上限；超出后静默丢弃，报告与摘要都不会无限膨胀。</summary>

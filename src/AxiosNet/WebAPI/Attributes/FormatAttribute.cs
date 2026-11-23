@@ -3,13 +3,11 @@ using AxiosNet.Metadata;
 namespace AxiosNet.WebAPI.Attributes;
 
 /// <summary>
-/// 成员级值格式化：作用于路径 / 查询 / 请求头 / 表单 / multipart 文本部件 / 裸标量正文 / 聚合正文的成员。
-/// 优先级高于实例级 <see cref="AxiosConfig.SerializationSettings.ValueText"/>；结构化正文内部归序列化器。
+/// 成员级值格式化：作用于路径 / 查询 / 请求头 / 表单 / multipart 文本部件 / 裸标量正文 / 聚合正文的成员；优先级高于实例级 <see cref="AxiosConfig.SerializationSettings.ValueText"/>。
 /// </summary>
 /// <remarks>
-/// 两种形态互斥：格式串走 <see cref="IFormattable"/>（不变文化），格式化函数走静态方法
-/// <c>public static string? M(object? value, ValueTextChannel channel)</c>（返回 <c>null</c> 回落默认）。
-/// 集合 / 字典上逐元素应用；元素不是标量、与结构化 <c>[Body]</c> / <c>[RootBody]</c> 同用、用在文件部件上都在构建期报错。
+/// 两种形态互斥：格式串走 <see cref="IFormattable"/>（不变文化），格式化函数走静态方法 <c>public static string? M(object? value, ValueTextChannel channel)</c>（返回 <c>null</c> 回落默认）。
+/// 集合 / 字典上逐元素应用；元素非标量、与结构化 <c>[Body]</c> / <c>[RootBody]</c> 同用、用在文件部件上都在构建期报错。
 /// </remarks>
 /// <example>
 /// <code>
@@ -38,8 +36,7 @@ public sealed class FormatAttribute : Attribute
     /// <summary>格式化函数的静态方法名。</summary>
     public string? FormatterMethod { get; }
 
-    /// <summary>按格式串格式化。</summary>
-    /// <param name="format">复合格式串（如 <c>yyyy-MM-dd</c>）。</param>
+    /// <summary>按格式串格式化；复合格式串如 <c>yyyy-MM-dd</c>，空白抛 <see cref="ArgumentException"/>。</summary>
     public FormatAttribute(string format)
     {
         if (string.IsNullOrWhiteSpace(format))
@@ -50,9 +47,7 @@ public sealed class FormatAttribute : Attribute
         Format = format.Trim();
     }
 
-    /// <summary>按静态格式化函数取文本。</summary>
-    /// <param name="formatterType">声明格式化函数的类型。</param>
-    /// <param name="formatterMethod">静态方法名；签名须为 <c>public static string? M(object? value, ValueTextChannel channel)</c>。请写 <c>nameof(...)</c>：拼错由编译器报错，签名不符由源生成器报 <c>AXA015</c>。</param>
+    /// <summary>按静态格式化函数取文本；方法签名须为 <c>public static string? M(object? value, ValueTextChannel channel)</c>，请写 <c>nameof(...)</c>。</summary>
     public FormatAttribute(Type formatterType, string formatterMethod)
     {
         ArgumentNullException.ThrowIfNull(formatterType);

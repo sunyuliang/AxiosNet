@@ -764,7 +764,7 @@ await client.GetAsync("maybe-404", c => c.ValidateStatus = s => s is >= 200 and 
 
 > 按请求显式赋 `null` 可以关掉实例默认的 `Resilience.Retry.Policy` / `Resilience.Circuit.Policy` / `Resilience.Failover.Endpoints`，这与「没设置」是两种语义。
 
-> **`Resilience` 与 `Resilience.Concurrency` 是只读门面，不能整组替换**：这两组只能逐叶子赋值（`config.Resilience.Retry.Policy = ...`、`config.Resilience.Concurrency.QueueTimeout = ...`），`config.Resilience = other.Resilience` 编译不过。原因是两个门面都持有回指配置的引用，靠它读写「未设置 / 已设置」标记——换一个外部构造的实例进去会让标记与实际存储错位。`Limits` / `Serialization` / `Transport` / `Observability` 则是普通属性，整组可写。要重置整组治理配置：逐叶子赋 `null` / 默认值，或换成一份新的 `AxiosConfig`。
+> **`Resilience` 与 `Resilience.Concurrency` 是只读门面，不能整组替换**：这两组只能逐叶子赋值（`config.Resilience.Retry.Policy = ...`、`config.Resilience.Concurrency.QueueTimeout = ...`），`config.Resilience = other.Resilience` 编译不过。`Limits` / `Serialization` / `Transport` / `Observability` 则是普通属性，整组可写。要重置整组治理配置：逐叶子赋 `null` / 默认值，或换成一份新的 `AxiosConfig`。
 
 ### 客户端
 
@@ -1040,8 +1040,8 @@ HttpConnectionPool.Release("orders");   // 摘除并优雅释放；此后同名�
 - DNS 变更的收敛窗口由 `PooledConnectionLifetime` 决定；需要自定义建连（拨到 UDS / 本机传输 / 自管 DNS）时直接设 `ConnectionPoolOptions.ConnectCallback`。
 - `ConnectCallback` 与 `MaxResponseHeadersLength` 只作用于库默认 Handler：`HandlerFactory` 里用 `ctx.CreateDefaultHandler()` 建内层 Handler 会带过去，完全自建 Handler 则需自行映射。
 - **h2 keep-alive 默认关闭**（与 `SocketsHttpHandler` 一致，不悄悄改变线上行为）：把 `KeepAlivePingDelay` 设成正值（常见 30 秒）即打开，只在有在途请求时发。
-- 它对付的是「静默掐断」：AWS ALB 默认 60 秒空闲断连、NAT 表 30–120 秒，客户端以为连接还在池里，下一个请求撞上已关闭的连接 —— 要么多付一次 TLS 握手，要么在 h2 上收到 `GOAWAY` / 流重置（表现为偶发 `ERR_NETWORK`）。代价是一个 17 字节的帧，比一次重连便宜得多。
-- 低频高价值调用（webhook 回调、定时任务）可以配 `Always`，连空闲期也维持。反过来，链路上若有**不回应 `PING`** 的代理 / 中间盒，打开后连接会被判死重连（`ERR_NETWORK` 变多）—— 这也是它默认关闭的原因。
+- 打开后每隔 `KeepAlivePingDelay` 发一次 ping，超时未收到 `PING ACK` 即断开重连。
+- 低频高价值调用（webhook 回调、定时任务）可以配 `Always`，连空闲期也维持。链路上的代理 / 中间盒不回应 `PING` 时，打开后连接会被判死重连（`ERR_NETWORK` 变多）。
 - **`UseCookies` 只按域 / 路径隔离，不按业务身份隔离**：默认档一份容器，命名传输档各一份（见[传输档](#传输档)）。多租户、爬虫、按用户切身份的进程请给每个身份一条档，否则不同身份会串 cookie。
 - 容器可用 `pool.Cookies` / `pool.GetCookies("档名")` 直接读写（线程安全），用于启动预置或排查某个 cookie 为什么没发出去。
 - 登出用 `pool.ClearCookies()`：会换掉**所有档**的容器并回收现有 origin 节点，后续请求因此重建连接；在途请求不打断，可能仍带旧 cookie。
@@ -1486,7 +1486,7 @@ var client = Axios.Create(c => c.Resilience.Failover.Endpoints = new[]
 await client.GetAsync("health", c => c.Resilience.Failover.Endpoints = null);
 ```
 
-端点提供 **origin 与路径前缀**，请求自己的 path / query 原样接在后面。请求 `https://primary/v1/users?page=2` + 端点 `https://mirror/api` → `https://mirror/api/v1/users?page=2`（端点前缀是**加**在请求路径前面，不是替换它 —— 别把请求里已有的前缀再写一遍）。
+端点提供 **origin 与路径前缀**，请求自己的 path / query 原样接在后面。请求 `https://primary/v1/users?page=2` + 端点 `https://mirror/api` → `https://mirror/api/v1/users?page=2`（端点前缀加在请求路径前面，请求里已有的前缀不要重复写）。
 
 | 情况 | 换端点？ |
 | --- | --- |
@@ -1535,7 +1535,7 @@ await client.PostAsync("orders", order, c => c.Resilience.Idempotency.Key = "ups
 - `Key`（显式值）优先于 `KeyFactory`；两者都没有时用 `Guid` 的 `N` 格式。
 - `HeaderName` 默认 `Idempotency-Key`；已经显式写了同名头的请求不会被覆盖。
 - 键工厂返回空白、头名非法都在发请求前抛 `ERR_BAD_OPTION_VALUE`。
-- **对冲 + 幂等键**：两条分支同键，服务端去重后其中一条会拿到「已处理」的结果。这正是幂等键该有的行为，但要求服务端真的按键去重 —— 否则只是把同一份写操作发了两次。
+- **对冲 + 幂等键**：两条分支同键，服务端去重后其中一条拿到「已处理」的结果；要求服务端真的按键去重，否则会把同一份写操作发两次。
 
 ### 尝试管线
 
@@ -1567,7 +1567,7 @@ using var client = Axios.Create(c => c.Resilience.Retry.Policy = new RetryPolicy
 - **审计默认在链上**：`Attempt.Audit` 是默认链第 6 项（闸门之后、终端之前），订阅 `AxiosNet.Attempt` 就能拿到每次尝试的耗时 / 状态码 / 错误码，不订阅时只做一次开关判定、不建状态机。它已在链上，再 `Append(Attempt.Audit)` 会被当作重复内置项拒绝。`Append` 的自定义项排在它内侧（更靠近终端），因此它们的执行时间计入审计的事件耗时。
 - **顺序是契约**：重试在最外层，于是每次尝试都会重过一遍备用端点、熔断、对冲与闸门；备用端点在熔断之外，于是每个端点各自过熔断；熔断在对冲之外，于是整组分支只记一笔；熔断排在闸门之前，被拒的请求不占槽位。
 - **重排与摘除**：`AxiosAttemptPipeline.Create(...)` 显式列出全部中间件（第一个最外层），`Remove(Attempt.Gate)` 摘掉某项；不可变，每次编辑返回新实例。内置项重复出现会报错。
-- **不提供「放到最外层」的入口**：那个位置每次请求只调用一次，与响应拦截器完全同构。`InsertBefore(Attempt.Retry, ...)` 会明确拒绝并指向 `client.Interceptors.Response`——它还有 `OnRejected`、运行时增删、覆盖短路三个额外好处。
+- **不提供「放到最外层」的入口**：那个位置每次请求只调用一次，与响应拦截器完全同构。`InsertBefore(Attempt.Retry, ...)` 会明确拒绝并指向 `client.Interceptors.Response`。
 - **并发槽位不用你管**：闸门自己兜底归还 —— 中间件不调 `next`（自己给一份响应）或自己抛异常，槽位也不会漏。唯一不让闸门归还的情况是**库内**的流式响应：槽位随正文交给 `StreamOwner`，由流的 `Dispose` 释放，正文下载期间该请求一直占着额度。中间件自建 `StreamOwner` 不算这一例外：闸门照常归还自己的槽位，自建凭证不占并发额度。
 - **中间件也能登记自己的跨终端资源**：`ctx.WithLease(lease)` 往上下文里追加一个 `IDisposable`（审计会话、批处理句柄、外部租约…），不覆盖已登记的那个。登记进去之后**别再自己释放**：终端在失败路径统一处置，流式成功时全部随正文转交给 `StreamOwner`；释放是登记顺序的**逆序**（后登记的可能依赖先登记的）。自己中途抛异常仍要自己兜底——终端一次都没执行时没人替你释放。
 - **谁创建谁释放**：中间件自己 clone 的 `HttpRequestMessage` 由自己释放（模板仍归管线）。替换响应时必须处置旧的 `AxiosAttemptResult.StreamOwner`，或把它带进新结果（`new AxiosAttemptResult(newResponse, old.StreamOwner)`）—— 它持有连接租约与并发槽位，丢弃即泄漏。
@@ -2216,7 +2216,7 @@ api.CredentialProvider = CredentialProviders.Create(async (_, ct) =>
 - **钩子能看到什么**：最终绝对 URI（路径参数已替换、query 已合并转义）、已序列化的正文字节、**已写入的凭据头**；每次尝试拿到的是独占副本，改头不会污染重试 / 对冲的其它分支。
 - **401 重放按新令牌重签**：重放重新走「解析凭据 → 拼 URL → 触发钩子」，签名里的令牌与头里的令牌天然一致。
 - **签名头进不了缓存键**（建键早于钩子）。开缓存时令牌仍会进键，但缓存命中不发请求、也就不会签名——签名接口建议关缓存，或只对 `Cache-Control: no-store` 的响应落库。
-- **每次尝试都触发**：重试 / 换端点 / 对冲各签一次，时间戳与 nonce 都是新的，这正是签名要的；幂等键不要写在这里（每次换值等于两次写操作），用 [`Resilience.Idempotency`](#幂等键)。
+- **每次尝试都触发**：重试 / 换端点 / 对冲各签一次，时间戳与 nonce 都是新的；幂等键不要写在这里（每次换值等于两次写操作），用 [`Resilience.Idempotency`](#幂等键)。
 - **读正文有代价**：已缓冲正文（JSON / 表单 / `byte[]` / `string`）直接取字节；流式正文会被读走。只签已缓冲正文，或只签头。
 - **异常归类**：钩子抛异常 → `ERR_BAD_REQUEST`，请求不发出、不占连接；钩子里的取消 / 超时按本次尝试归属（`ERR_CANCELED` / `ECONNABORTED`）。
 
@@ -2252,7 +2252,7 @@ api.CredentialProvider = CredentialProviders.Create(async (ctx, ct) =>
 });
 ```
 
-代价是这三件事要自己兜：
+注意三点：
 
 - **`transformRequest` 会在你之后改正文**：transform 链作用于 `config.Body`，签的是加工前、发出去的是加工后。项目里注册过 transformRequest（统一拆包 / 加壳）时不要走这条路，用上面的钩子写法。
 - **401 不重放**：`Custom` 由库判为不可刷新，`invalidate:` 只影响下一次取令牌，这一次 401 照样抛；要重放请在调用方 catch 后重发。
@@ -2311,7 +2311,7 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 
 只有同时满足「状态码 2xx」「拿到了原始字节（非流式）」「`ShouldCache` 通过」才落库；空正文同样算原始字节（HEAD / 204 本就没有正文，缓存的是头）。流式响应、响应拦截器换了响应对象、写缓存失败都只是「这次不入缓存」，不影响请求本身。范围请求（带 `Range` 头）默认不参与缓存，206 / 带 `Content-Range` 的响应也不落库——键只有方法 + URL，分段正文会被后续普通 GET 当成整份内容交付。
 
-**流式请求不参与缓存**：`ResponseType = Stream` 的请求默认连查询都不做（调用方要的是流，命中会把整份正文缓冲进内存）；已落库的条目仍可被普通调用命中。要让流式请求也查缓存，用 `ShouldCache` 放行 —— 但请确认这正是你要的所有权语义。
+**流式请求不参与缓存**：`ResponseType = Stream` 的请求默认连查询都不做（调用方要的是流，命中会把整份正文缓冲进内存）；已落库的条目仍可被普通调用命中。要让流式请求也查缓存，用 `ShouldCache` 放行。
 
 **三种取值方式**（`FreshnessMode`）：
 

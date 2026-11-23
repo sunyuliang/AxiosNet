@@ -18,9 +18,7 @@ namespace AxiosNet.Tests.Regression;
 /// </summary>
 public sealed class FormatMatrixTests
 {
-    // ----------------------------------------------------------------
-    // 共享数据与期望
-    // ----------------------------------------------------------------
+// 共享数据与期望
 
     private static readonly DateTime WhenUtc = new(2024, 3, 5, 6, 7, 8, DateTimeKind.Utc);
     private static readonly DateTimeOffset OffsetValue = new(2024, 3, 5, 6, 7, 8, TimeSpan.FromHours(2));
@@ -128,9 +126,7 @@ public sealed class FormatMatrixTests
         _ => null
     };
 
-    // ----------------------------------------------------------------
-    // G1：C01 / C02 / C03 / C04 —— 核心直调 Params
-    // ----------------------------------------------------------------
+// G1：C01 / C02 / C03 / C04 —— 核心直调 Params
 
     [Fact]
     public void C01_DirectParams_RootPoco_AllShapes_Default()
@@ -347,9 +343,7 @@ public sealed class FormatMatrixTests
         });
     }
 
-    // ----------------------------------------------------------------
-    // G1：C05–C08 —— 声明式查询
-    // ----------------------------------------------------------------
+// G1：C05–C08 —— 声明式查询
 
     [Fact]
     public void C05_DeclarativeQuery_AllShapes_Default()
@@ -531,9 +525,7 @@ public sealed class FormatMatrixTests
         AssertPairs(QueryPairs(hookedUri), new[] { ("N[X]", "Hn1"), ("N[Y]", "H9") });
     }
 
-    // ----------------------------------------------------------------
-    // G1：C09 / C10 / C11 —— 路径 / 请求头
-    // ----------------------------------------------------------------
+// G1：C09 / C10 / C11 —— 路径 / 请求头
 
     [Fact]
     public void C09_Path_AllScalarShapes_Default()
@@ -653,9 +645,7 @@ public sealed class FormatMatrixTests
         Assert.Equal("two", headers["X-B"]);
     }
 
-    // ----------------------------------------------------------------
-    // G1：C12 / C13 —— urlencoded
-    // ----------------------------------------------------------------
+// G1：C12 / C13 —— urlencoded
 
     [Fact]
     public async Task C12_DirectForm_AllShapes_DefaultAndHook()
@@ -694,9 +684,7 @@ public sealed class FormatMatrixTests
         AssertPairs(FormPairs(Assert.Single(hookedServer.Received)), Hooked());
     }
 
-    // ----------------------------------------------------------------
-    // G1：C14–C19 —— multipart
-    // ----------------------------------------------------------------
+// G1：C14–C19 —— multipart
 
     [Fact]
     public async Task C14_MultipartDirectParts_AllShapes_DefaultAndHook()
@@ -790,9 +778,7 @@ public sealed class FormatMatrixTests
         Assert.Contains(parts, p => p.Name == "Nums" && p.Content == "2");
     }
 
-    // ----------------------------------------------------------------
-    // G1：C20 / C21 —— 正文
-    // ----------------------------------------------------------------
+// G1：C20 / C21 —— 正文
 
     [Theory]
     [InlineData("7", "7")]
@@ -875,9 +861,7 @@ public sealed class FormatMatrixTests
     }
 #endif
 
-    // ----------------------------------------------------------------
-    // G2：配置组合
-    // ----------------------------------------------------------------
+// G2：配置组合
 
     [Fact]
     public void K03_K04_MemberFormat_WinsOverHook()
@@ -983,9 +967,7 @@ public sealed class FormatMatrixTests
         }
     }
 
-    // ----------------------------------------------------------------
-    // G4：错误路径
-    // ----------------------------------------------------------------
+// G4：错误路径
 
     [Fact]
     public async Task E1_DirectFormatterThrows_IsOptionError()
@@ -1057,9 +1039,7 @@ public sealed class FormatMatrixTests
         Assert.NotEmpty(errors);
     }
 
-    // ----------------------------------------------------------------
-    // G5：并发
-    // ----------------------------------------------------------------
+// G5：并发
 
     [Fact]
     public async Task X02_CrossConfigConcurrency_NoCrosstalk()
@@ -1092,9 +1072,7 @@ public sealed class FormatMatrixTests
         Assert.Contains(values, value => value.StartsWith("2024-03-05T06:07", StringComparison.Ordinal));
     }
 
-    // ----------------------------------------------------------------
-    // 辅助
-    // ----------------------------------------------------------------
+// 辅助
 
     private static MxQueryRequest QueryRequest(MxPayload source) => new()
     {
@@ -1344,9 +1322,7 @@ public sealed class FormatMatrixTests
     }
 }
 
-// --------------------------------------------------------------------
 // 测试模型
-// --------------------------------------------------------------------
 
 public enum MxMode
 {

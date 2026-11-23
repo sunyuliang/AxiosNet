@@ -88,7 +88,7 @@ namespace AxiosNet.SourceGen
         private static string? GetProperty(AnalyzerConfigOptionsProvider provider, string key)
             => provider.GlobalOptions.TryGetValue(key, out var value) ? value : null;
 
-        // 输出阶段：开关关闭时只在 PublishAot 下报一条提示，否则按全名去重后逐模型生成文件并汇总诊断。
+        // 输出阶段：开关关闭时只在 PublishAot 下报一条提示；否则按全名去重后逐模型生成文件并汇总诊断。
         private static void Execute(SourceProductionContext context, ImmutableArray<RequestModelInfo> models, GeneratorOptions options)
         {
             if (!options.Enabled)
@@ -365,13 +365,7 @@ namespace AxiosNet.SourceGen
             }
         }
 
-        /// <summary>取出路由模板里的占位符名（<c>{id}</c> → <c>id</c>），跳过 <c>{{</c> 转义、空名与非标识符内容。</summary>
-        /// <remarks>
-        /// 文法取自与运行期共用的 <see cref="PathGrammar"/>。不匹配的花括号在这里跳过而不是当成占位符，
-        /// 否则 <c>{id:int}</c> 这类模板会报出误导性的「没有成员标注 [Path]」，交给运行期诊断更准确。
-        /// </remarks>
-        /// <param name="template">路由模板。</param>
-        /// <returns>占位符名序列。</returns>
+        /// <summary>取出路由模板里的占位符名（<c>{id}</c> → <c>id</c>），跳过 <c>{{</c> 转义、空名与非标识符内容；不匹配的花括号交给运行期诊断。</summary>
         private static IEnumerable<string> RoutePlaceholders(string template)
         {
             var index = 0;
@@ -927,8 +921,7 @@ namespace AxiosNet.SourceGen
 
             if (left is INamedTypeSymbol leftNamed && right is INamedTypeSymbol rightNamed)
             {
-                // 元组语法与底层 ValueTuple 只差元素名，CLR 签名完全相同：先统一到 System.ValueTuple 再比较，
-                // 否则「基类写元组、派生类写 ValueTuple」的 new 会被误判为不同类型而多绑一个成员。
+                // 元组语法与底层 ValueTuple 的 CLR 签名相同：先统一到 System.ValueTuple 再比较。
                 if (leftNamed.IsTupleType)
                 {
                     var underlying = GetValueTuple(leftNamed);

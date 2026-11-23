@@ -12,9 +12,7 @@ namespace AxiosNet.Tests.Resilience;
 /// </summary>
 public sealed class CircuitBreakerTests
 {
-    // ------------------------------------------------------------------
-    // 打开 / 拒绝
-    // ------------------------------------------------------------------
+// 打开 / 拒绝
 
     [Fact]
     public async Task ConsecutiveFailures_OpenCircuit_ThenRejectWithoutSending()
@@ -228,9 +226,7 @@ public sealed class CircuitBreakerTests
         Assert.Equal(AxiosException.ErrCircuitOpen, rejected.Code);
     }
 
-    // ------------------------------------------------------------------
-    // 半开探测与恢复
-    // ------------------------------------------------------------------
+// 半开探测与恢复
 
     [Fact]
     public async Task HalfOpen_ProbeSucceeds_ClosesCircuit()
@@ -704,9 +700,7 @@ public sealed class CircuitBreakerTests
         Assert.Contains(transitions, t => t.Previous == AxiosCircuitState.HalfOpen && t.Current == AxiosCircuitState.Closed);
     }
 
-    // ------------------------------------------------------------------
-    // 滚动窗口失败率：低流量下「连续失败」永远攒不够时的兜底
-    // ------------------------------------------------------------------
+// 滚动窗口失败率：低流量下「连续失败」永远攒不够时的兜底
 
     [Fact]
     public void FailureRate_InLowFrequencyTraffic_TripsCircuit()
@@ -817,9 +811,7 @@ public sealed class CircuitBreakerTests
         Assert.Equal(AxiosCircuitState.Closed, breaker.GetState(host));
     }
 
-    // ------------------------------------------------------------------
-    // 慢启动：恢复期随连续成功逐步放宽探测并发
-    // ------------------------------------------------------------------
+// 慢启动：恢复期随连续成功逐步放宽探测并发
 
     [Fact]
     public void Recovery_GrowsProbeAllowance_ThenCloses()
@@ -988,9 +980,7 @@ public sealed class CircuitBreakerTests
         Assert.Empty(server.Received);
     }
 
-    // ------------------------------------------------------------------
-    // 维度隔离与自定义维度
-    // ------------------------------------------------------------------
+// 维度隔离与自定义维度
 
     [Fact]
     public async Task Circuit_IsPerHost_NotGlobal()
@@ -1276,9 +1266,7 @@ public sealed class CircuitBreakerTests
         Assert.Empty(server.Received);
     }
 
-    // ------------------------------------------------------------------
-    // 与重试 / 配置合并的配合
-    // ------------------------------------------------------------------
+// 与重试 / 配置合并的配合
 
     [Fact]
     public async Task RetryStopsWhenCircuitOpens()
@@ -1551,9 +1539,7 @@ public sealed class CircuitBreakerTests
     private static AxiosCircuitContext FailedContext(string host)
         => new(host, new Uri("https://" + host + "/orders"), null, new HttpRequestException("down"));
 
-    // ------------------------------------------------------------------
-    // Reset 与在途旧票：旧结果不得污染新代次
-    // ------------------------------------------------------------------
+// Reset 与在途旧票：旧结果不得污染新代次
 
     [Fact]
     public async Task Reset_DoesNotLetAnInFlightOldTicket_TripTheNewGeneration()

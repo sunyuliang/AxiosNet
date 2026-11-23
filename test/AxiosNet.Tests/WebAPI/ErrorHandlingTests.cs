@@ -10,9 +10,7 @@ namespace AxiosNet.Tests.WebAPI;
 /// </summary>
 public sealed class ErrorHandlingTests
 {
-    // ------------------------------------------------------------------
-    // 错误工厂 / 强类型错误
-    // ------------------------------------------------------------------
+// 错误工厂 / 强类型错误
 
     [Fact]
     public async Task ErrorFactory_ProducesTypedApiError_FromErrorBody()
@@ -81,9 +79,7 @@ public sealed class ErrorHandlingTests
         Assert.Contains("error-body", CapturingErrorFactory.LastBody!);
     }
 
-    // ------------------------------------------------------------------
-    // 测试模型
-    // ------------------------------------------------------------------
+// 测试模型
 
 
     [Get("fail")]

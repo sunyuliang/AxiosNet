@@ -1,7 +1,6 @@
 #if NETSTANDARD2_0
-// netstandard2.0 兼容资产的集中补位：用全局别名把源码里的少数 BCL 类型名接到库内 shim，
-// 避免把 #if 撒进上百个文件。别名只在这个资产上生效，net6.0 / net8.0 完全看不到本文件。
-// 每个 shim 只复刻源码真正用到的那部分成员，行为与 .NET 6+ 的对应 API 对齐。
+// netstandard2.0 兼容资产的集中补位：用全局别名把源码里的少数 BCL 类型名接到库内 shim。
+// 别名只在这个资产上生效，net6.0 / net8.0 看不到本文件。
 global using ArgumentNullException = AxiosNet.Compatibility.ArgumentNullExceptionCompat;
 global using RuntimeFeature = AxiosNet.Compatibility.RuntimeFeatureCompat;
 global using HashCode = AxiosNet.Compatibility.HashCodeCompat;
@@ -19,11 +18,7 @@ using System.Threading.Tasks;
 
 namespace AxiosNet.Compatibility;
 
-/// <summary>
-/// <c>ArgumentNullException.ThrowIfNull</c> 的等价物：netstandard2.0 没有这个静态方法。
-/// 继承真正的 <see cref="System.ArgumentNullException"/>，所以 <c>throw new</c> / 参数名 / 消息语义不变；
-/// 兼容资产里没有 <c>catch (ArgumentNullException)</c> 的代码路径。
-/// </summary>
+/// <summary><c>ArgumentNullException.ThrowIfNull</c> 的等价物：继承真正的 <see cref="System.ArgumentNullException"/>，参数名与消息语义不变。</summary>
 internal sealed class ArgumentNullExceptionCompat : System.ArgumentNullException
 {
     /// <summary>不带消息的空构造。</summary>
@@ -63,10 +58,7 @@ internal sealed class ArgumentNullExceptionCompat : System.ArgumentNullException
     }
 }
 
-/// <summary>
-/// <c>RuntimeFeature.IsDynamicCodeSupported</c> 的等价物。兼容资产只跑在 CLR / CoreCLR 的 JIT 上，
-/// 不存在 Native AOT，因此恒为 true；库内的 RuntimeSupport.ForceNoDynamicCode 测试开关仍然生效。
-/// </summary>
+/// <summary><c>RuntimeFeature.IsDynamicCodeSupported</c> 的等价物：兼容资产只跑 JIT，恒为 true。</summary>
 internal static class RuntimeFeatureCompat
 {
     /// <summary>兼容资产始终支持动态代码生成。</summary>
@@ -109,7 +101,7 @@ internal static class ReferenceEqualityComparerCompat
         /// <param name="x">左值。</param>
         /// <param name="y">右值。</param>
         /// <returns>是否同一实例。</returns>
-        // new 是刻意的：object.Equals(object, object) 是静态成员，实例方法与之同名会被判为隐藏。
+        // new 是刻意的：object.Equals(object, object) 是静态成员。
         public new bool Equals(object? x, object? y) => ReferenceEquals(x, y);
 
         /// <summary>对象标识哈希。</summary>
@@ -119,10 +111,7 @@ internal static class ReferenceEqualityComparerCompat
     }
 }
 
-/// <summary>
-/// <c>ReadOnlyMemoryContent</c> 的等价物：netstandard2.0 的 System.Net.Http 没有这个类型。
-/// 这里保留同样的「不拥有内存、只按引用持有」契约，写出时多一次数组拷贝（兼容资产的已知性能降级）。
-/// </summary>
+/// <summary><c>ReadOnlyMemoryContent</c> 的等价物：保留「不拥有内存、只按引用持有」契约，写出时多一次数组拷贝。</summary>
 internal sealed class ReadOnlyMemoryContentCompat : HttpContent
 {
     // 由调用方持有生命周期；本内容不释放它。

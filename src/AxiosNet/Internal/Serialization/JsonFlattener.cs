@@ -4,7 +4,7 @@ namespace AxiosNet.Internal.Serialization;
 
 /// <summary>
 /// JSON 树展平的接收方：遍历只写一份，表单与 multipart 各自决定数组命名与叶子落点。
-/// 用结构体实现并按 <c>ref</c> 传递，避免引入闭包 / 装箱，也不比原来的两份递归多分配。
+/// 用结构体实现并按 <c>ref</c> 传递。
 /// </summary>
 internal interface IJsonFlattenSink
 {

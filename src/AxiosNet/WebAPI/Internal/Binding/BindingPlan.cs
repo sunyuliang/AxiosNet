@@ -6,13 +6,11 @@ using AxiosNet.WebAPI.Attributes;
 namespace AxiosNet.WebAPI.Internal.Binding;
 
 /// <summary>
-/// 一份声明（类模型 / 接口方法）的绑定计划：构建期完成全部校验，运行期只做数组遍历。
-/// 取值的来源由 <see cref="IValueSource"/> 抽象，类模型传模型实例，接口模型传参数数组。
-/// 值 → 文本统一走 <see cref="ValueText"/>，本类只决定通道。
+/// 一份声明（类模型 / 接口方法）的绑定计划：构建期完成全部校验，运行期只做数组遍历；值 → 文本统一走 <see cref="ValueText"/>，本类只决定通道。
 /// </summary>
 internal sealed class BindingPlan
 {
-    // 空计划：没有参数要绑的方法共用这一份，省一次分配。
+    /// <summary>空计划：无任何绑定通道。</summary>
     internal static readonly BindingPlan Empty = new(
         [],
         [],
@@ -52,12 +50,7 @@ internal sealed class BindingPlan
         _bodyEntries = bodyEntries;
     }
 
-    /// <summary>
-    /// 请求体原始值：只有一个正文来源且为 <see cref="RootBodyAttribute"/> 时不加壳；
-    /// 其余情况合并成一层——<c>[Body]</c> / 未标注成员按键写入，<c>[RootBody]</c> 结构化值展开属性、标量按键写入。
-    /// </summary>
-    /// <param name="target">请求模型实例或方法参数数组。</param>
-    /// <param name="formatter">实例级格式化钩子；<c>null</c> 表示不处理。</param>
+    /// <summary>请求体原始值：只有一个 <see cref="RootBodyAttribute"/> 来源时不加壳，其余情况合并成一层。</summary>
     public object? ResolveBodyValue(object target, Func<object?, ValueTextChannel, string?>? formatter)
     {
         if (_bodyEntries.Length == 0)
@@ -68,8 +61,7 @@ internal sealed class BindingPlan
         // 单个 [RootBody]：保持原样正文（任何序列化器、任何编码都能用）。
         if (_bodyEntries.Length > 1 || !_bodyEntries[0].IsRootBody)
         {
-            // 合并正文：显式 [Body] / 未标注成员按键名写入；[RootBody] 结构化值展开、标量按键写入。
-            // 键名冲突由序列化阶段统一校验（对象的属性名要到运行时才知道）。
+            // 合并正文：[Body] / 未标注成员按键名写入，[RootBody] 结构化值展开、标量按键写入。
             var aggregate = new AggregateBodyMember[_bodyEntries.Length];
             for (var index = 0; index < _bodyEntries.Length; index++)
             {
@@ -93,16 +85,13 @@ internal sealed class BindingPlan
             return value;
         }
 
-        // 只有两层声明真的产出文本时才改成文本正文：二进制正文的默认形态是原始字节，
-        // 不能因为配置了「对其它类型生效、对 byte[] 返回 null」的实例钩子就退化成 base64 文本。
+        // 只有真的产出文本时才改成文本正文：二进制正文的默认形态是原始字节。
         if (ValueText.TryCustomFormat(value, ValueTextChannel.ScalarBody, source.Format, formatter) is { } text)
         {
             return new PreformattedValue(text);
         }
 
-        // 钩子在绑定期已经看过这个值（返回 null = 不处理）：把默认文本一并封存，
-        // 正文工厂对裸标量还会按「直接调用」那条规则再问一次钩子，封存后同一个值不会被问第二遍。
-        // 二进制正文除外——它的默认形态是原始字节，封存成文本就等于 base64 化。
+        // 钩子已看过该值：封存默认文本；二进制正文除外。
         return formatter is not null && !ScalarTypes.IsBinaryType(value.GetType())
             ? new PreformattedValue(ValueText.Format(value, ValueTextChannel.ScalarBody)!)
             : value;
@@ -140,10 +129,7 @@ internal sealed class BindingPlan
         return url;
     }
 
-    /// <summary>
-    /// 汇总全部查询参数；没有参数或值全为 <c>null</c> 时返回 <c>null</c>。
-    /// 调用方拿到 <c>null</c> 时不要写进配置：合并层把显式 null 当作摘掉实例默认值。
-    /// </summary>
+    /// <summary>汇总全部查询参数；没有参数或值全为 <c>null</c> 时返回 <c>null</c>（调用方不要写进配置：显式 null 会摘掉实例默认值）。</summary>
     public Dictionary<string, object?>? ResolveQuery(object target, Func<object?, ValueTextChannel, string?>? formatter)
     {
         if (_queryBindings.Length == 0 && _queryMaps.Length == 0)
@@ -203,10 +189,7 @@ internal sealed class BindingPlan
         return query.Count > 0 ? query : null;
     }
 
-    /// <summary>
-    /// 把全部请求头绑定写进配置；没有任何头绑定时不动配置。
-    /// 属性 / 参数上的头压过声明级同名项（含「只写名字 = 删除」的声明）：写值时撤销待删除项。
-    /// </summary>
+    /// <summary>把全部请求头绑定写进配置；属性 / 参数上的头压过声明级同名项（含「只写名字 = 删除」的声明）。</summary>
     public void ApplyHeaders(object target, AxiosConfig config, Func<object?, ValueTextChannel, string?>? formatter)
     {
         foreach (var binding in _headerBindings)
@@ -216,8 +199,7 @@ internal sealed class BindingPlan
             // 与 query 一致：null 头跳过
             if (value is not null)
             {
-                // 静态头先写、参数头后写，所以这里必须撤销声明级的待删除项：
-                // 否则合并层最后统一 Delete，会把刚写进去的签名 / 鉴权头静默摘掉。
+                // 写值时撤销声明级的待删除项。
                 ClearPendingRemoval(config, binding.Name);
                 config.Headers.Set(
                     binding.Name,
@@ -246,9 +228,7 @@ internal sealed class BindingPlan
                     continue;
                 }
 
-                // 字典值与单值头同一口径：都走「值 → 请求头文本」这一步，实例钩子对两者一视同仁
-                // （成员级 [Format] 在构建期已被拒绝，所以这里没有成员声明可应用）。
-                // 成员文本只在失败时拼（含字典键）：成功路径不为消息分配字符串。
+                // 字典值与单值头同口径：都走「值 → 请求头文本」（成员级 [Format] 在构建期已被拒绝）。
                 string? text;
                 try
                 {
@@ -288,16 +268,7 @@ internal sealed class BindingPlan
         }
     }
 
-    /// <summary>
-    /// 把一个值转成本通道的线上文本；失败时补上「哪条通道、哪个成员」再抛，外层据此报出具体字段。
-    /// </summary>
-    /// <param name="value">成员值。</param>
-    /// <param name="channel">文本通道（路径 / 请求头 / 表单等）。</param>
-    /// <param name="format">成员级格式化声明；<c>null</c> 走通道默认。</param>
-    /// <param name="formatter">实例级格式化钩子；<c>null</c> 表示不处理。</param>
-    /// <param name="bindingChannel">绑定通道（错误消息用）。</param>
-    /// <param name="member">成员的定位文本。</param>
-    /// <returns>线上文本；<c>null</c> 表示值本身没有默认形态。</returns>
+    /// <summary>把一个值转成本通道的线上文本；失败时补上「哪条通道、哪个成员」再抛。</summary>
     private static string? FormatMember(
         object? value,
         ValueTextChannel channel,
@@ -312,18 +283,12 @@ internal sealed class BindingPlan
         }
         catch (Exception ex) when (ex is not OperationCanceledException and not AxiosException)
         {
-            // 用户的自定义格式化（[Format] 委托 / 实现 IFormattable 的类型 / 实例钩子）可以抛任意异常：
-            // 这里只补「哪个字段」，原始异常保持为 Cause，语义不变。
+            // 自定义格式化可抛任意异常：只补「哪个字段」，原始异常保持为 Cause。
             throw new BindingMemberException(bindingChannel, member, ex);
         }
     }
 
     /// <summary>查询参数版本的 <see cref="FormatMember"/>：走查询通道的集合折叠规则。</summary>
-    /// <param name="value">成员值。</param>
-    /// <param name="format">成员级格式化声明；<c>null</c> 走通道默认。</param>
-    /// <param name="formatter">实例级格式化钩子；<c>null</c> 表示不处理。</param>
-    /// <param name="member">成员的定位文本。</param>
-    /// <returns>查询参数值；<c>null</c> 表示该参数应跳过。</returns>
     private static object? FormatQueryMember(
         object? value,
         ValueFormat? format,
@@ -340,10 +305,7 @@ internal sealed class BindingPlan
         }
     }
 
-    /// <summary>
-    /// 查询参数的文本化：标量取文本、集合逐元素取文本、其余（嵌套对象）原样交给 <see cref="ParamsSerializer"/> 展开。
-    /// 集合在这里就折成文本列表，是因为查询串不需要再区分元素原始类型。
-    /// </summary>
+    /// <summary>查询参数的文本化：标量取文本、集合逐元素取文本、嵌套对象原样交给 <see cref="ParamsSerializer"/> 展开。</summary>
     private static object? FormatQueryValue(object? value, ValueFormat? format, Func<object?, ValueTextChannel, string?>? formatter)
     {
         if (value is null)
@@ -361,8 +323,7 @@ internal sealed class BindingPlan
         {
             var text = ValueText.Format(value, ValueTextChannel.Query, format, formatter);
 
-            // 有实例钩子时把结果封存：ParamsSerializer 不能再对这段文本套第二遍钩子，
-            // 否则成员级 [Format] 的结果会被钩子覆盖（优先级链被打破）。
+            // 有实例钩子时封存结果：ParamsSerializer 不能再套第二遍钩子。
             return formatter is null || text is null ? text : new PreformattedValue(text);
         }
 
@@ -383,8 +344,7 @@ internal sealed class BindingPlan
 
         if (value is IEnumerable items)
         {
-            // 有实例钩子时只文本化标量叶子：结构化元素原样保留，继续交给 ParamsSerializer 展开
-            // （否则列表里的对象会被 ToString() 压成一行，嵌套结构静默丢失）。
+            // 有实例钩子时只文本化标量叶子，结构化元素原样交给 ParamsSerializer 展开。
             if (formatter is not null)
             {
                 var mixed = new List<object?>();
@@ -426,12 +386,7 @@ internal sealed class BindingPlan
         return value;
     }
 
-    /// <summary>从待删除集合里摘掉匹配的名字（头名大小写不敏感）；没有匹配项时不动集合。</summary>
-    /// <remarks>
-    /// 同名声明可能重复出现（库内删头名单只是 <c>ICollection</c>，不去重：
-    /// <c>[Headers("X", "X")]</c> 或类 / 接口各声明一次都会留下两条），所以必须**删干净**。
-    /// 只删一条的话，剩下那条仍然会在合并层把这个头删掉——表现为「写了签名头却发不出去」。
-    /// </remarks>
+    /// <summary>从待删除集合里摘掉所有匹配的名字（头名大小写不敏感）。</summary>
     private static void ClearPendingRemoval(AxiosConfig config, string name)
     {
         if (!config.HasRemoveHeaders)
@@ -444,7 +399,7 @@ internal sealed class BindingPlan
         }
     }
 
-    /// <summary>删掉集合里第一个同名项；没有返回 <c>false</c>（删除后立即退出枚举，不在枚举中继续 Remove）。</summary>
+    /// <summary>删掉集合里第一个同名项；删除后立即退出枚举。</summary>
     private static bool TakeOne(ICollection<string> pending, string name)
     {
         foreach (var item in pending)
@@ -461,8 +416,7 @@ internal sealed class BindingPlan
 }
 
 /// <summary>
-/// 正文的一个来源：显式 <c>[Body]</c> / body 方法上的未标注成员（按键写入），或 <c>[RootBody]</c>（结构化值展开属性）。
-/// 顺序即声明顺序，正文按此顺序输出。
+/// 正文的一个来源：显式 <c>[Body]</c> / body 方法上的未标注成员（按键写入），或 <c>[RootBody]</c>（结构化值展开属性）；顺序即输出顺序。
 /// </summary>
 internal readonly struct BodyEntry
 {

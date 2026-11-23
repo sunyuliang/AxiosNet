@@ -22,9 +22,7 @@ public sealed class AttemptLeaseTests
             deadlineTimestamp: TotalTimeoutBudget.None,
             failoverHealth: null);
 
-    // ------------------------------------------------------------------
-    // 上下文里的登记语义
-    // ------------------------------------------------------------------
+// 上下文里的登记语义
 
     /// <summary>第一个租约裸放：绝大多数请求只有闸门槽位这一个，不给这条路径加分配。</summary>
     [Fact]
@@ -118,9 +116,7 @@ public sealed class AttemptLeaseTests
     public void WithLease_RejectsNull()
         => Assert.Throws<ArgumentNullException>(() => EmptyContext().WithLease(null!));
 
-    // ------------------------------------------------------------------
-    // 与终端 / 闸门的交接
-    // ------------------------------------------------------------------
+// 与终端 / 闸门的交接
 
     /// <summary>非流式尝试：中间件登记的租约由终端在返回前处置，不留到下一次尝试。</summary>
     [Fact]
