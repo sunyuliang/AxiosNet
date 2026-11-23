@@ -831,129 +831,56 @@ internal static class ResponseReader
         string? rawContentType,
         bool lenient)
     {
-        // 媒体类型 / 文本性 / 字符集按需解析：字节与「不要正文」的分支一次都不拆，业务对象路径只拆真正用到的那一项。
-        var textual = false;
-        var textualResolved = false;
+        var state = new Conversion(config, request, bytes, rawContentType, lenient);
+        state.Text = text;
 
-        bool IsTextual()
+        try
         {
-            if (!textualResolved)
-            {
-                textual = MediaTypes.IsTextual(GetMediaType());
-                textualResolved = true;
-            }
-
-            return textual;
+            return ConvertCore(dataType, ref state);
         }
-
-        string? charSet = null;
-        var charSetResolved = false;
-
-        string? GetCharSet()
+        finally
         {
-            if (!charSetResolved)
-            {
-                charSet = ContentTypeHeader.CharSetOf(rawContentType);
-                charSetResolved = true;
-            }
-
-            return charSet;
+            // 解码结果回写给调用方：解析失败时异常响应也要带上原文。
+            text = state.Text;
         }
+    }
 
-        string? mediaType = null;
-        var mediaTypeResolved = false;
-
-        string? GetMediaType()
-        {
-            if (!mediaTypeResolved)
-            {
-                mediaType = ContentTypeHeader.MediaTypeOf(rawContentType);
-                mediaTypeResolved = true;
-            }
-
-            return mediaType;
-        }
-
+    /// <summary>按 responseType 与目标类型分派转换分支；顺序即优先级，未命中的走业务对象路径。</summary>
+    private static object? ConvertCore(Type? dataType, ref Conversion state)
+    {
         // 0) 调用方不要正文（接口声明返回 Task）：请求照发，正文不解析、不分配。
         if (dataType == typeof(void))
         {
             return null;
         }
 
-        // 1) 显式 responseType 优先：arraybuffer 直接给原始字节。
-        if (config.ResponseType == ResponseType.ArrayBuffer)
+        // 1) 显式 responseType 优先：arraybuffer 直接给原始字节，text 直接给原始文本（不做任何解析），
+        //    dynamic 是 JSON 特有的「无类型对象图」，由框架解析，不经过序列化器。
+        switch (state.Config.ResponseType)
         {
-            return bytes;
-        }
+            case ResponseType.ArrayBuffer:
+                return state.Bytes;
 
-        // 2) text 直接给原始文本（不做任何解析）。
-        if (config.ResponseType == ResponseType.Text)
-        {
-            return DecodeText(ref text, bytes, GetCharSet(), config);
-        }
+            case ResponseType.Text:
+                return state.DecodeText();
 
-        // 3) dynamic 展开：JSON 特有的「无类型对象图」，由框架解析，不经过序列化器。
-        if (config.ResponseType == ResponseType.Dynamic)
-        {
-            if (IsBlankUtf8(bytes))
-            {
-                return null;
-            }
-
-            // UTF-8 直接按字节解析；其它编码（罕见）按解码后的文本解析。
-            var utf8 = IsUtf8Bytes(bytes, GetCharSet(), config);
-
-            try
-            {
-                return utf8
-                    ? DynamicJson.Parse(StripUtf8Bom(bytes))
-                    : DynamicJson.Parse(DecodeText(ref text, bytes, GetCharSet(), config));
-            }
-            catch (Exception ex) when (ex is not AxiosException)
-            {
-                // 非 ASCII 空白（如全角空格）的正文仍视为 null。
-                var json = DecodeText(ref text, bytes, GetCharSet(), config);
-                if (IsBlank(json))
-                {
-                    return null;
-                }
-
-                // 字节解析失败时按解码后的文本再试一次：非法 UTF-8 会被替换成 U+FFFD，与只解码的旧路径一致。
-                if (utf8)
-                {
-                    try
-                    {
-                        return DynamicJson.Parse(json);
-                    }
-                    catch (Exception retryEx) when (retryEx is not AxiosException)
-                    {
-                        ex = retryEx;
-                    }
-                }
-
-                // 非 JSON 响应走统一错误模型；原文一并带上，与标量 / 业务对象解析失败同一口径。
-                if (lenient)
-                {
-                    return json;
-                }
-
-                throw AxiosException.BadResponse(config, request, "dynamic JSON", ex, json);
-            }
+            case ResponseType.Dynamic:
+                return ConvertDynamic(ref state);
         }
 
         // 4) 目标类型就是原始内容本身：string 原样返回（支持纯文本），byte[] 直接给字节。
         if (dataType == typeof(string))
         {
-            return DecodeText(ref text, bytes, GetCharSet(), config);
+            return state.DecodeText();
         }
 
         if (dataType == typeof(byte[]))
         {
-            return bytes;
+            return state.Bytes;
         }
 
         // 5) 空 body 与只含空白的 body 都视为 null。
-        if (IsBlankUtf8(bytes))
+        if (IsBlankUtf8(state.Bytes))
         {
             return null;
         }
@@ -961,150 +888,235 @@ internal static class ResponseReader
         // 6) 没有目标类型（非泛型 / JsonElement）：框架按 JSON 文档形态给出，解析失败原样返回文本。
         if (dataType is null || dataType == typeof(object) || dataType == typeof(JsonElement))
         {
-            // 二进制响应没有文档形态，原样给字节。
-            if (!IsTextual())
-            {
-                return bytes;
-            }
-
-            // UTF-8 字节直接解析，省掉 bytes → UTF-16 → UTF-8 的往返。
-            // 非法 UTF-8 不能走这条路：JsonDocument 要到取值时才抛，这种元素不能交给调用方；交给下面按解码文本重试。
-            if (IsUtf8Bytes(bytes, GetCharSet(), config))
-            {
-                var json = StripUtf8Bom(bytes);
-
-                // 首字节不是 JSON 值的起始记号时直接返回原文，省掉一次必然失败的 Parse。
-                if (LooksLikeJson(json.Span) && ResponseTextDecoder.IsValidUtf8(json.Span))
-                {
-                    try
-                    {
-                        // Clone 后立刻释放文档：交给调用方的元素不依赖文档存活，元数据数组随文档归还池。
-                        using var parsed = JsonDocument.Parse(json);
-                        return parsed.RootElement.Clone();
-                    }
-                    catch (Exception ex) when (ex is not AxiosException)
-                    {
-                        // 语法错误：落到下面的文本路径，与它同样原样返回文本。
-                    }
-                }
-            }
-
-            var document = DecodeText(ref text, bytes, GetCharSet(), config);
-
-            if (!LooksLikeJson(document))
-            {
-                return NonBlankOrNull(document);
-            }
-
-            try
-            {
-                using var parsed = JsonDocument.Parse(document);
-                return parsed.RootElement.Clone();
-            }
-            catch (Exception ex) when (ex is not AxiosException)
-            {
-                return document;
-            }
+            return ConvertDocument(ref state);
         }
 
         // 7) 二进制响应：不做解码，交给序列化器的字节入口（默认实现按 UTF-8 转调文本入口）。
-        if (!IsTextual())
+        if (!state.IsTextual())
         {
-            try
-            {
-                return AxiosContent.Get(config, GetMediaType()).Deserialize(bytes, dataType, config);
-            }
-            catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
-            {
-                // lenient：解析失败不抛，原样回字节（此时没有文本可回退）。
-                if (lenient)
-                {
-                    return bytes;
-                }
+            return ConvertBinary(dataType, ref state);
+        }
 
-                throw AxiosException.BadResponse(config, request, dataType, ex);
+        // 8) 基础类型（数值 / 布尔 / 枚举 / Guid / 日期时间 / Uri…）：框架直接解析文本。
+        if (ScalarTypes.IsScalarType(dataType) || typeof(IConvertible).IsAssignableFrom(dataType))
+        {
+            return ConvertScalar(dataType, ref state);
+        }
+
+        // 9) 文本响应的业务对象：UTF-8 时交给序列化器的字节入口（零转码），声明其它编码时按编码解码后走文本入口。
+        return ConvertObject(dataType, ref state);
+    }
+
+    /// <summary>dynamic 分支：空正文给 null，UTF-8 按字节解析，失败按解码文本再试一次，lenient 回退原文。</summary>
+    private static object? ConvertDynamic(ref Conversion state)
+    {
+        var bytes = state.Bytes;
+        var config = state.Config;
+        var request = state.Request;
+
+        if (IsBlankUtf8(bytes))
+        {
+            return null;
+        }
+
+        // UTF-8 直接按字节解析；其它编码（罕见）按解码后的文本解析。
+        var utf8 = IsUtf8Bytes(bytes, state.GetCharSet(), config);
+
+        try
+        {
+            return utf8
+                ? DynamicJson.Parse(StripUtf8Bom(bytes))
+                : DynamicJson.Parse(state.DecodeText());
+        }
+        catch (Exception ex) when (ex is not AxiosException)
+        {
+            // 非 ASCII 空白（如全角空格）的正文仍视为 null。
+            var json = state.DecodeText();
+            if (IsBlank(json))
+            {
+                return null;
+            }
+
+            // 字节解析失败时按解码后的文本再试一次：非法 UTF-8 会被替换成 U+FFFD，与只解码的旧路径一致。
+            if (utf8)
+            {
+                try
+                {
+                    return DynamicJson.Parse(json);
+                }
+                catch (Exception retryEx) when (retryEx is not AxiosException)
+                {
+                    ex = retryEx;
+                }
+            }
+
+            // 非 JSON 响应走统一错误模型；原文一并带上，与标量 / 业务对象解析失败同一口径。
+            if (state.Lenient)
+            {
+                return json;
+            }
+
+            throw AxiosException.BadResponse(config, request, "dynamic JSON", ex, json);
+        }
+    }
+
+    /// <summary>无目标类型分支：二进制给字节，文本按 JSON 文档形态解析，解析失败原样返回非空文本。</summary>
+    private static object? ConvertDocument(ref Conversion state)
+    {
+        var bytes = state.Bytes;
+        var config = state.Config;
+
+        // 二进制响应没有文档形态，原样给字节。
+        if (!state.IsTextual())
+        {
+            return bytes;
+        }
+
+        // UTF-8 字节直接解析，省掉 bytes → UTF-16 → UTF-8 的往返。
+        // 非法 UTF-8 不能走这条路：JsonDocument 要到取值时才抛，这种元素不能交给调用方；交给下面按解码文本重试。
+        if (IsUtf8Bytes(bytes, state.GetCharSet(), config))
+        {
+            var json = StripUtf8Bom(bytes);
+
+            // 首字节不是 JSON 值的起始记号时直接返回原文，省掉一次必然失败的 Parse。
+            if (LooksLikeJson(json.Span) && ResponseTextDecoder.IsValidUtf8(json.Span))
+            {
+                try
+                {
+                    // Clone 后立刻释放文档：交给调用方的元素不依赖文档存活，元数据数组随文档归还池。
+                    using var parsed = JsonDocument.Parse(json);
+                    return parsed.RootElement.Clone();
+                }
+                catch (Exception ex) when (ex is not AxiosException)
+                {
+                    // 语法错误：落到下面的文本路径，与它同样原样返回文本。
+                }
             }
         }
 
-        // 8) 基础类型（数值 / 布尔 / 枚举 / Guid / 日期时间 / Uri…）：框架直接解析文本，带引号形态交给序列化器兜底。
-        //    其它类型不解码，直接进第 9 步的字节入口。
-        if (ScalarTypes.IsScalarType(dataType) || typeof(IConvertible).IsAssignableFrom(dataType))
-        {
-            var raw = DecodeText(ref text, bytes, GetCharSet(), config);
+        var document = state.DecodeText();
 
-            // 字节级判空认不出非 ASCII 空白（如 NBSP）：解码后仍是空白的正文视为 null，
-            // 否则能被空串解析成功的标量（Uri.TryCreate）会把空正文变成空值对象。
+        if (!LooksLikeJson(document))
+        {
+            return NonBlankOrNull(document);
+        }
+
+        try
+        {
+            using var parsed = JsonDocument.Parse(document);
+            return parsed.RootElement.Clone();
+        }
+        catch (Exception ex) when (ex is not AxiosException)
+        {
+            return document;
+        }
+    }
+
+    /// <summary>二进制响应分支：不解码，交给序列化器的字节入口；lenient 时解析失败回退原始字节。</summary>
+    private static object? ConvertBinary(Type dataType, ref Conversion state)
+    {
+        try
+        {
+            return AxiosContent.Get(state.Config, state.GetMediaType()).Deserialize(state.Bytes, dataType, state.Config);
+        }
+        catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+        {
+            // lenient：解析失败不抛，原样回字节（此时没有文本可回退）。
+            if (state.Lenient)
+            {
+                return state.Bytes;
+            }
+
+            throw AxiosException.BadResponse(state.Config, state.Request, dataType, ex);
+        }
+    }
+
+    /// <summary>基础类型分支：先按文本直接解析，失败再交序列化器兜底；lenient 时回退原文。</summary>
+    private static object? ConvertScalar(Type dataType, ref Conversion state)
+    {
+        var config = state.Config;
+        var request = state.Request;
+        var raw = state.DecodeText();
+
+        // 字节级判空认不出非 ASCII 空白（如 NBSP）：解码后仍是空白的正文视为 null，
+        // 否则能被空串解析成功的标量（Uri.TryCreate）会把空正文变成空值对象。
+        if (IsBlank(raw))
+        {
+            return null;
+        }
+
+        if (ScalarParser.TryParse(raw, dataType, out var scalar))
+        {
+            return scalar;
+        }
+
+        try
+        {
+            var parsed = AxiosContent.Get(config, state.GetMediaType()).Deserialize(raw, dataType, config);
+
+            // 序列化器不复核枚举已定义值，与上面的 TryParse 同一把尺子。
+            if (parsed is Enum enumValue && !ScalarParser.IsAcceptableEnumValue(dataType, enumValue))
+            {
+                // lenient 时不因数据值失败：回退原文，不让正文问题盖住 HTTP 状态错误。
+                if (state.Lenient)
+                {
+                    return raw;
+                }
+
+                // dataType 可能是 Nullable<Color>，消息里报枚举类型本身。
+                throw AxiosException.UndefinedEnumValue(config, request, (Nullable.GetUnderlyingType(dataType) ?? dataType).Name, enumValue.ToString());
+            }
+
+            return parsed;
+        }
+        catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+        {
+            // 非 ASCII 空白（如 NBSP）的正文视为 null：字节级判空认不出，靠解码后判定兜底。
             if (IsBlank(raw))
             {
                 return null;
             }
 
-            if (ScalarParser.TryParse(raw, dataType, out var scalar))
+            if (state.Lenient)
             {
-                return scalar;
+                return raw;
             }
 
-            try
-            {
-                var parsed = AxiosContent.Get(config, GetMediaType()).Deserialize(raw, dataType, config);
-
-                // 序列化器不复核枚举已定义值，与上面的 TryParse 同一把尺子。
-                if (parsed is Enum enumValue && !ScalarParser.IsAcceptableEnumValue(dataType, enumValue))
-                {
-                    // lenient 时不因数据值失败：回退原文，不让正文问题盖住 HTTP 状态错误。
-                    if (lenient)
-                    {
-                        return raw;
-                    }
-
-                    // dataType 可能是 Nullable<Color>，消息里报枚举类型本身。
-                    throw AxiosException.UndefinedEnumValue(config, request, (Nullable.GetUnderlyingType(dataType) ?? dataType).Name, enumValue.ToString());
-                }
-
-                return parsed;
-            }
-            catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
-            {
-                // 非 ASCII 空白（如 NBSP）的正文视为 null：字节级判空认不出，靠解码后判定兜底。
-                if (IsBlank(raw))
-                {
-                    return null;
-                }
-
-                if (lenient)
-                {
-                    return raw;
-                }
-
-                // 标量解析失败同样把原文带进消息：数值 / 布尔 / 日期这类响应，看到原值就知道是格式还是编码问题。
-                throw AxiosException.BadResponse(config, request, dataType, ex, raw);
-            }
+            // 标量解析失败同样把原文带进消息：数值 / 布尔 / 日期这类响应，看到原值就知道是格式还是编码问题。
+            throw AxiosException.BadResponse(config, request, dataType, ex, raw);
         }
+    }
 
-        // 9) 文本响应的业务对象：UTF-8 时交给序列化器的字节入口（零转码），声明其它编码时按编码解码后走文本入口。
+    /// <summary>业务对象分支：UTF-8 走序列化器字节入口，其它编码解码后走文本入口；lenient 时回退原文。</summary>
+    private static object? ConvertObject(Type dataType, ref Conversion state)
+    {
+        var config = state.Config;
+        var request = state.Request;
+        var bytes = state.Bytes;
+
         try
         {
-            var serializer = AxiosContent.Get(config, GetMediaType());
+            var serializer = AxiosContent.Get(config, state.GetMediaType());
             object? deserialized;
 
             // 非法 UTF-8 不进字节入口：按字节解析的 JSON 不校验字符串内容，坏字节会留到调用方取值时才炸
             // （JsonElement / 字典里的 object 值都这样）；按解码文本（坏字节替换为 U+FFFD）走文本入口，与只解码的旧路径一致。
-            if (IsUtf8Bytes(bytes, GetCharSet(), config) && ResponseTextDecoder.IsValidUtf8(bytes))
+            if (IsUtf8Bytes(bytes, state.GetCharSet(), config) && ResponseTextDecoder.IsValidUtf8(bytes))
             {
                 deserialized = serializer.Deserialize(StripUtf8Bom(bytes), dataType, config);
             }
             else
             {
-                deserialized = serializer.Deserialize(DecodeText(ref text, bytes, GetCharSet(), config), dataType, config);
+                deserialized = serializer.Deserialize(state.DecodeText(), dataType, config);
             }
 
-            // 序列化器不复核枚举已定义值，与第 8 步同一把尺子。
+            // 序列化器不复核枚举已定义值，与基础类型分支同一把尺子。
             if (deserialized is Enum enumValue && !ScalarParser.IsAcceptableEnumValue(dataType, enumValue))
             {
                 // lenient 时不因数据值失败：回退原文，不让正文问题盖住 HTTP 状态错误。
-                if (lenient)
+                if (state.Lenient)
                 {
-                    return DecodeText(ref text, bytes, GetCharSet(), config);
+                    return state.DecodeText();
                 }
 
                 // dataType 可能是 Nullable<Color>，消息里报枚举类型本身。
@@ -1115,7 +1127,7 @@ internal static class ResponseReader
         }
         catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
         {
-            var fallback = DecodeText(ref text, bytes, GetCharSet(), config);
+            var fallback = state.DecodeText();
 
             // 非 ASCII 空白（如 NBSP）的正文视为 null：字节路径没做解码级判空，失败时补上。
             if (IsBlank(fallback))
@@ -1123,7 +1135,7 @@ internal static class ResponseReader
                 return null;
             }
 
-            if (lenient)
+            if (state.Lenient)
             {
                 return fallback;
             }
@@ -1136,9 +1148,110 @@ internal static class ResponseReader
     /// <summary>解析失败后的原文回退：只含非 ASCII 空白（如 NBSP）的正文仍视为空。</summary>
     private static string? NonBlankOrNull(string text) => IsBlank(text) ? null : text;
 
-    /// <summary>按需解码正文并缓存：只有文本分支与 lenient 兜底才需要 UTF-16。</summary>
-    private static string DecodeText(ref string? cache, byte[] bytes, string? charSet, AxiosConfig config)
-        => cache ??= ResponseTextDecoder.Decode(bytes, charSet, config.SerializationOrNull?.TextEncoding);
+    /// <summary>
+    /// 一次正文转换的输入与惰性解析缓存：媒体类型 / 文本性 / 字符集只在对应分支用到时解析一次，
+    /// 解码结果按需补齐。按值在调用链上以 <c>ref</c> 传递，不额外分配。
+    /// </summary>
+    private struct Conversion
+    {
+        /// <summary>字符集是否已解析。</summary>
+        private bool _charSetResolved;
+
+        /// <summary>解析出的字符集，未声明为 <c>null</c>。</summary>
+        private string? _charSet;
+
+        /// <summary>媒体类型主值是否已解析。</summary>
+        private bool _mediaTypeResolved;
+
+        /// <summary>解析出的媒体类型主值，未带或非法 <c>Content-Type</c> 为 <c>null</c>。</summary>
+        private string? _mediaType;
+
+        /// <summary>文本性是否已判定。</summary>
+        private bool _textualResolved;
+
+        /// <summary>文本性判定结果。</summary>
+        private bool _textual;
+
+        /// <summary>按本次转换的输入初始化：缓存标记置为未解析。</summary>
+        /// <param name="config">本次请求的生效配置。</param>
+        /// <param name="request">请求消息（错误上下文用）。</param>
+        /// <param name="bytes">待转换的原始正文字节。</param>
+        /// <param name="rawContentType">响应头里的原始 <c>Content-Type</c>。</param>
+        /// <param name="lenient">解析失败是否回退原文。</param>
+        public Conversion(AxiosConfig config, HttpRequestMessage? request, byte[] bytes, string? rawContentType, bool lenient)
+        {
+            Config = config;
+            Request = request;
+            Bytes = bytes;
+            RawContentType = rawContentType;
+            Lenient = lenient;
+            Text = null;
+            _charSetResolved = false;
+            _charSet = null;
+            _mediaTypeResolved = false;
+            _mediaType = null;
+            _textualResolved = false;
+            _textual = false;
+        }
+
+        /// <summary>本次请求的生效配置。</summary>
+        public AxiosConfig Config { get; }
+
+        /// <summary>请求消息，只用于错误上下文；短路响应没有请求消息，为 <c>null</c>。</summary>
+        public HttpRequestMessage? Request { get; }
+
+        /// <summary>待转换的原始正文字节。</summary>
+        public byte[] Bytes { get; }
+
+        /// <summary>响应头里的原始 <c>Content-Type</c>，未带时为 <c>null</c>。</summary>
+        public string? RawContentType { get; }
+
+        /// <summary>解析失败是否回退原文：错误响应路径为 <c>true</c>。</summary>
+        public bool Lenient { get; }
+
+        /// <summary>解码缓存：只有真正需要文本的分支才填。</summary>
+        public string? Text { get; set; }
+
+        /// <summary>媒体类型主值；未带或非法的 <c>Content-Type</c> 解析为 <c>null</c>。</summary>
+        public string? GetMediaType()
+        {
+            if (!_mediaTypeResolved)
+            {
+                _mediaType = ContentTypeHeader.MediaTypeOf(RawContentType);
+                _mediaTypeResolved = true;
+            }
+
+            return _mediaType;
+        }
+
+        /// <summary>是否文本类型；按解析出的主值判定，头解析不出来时按文本处理。</summary>
+        public bool IsTextual()
+        {
+            if (!_textualResolved)
+            {
+                _textual = MediaTypes.IsTextual(GetMediaType());
+                _textualResolved = true;
+            }
+
+            return _textual;
+        }
+
+        /// <summary>声明的字符集；未声明 <c>charset</c> 时为 <c>null</c>。</summary>
+        public string? GetCharSet()
+        {
+            if (!_charSetResolved)
+            {
+                _charSet = ContentTypeHeader.CharSetOf(RawContentType);
+                _charSetResolved = true;
+            }
+
+            return _charSet;
+        }
+
+        /// <summary>按需解码正文（只解一次）并写回缓存。</summary>
+        public string DecodeText()
+            => Text ??= ResponseTextDecoder.Decode(Bytes, GetCharSet(), Config.SerializationOrNull?.TextEncoding);
+    }
 
     /// <summary>
     /// 字节能否直接按 UTF-8 解析：未强制 / 声明其它编码，且开头不是 UTF-16 / UTF-32 BOM
