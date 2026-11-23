@@ -42,7 +42,7 @@
 
   <!-- 自述文件打进包：nuget.org 上的工具页直接显示用法（源与类库包共用同一份 README） -->
   <ItemGroup>
-    <None Include="..\..\README.md" Pack="true" PackagePath="\" Visible="false" />
+    <None Include="../../README.md" Pack="true" PackagePath="/" Visible="false" />
   </ItemGroup>
 
   <ItemGroup>
@@ -57,7 +57,7 @@
 
   <ItemGroup>
     <!-- 路径占位符文法与运行期 / 源生成器 / CLI 共用同一份源文件，避免三处各写一份文法。 -->
-    <Compile Include="..\Shared\PathGrammar.cs" Link="Shared\PathGrammar.cs" />
+    <Compile Include="../Shared/PathGrammar.cs" Link="Shared/PathGrammar.cs" />
   </ItemGroup>
 
 </Project>

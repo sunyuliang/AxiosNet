@@ -29,7 +29,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\AxiosNet\AxiosNet.csproj" />
+    <ProjectReference Include="../../src/AxiosNet/AxiosNet.csproj" />
   </ItemGroup>
 
 </Project>

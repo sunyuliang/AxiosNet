@@ -42,12 +42,12 @@
 
   <!-- 打进包的 README（本包自己的说明）/ LICENSE（仓库根目录） -->
   <ItemGroup>
-    <None Include="README.md" Pack="true" PackagePath="\" Visible="false" />
-    <None Include="..\..\LICENSE" Pack="true" PackagePath="\" Visible="false" />
+    <None Include="README.md" Pack="true" PackagePath="/" Visible="false" />
+    <None Include="../../LICENSE" Pack="true" PackagePath="/" Visible="false" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\AxiosNet\AxiosNet.csproj" />
+    <ProjectReference Include="../AxiosNet/AxiosNet.csproj" />
     <!-- 唯一外部依赖：微软第一方 DI 抽象（IServiceCollection / ServiceDescriptor），不含任何第三方包 -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="6.0.0" />
   </ItemGroup>

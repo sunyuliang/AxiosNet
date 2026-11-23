@@ -29,7 +29,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\AxiosNet\AxiosNet.csproj" />
+    <ProjectReference Include="../../src/AxiosNet/AxiosNet.csproj" />
   </ItemGroup>
 
   <!-- 基准基建链接源码而不是复制：
@@ -37,8 +37,8 @@
        ComparableHttpClientHandler 与 AxiosNet 默认连接池逐项对齐（否则测的是默认值差异）。
        链接而不是复制，任何一边改了基建都会同时反映到这里。 -->
   <ItemGroup>
-    <Compile Include="..\AxiosNet.Tests\Infrastructure\PerfHttpServer.cs" Link="Linked\PerfHttpServer.cs" />
-    <Compile Include="..\AxiosNet.Benchmarks\Infrastructure\ComparableHttpClientHandler.cs" Link="Linked\ComparableHttpClientHandler.cs" />
+    <Compile Include="../AxiosNet.Tests/Infrastructure/PerfHttpServer.cs" Link="Linked/PerfHttpServer.cs" />
+    <Compile Include="../AxiosNet.Benchmarks/Infrastructure/ComparableHttpClientHandler.cs" Link="Linked/ComparableHttpClientHandler.cs" />
   </ItemGroup>
 
 </Project>

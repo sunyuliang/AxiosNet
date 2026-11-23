@@ -16,9 +16,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\AxiosNet\AxiosNet.csproj" />
+    <ProjectReference Include="../../src/AxiosNet/AxiosNet.csproj" />
     <!-- 源生成器（随 NuGet 包自动分发的分析器）：编译期为请求模型烘焙元数据，AOT 下不再依赖 TrimmerRootAssembly。 -->
-    <ProjectReference Include="..\..\src\AxiosNet.SourceGen\AxiosNet.SourceGen.csproj"
+    <ProjectReference Include="../../src/AxiosNet.SourceGen/AxiosNet.SourceGen.csproj"
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="false" />
   </ItemGroup>

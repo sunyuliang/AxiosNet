@@ -12,19 +12,19 @@
 
   <ItemGroup>
     <!-- DI 扩展包自带对 AxiosNet 的依赖（声明式客户端也在该主包内）：示例只需要引用这一个项目 -->
-    <ProjectReference Include="..\..\src\AxiosNet.DependencyInjection\AxiosNet.DependencyInjection.csproj" />
+    <ProjectReference Include="../../src/AxiosNet.DependencyInjection/AxiosNet.DependencyInjection.csproj" />
     <!-- Generic Host（含 DI 容器实现 / 日志 / 配置）：示例本身需要容器实现，扩展只依赖抽象包 -->
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
   </ItemGroup>
 
   <!-- 链接 AxiosNet.Simple 的 WebAPI 演示服务器与请求/返回模型：同一份 DemoApiServer，两个示例共用 -->
   <ItemGroup>
-    <Compile Include="..\AxiosNet.Simple\WebAPI\DemoApiServer.cs" Link="DemoApiServer.cs" />
-    <Compile Include="..\AxiosNet.Simple\WebAPI\ApiModels.cs" Link="ApiModels.cs" />
+    <Compile Include="../AxiosNet.Simple/WebAPI/DemoApiServer.cs" Link="DemoApiServer.cs" />
+    <Compile Include="../AxiosNet.Simple/WebAPI/ApiModels.cs" Link="ApiModels.cs" />
     <!-- DemoApiServer 的 multipart 端点依赖 MultipartReader（与 AxiosNet.Simple 同一份源码） -->
-    <Compile Include="..\AxiosNet.Simple\MultipartReader.cs" Link="MultipartReader.cs" />
+    <Compile Include="../AxiosNet.Simple/MultipartReader.cs" Link="MultipartReader.cs" />
     <!-- 交互菜单与 AxiosNet.Simple 同一份源码：启动反射列出、选择执行、完毕继续选 -->
-    <Compile Include="..\AxiosNet.Simple\SampleMenu.cs" Link="SampleMenu.cs" />
+    <Compile Include="../AxiosNet.Simple/SampleMenu.cs" Link="SampleMenu.cs" />
   </ItemGroup>
 
 </Project>

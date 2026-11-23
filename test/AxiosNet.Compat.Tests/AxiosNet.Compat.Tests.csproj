@@ -59,8 +59,8 @@
 
   <ItemGroup>
     <!-- SetTargetFramework 让多目标类库按指定 TFM 解析，而不是按 net8.0 就近选择现代资产。 -->
-    <ProjectReference Include="..\..\src\AxiosNet\AxiosNet.csproj" SetTargetFramework="TargetFramework=netstandard2.0" />
-    <ProjectReference Include="..\..\src\AxiosNet.DependencyInjection\AxiosNet.DependencyInjection.csproj" SetTargetFramework="TargetFramework=netstandard2.0" />
+    <ProjectReference Include="../../src/AxiosNet/AxiosNet.csproj" SetTargetFramework="TargetFramework=netstandard2.0" />
+    <ProjectReference Include="../../src/AxiosNet.DependencyInjection/AxiosNet.DependencyInjection.csproj" SetTargetFramework="TargetFramework=netstandard2.0" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net472'">
@@ -71,7 +71,7 @@
          net8.0 宿主刻意不挂：本工程对 AxiosNet 有 InternalsVisibleTo，兼容资产里那份 internal
          ModuleInitializerAttribute 在这里也可见，会与 System.Runtime 的公开版撞成 CS0433——
          那是「测试工程可见 internal」的特例，不代表真实消费方，所以只在没有公开版可用的一端挂生成器。 -->
-    <ProjectReference Include="..\..\src\AxiosNet.SourceGen\AxiosNet.SourceGen.csproj"
+    <ProjectReference Include="../../src/AxiosNet.SourceGen/AxiosNet.SourceGen.csproj"
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="false" />
   </ItemGroup>

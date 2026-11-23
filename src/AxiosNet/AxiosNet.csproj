@@ -105,22 +105,22 @@
 
   <!-- 把仓库根目录的 README / LICENSE 打进包 -->
   <ItemGroup>
-    <None Include="..\..\README.md" Pack="true" PackagePath="\" Visible="false" />
-    <None Include="..\..\LICENSE" Pack="true" PackagePath="\" Visible="false" />
+    <None Include="../../README.md" Pack="true" PackagePath="/" Visible="false" />
+    <None Include="../../LICENSE" Pack="true" PackagePath="/" Visible="false" />
   </ItemGroup>
 
   <!-- ===== 源生成器（编译期资产，不进运行时依赖） ===== -->
   <ItemGroup>
     <!-- 只用于构建顺序：分析器 DLL 由下面的打包目标收集，不参与本程序集编译。 -->
-    <ProjectReference Include="..\AxiosNet.SourceGen\AxiosNet.SourceGen.csproj" ReferenceOutputAssembly="false" PrivateAssets="all" />
-    <None Include="buildTransitive\AxiosNet.props" Pack="true" PackagePath="buildTransitive\" Visible="false" />
+    <ProjectReference Include="../AxiosNet.SourceGen/AxiosNet.SourceGen.csproj" ReferenceOutputAssembly="false" PrivateAssets="all" />
+    <None Include="buildTransitive/AxiosNet.props" Pack="true" PackagePath="buildTransitive/" Visible="false" />
   </ItemGroup>
 
   <!-- dotnet pack 会在构建之后执行本目标：把生成器 DLL 放进 analyzers/dotnet/cs，
        消费方只引用 AxiosNet 就能自动生成元数据。 -->
   <Target Name="_AxiosNetIncludeSourceGenerator" BeforeTargets="_GetPackageFiles">
     <ItemGroup>
-      <None Include="$(MSBuildThisFileDirectory)..\AxiosNet.SourceGen\bin\$(Configuration)\netstandard2.0\AxiosNet.SourceGen.dll"
+      <None Include="$(MSBuildThisFileDirectory)../AxiosNet.SourceGen/bin/$(Configuration)/netstandard2.0/AxiosNet.SourceGen.dll"
             Pack="true"
             PackagePath="analyzers/dotnet/cs/"
             Visible="false" />
@@ -136,7 +136,7 @@
 
   <ItemGroup>
     <!-- 路径占位符文法与运行期 / 源生成器 / CLI 共用同一份源文件，避免三处各写一份文法。 -->
-    <Compile Include="..\Shared\PathGrammar.cs" Link="Shared\PathGrammar.cs" />
+    <Compile Include="../Shared/PathGrammar.cs" Link="Shared/PathGrammar.cs" />
   </ItemGroup>
 
 </Project>
