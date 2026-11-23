@@ -104,6 +104,18 @@ public sealed partial class AxiosClient
     /// <summary>限制类配置的取值范围校验：负值一律报错；<c>Timeout=0</c> 不超时，<c>MaxRate=0</c> 不限速。</summary>
     private static void ValidateRangeConfig(AxiosConfig config)
     {
+        ValidateTimeouts(config);
+        ValidateCompression(config);
+        ValidateLimits(config);
+        ValidateRetry(config);
+        ValidateHedging(config);
+        ValidateFailover(config);
+        ValidateCircuit(config);
+    }
+
+    /// <summary>校验 Timeout / TotalTimeout 非负。</summary>
+    private static void ValidateTimeouts(AxiosConfig config)
+    {
         if (config.Timeout < TimeSpan.Zero)
         {
             throw AxiosException.InvalidOption($"Timeout 不能为负（当前 {config.Timeout}）：要关闭超时请显式设为 TimeSpan.Zero。", config);
@@ -117,7 +129,11 @@ public sealed partial class AxiosClient
                 + "要限制整条请求（含重试 / 端点 / 对冲）请给一个正值。",
                 config);
         }
+    }
 
+    /// <summary>校验请求体压缩的枚举取值、兼容资产能力与 Content-Encoding 冲突。</summary>
+    private static void ValidateCompression(AxiosConfig config)
+    {
         // 请求体压缩：枚举必须已定义；压缩与手写 Content-Encoding 只能二选一。
         if (config.Compression is { } compression)
         {
@@ -145,7 +161,11 @@ public sealed partial class AxiosClient
                     + "两者同时存在会互相覆盖。自行压缩正文请去掉 Compression，并传入预压缩的字节 / 流。", config);
             }
         }
+    }
 
+    /// <summary>校验 MaxRate、Limits 与排队等待时长的取值范围。</summary>
+    private static void ValidateLimits(AxiosConfig config)
+    {
         var limits = config.LimitsOrNull;
         var maxRate = config.TransportOrNull?.MaxRate;
 
@@ -183,7 +203,11 @@ public sealed partial class AxiosClient
                 + "分帧器必须把整帧读进内存才能交给序列化器，因此没有「不限制」语义；更大的正文请用 ResponseType.Stream 自行分块处理。",
                 config);
         }
+    }
 
+    /// <summary>校验重试次数与等待区间。</summary>
+    private static void ValidateRetry(AxiosConfig config)
+    {
         // 重试策略的取值范围：自定义策略只能校验 MaxRetries，内置实现连等待时间一起校验。
         if (config.RetryOrNull?.Policy is { } retry)
         {
@@ -215,7 +239,11 @@ public sealed partial class AxiosClient
                 }
             }
         }
+    }
 
+    /// <summary>校验对冲分支数、起跑延迟与计时器上限。</summary>
+    private static void ValidateHedging(AxiosConfig config)
+    {
         // 对冲：分支数与起跑延迟的取值范围。
         if (config.HedgingOrNull is { } hedging)
         {
@@ -254,7 +282,11 @@ public sealed partial class AxiosClient
                     + "请减小 Delay 或 MaxHedges。", config);
             }
         }
+    }
 
+    /// <summary>校验备用端点的地址形态、重复项与健康记忆参数。</summary>
+    private static void ValidateFailover(AxiosConfig config)
+    {
         // 备用端点：必须是绝对 http(s) 地址，且不带 query / fragment。
         if (config.FailoverOrNull?.Endpoints is { } endpoints)
         {
@@ -309,7 +341,11 @@ public sealed partial class AxiosClient
                     + "关闭健康记忆请把 Cooldown 设为 TimeSpan.Zero。", config);
             }
         }
+    }
 
+    /// <summary>校验熔断阈值、窗口、探测与冷却时长。</summary>
+    private static void ValidateCircuit(AxiosConfig config)
+    {
         // 熔断策略的取值范围。
         if (config.CircuitOrNull?.Policy is CircuitBreaker breaker)
         {
