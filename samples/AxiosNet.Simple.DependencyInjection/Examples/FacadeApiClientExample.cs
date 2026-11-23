@@ -39,6 +39,6 @@ public sealed class FacadeApiClientExample : IExample
         Console.WriteLine($"  门面与注册的 AxiosClient 同一实例: {ReferenceEquals(axios, api.Axios)}");
 
         var users = await api.RequestAsync(new ListUsersRequest { Role = "admin" });
-        Console.WriteLine($"  注入消费 -> GET api/users?role=admin: {users.Data!.Length} 人");
+        Console.WriteLine($"  注入消费 -> GET api/users?role=admin: {users.Length} 人");
     }
 }

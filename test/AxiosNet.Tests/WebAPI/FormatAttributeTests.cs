@@ -26,7 +26,7 @@ public sealed class FormatAttributeTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new FormattedScalarRequest
+        await client.RequestFullAsync(new FormattedScalarRequest
         {
             Id = 7,
             When = new DateTime(2024, 1, 2, 3, 4, 5, DateTimeKind.Utc),
@@ -58,7 +58,7 @@ public sealed class FormatAttributeTests
         using var client = new ApiClient(server.Url, c => c.Serialization.ValueText = hook);
 
         // 声明式四通道：路径段 / 查询串 / 裸标量正文 / 请求头。
-        await client.RequestAsync(new ChannelProbeRequest
+        await client.RequestFullAsync(new ChannelProbeRequest
         {
             Id = 7,
             When = new DateTime(2024, 1, 2, 3, 4, 5, DateTimeKind.Utc),
@@ -130,7 +130,7 @@ public sealed class FormatAttributeTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new MemberChannelRequest { Id = 7, Page = 3, Trace = 5 });
+        await client.RequestFullAsync(new MemberChannelRequest { Id = 7, Page = 3, Trace = 5 });
 
         var received = Assert.Single(server.Received);
         Assert.Equal("/ch/p7", received.Path);
@@ -150,7 +150,7 @@ public sealed class FormatAttributeTests
             _ => null
         };
 
-        await client.RequestAsync(new MixedFormatRequest
+        await client.RequestFullAsync(new MixedFormatRequest
         {
             Id = 7,
             When = new DateTime(2024, 1, 2, 3, 4, 5, DateTimeKind.Utc)
@@ -166,8 +166,8 @@ public sealed class FormatAttributeTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new NullableFormatRequest { Value = 5 });
-        await client.RequestAsync(new NullableFormatRequest { Value = 0 });
+        await client.RequestFullAsync(new NullableFormatRequest { Value = 5 });
+        await client.RequestFullAsync(new NullableFormatRequest { Value = 0 });
 
         Assert.Equal("Value=v5", Uri.UnescapeDataString(server.Received[0].Query ?? string.Empty));
         Assert.Equal("Value=0", Uri.UnescapeDataString(server.Received[1].Query ?? string.Empty));
@@ -179,7 +179,7 @@ public sealed class FormatAttributeTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new FormattedCollectionRequest { Codes = [11, 255] });
+        await client.RequestFullAsync(new FormattedCollectionRequest { Codes = [11, 255] });
 
         Assert.Equal("Codes[]=0B&Codes[]=FF", Uri.UnescapeDataString(Assert.Single(server.Received).Query ?? string.Empty));
     }
@@ -190,7 +190,7 @@ public sealed class FormatAttributeTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new FormattedMapRequest
+        await client.RequestFullAsync(new FormattedMapRequest
         {
             Filters = new Dictionary<string, DateTime>
             {
@@ -207,7 +207,7 @@ public sealed class FormatAttributeTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new FormattedScalarBodyRequest
+        await client.RequestFullAsync(new FormattedScalarBodyRequest
         {
             At = new DateTime(2024, 1, 2, 3, 4, 5, DateTimeKind.Utc)
         });
@@ -223,7 +223,7 @@ public sealed class FormatAttributeTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new FormattedBytesBodyRequest { Data = [0x0A, 0xFF] });
+        await client.RequestFullAsync(new FormattedBytesBodyRequest { Data = [0x0A, 0xFF] });
 
         // byte[] 是合法的裸标量正文：格式化函数可以换成 base64 以外的编码（这里是 hex）。
         Assert.Equal("0AFF", Encoding.UTF8.GetString(Assert.Single(server.Received).Body));
@@ -252,7 +252,7 @@ public sealed class FormatAttributeTests
             ? "hook" + date.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
             : null;
 
-        await client.RequestAsync(new NestedQueryRequest
+        await client.RequestFullAsync(new NestedQueryRequest
         {
             Filter = new NestedFilter
             {
@@ -279,7 +279,7 @@ public sealed class FormatAttributeTests
             _ => null
         };
 
-        await client.RequestAsync(new HookedScalarBodyRequest
+        await client.RequestFullAsync(new HookedScalarBodyRequest
         {
             Trace = 7,
             At = new DateTime(2024, 1, 2, 3, 4, 5, DateTimeKind.Utc)
@@ -323,7 +323,7 @@ public sealed class FormatAttributeTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url, c => c.Serialization.ValueText = (_, _) => "a&b c");
 
-        await client.RequestAsync(new ChannelProbeRequest { Id = 1, Count = 2, Trace = 3 });
+        await client.RequestFullAsync(new ChannelProbeRequest { Id = 1, Count = 2, Trace = 3 });
 
         var received = Assert.Single(server.Received);
         Assert.Equal("/probe/a%26b%20c", received.Path);
@@ -343,7 +343,7 @@ public sealed class FormatAttributeTests
             return "hook";
         });
 
-        await client.RequestAsync(new NullableFormatRequest { Value = 0 });
+        await client.RequestFullAsync(new NullableFormatRequest { Value = 0 });
 
         Assert.Equal("Value=hook", Uri.UnescapeDataString(Assert.Single(server.Received).Query ?? string.Empty));
         Assert.Equal([ValueTextChannel.Query], seen);
@@ -361,8 +361,8 @@ public sealed class FormatAttributeTests
             return "e";
         });
 
-        await client.RequestAsync(new HookedCollectionRequest { Codes = [1, 2, 3] });
-        await client.RequestAsync(new HookedNestedRequest { Inner = new HookedInner { X = 1, Y = 2 } });
+        await client.RequestFullAsync(new HookedCollectionRequest { Codes = [1, 2, 3] });
+        await client.RequestFullAsync(new HookedNestedRequest { Inner = new HookedInner { X = 1, Y = 2 } });
 
         var collection = Uri.UnescapeDataString(server.Received[0].Query ?? string.Empty);
         var nested = Uri.UnescapeDataString(server.Received[1].Query ?? string.Empty);
@@ -425,7 +425,7 @@ public sealed class FormatAttributeTests
             _ => null
         };
 
-        await client.RequestAsync(new HookedAggregateRequest
+        await client.RequestFullAsync(new HookedAggregateRequest
         {
             Count = 7,
             When = new DateTime(2024, 1, 2, 0, 0, 0, DateTimeKind.Utc)
@@ -450,7 +450,7 @@ public sealed class FormatAttributeTests
             return "hook";
         };
 
-        await client.RequestAsync(new FormattedAggregateRequest
+        await client.RequestFullAsync(new FormattedAggregateRequest
         {
             When = new DateTime(2024, 1, 2, 1, 2, 3, DateTimeKind.Utc)
         });
@@ -470,7 +470,7 @@ public sealed class FormatAttributeTests
         client.Axios.Defaults.Serialization.ValueText = (value, _) =>
             value is int number && number % 2 == 1 ? "p" + number.ToString(CultureInfo.InvariantCulture) : null;
 
-        await client.RequestAsync(new HookedCollectionAggregateRequest { Codes = [1, 2, 3] });
+        await client.RequestFullAsync(new HookedCollectionAggregateRequest { Codes = [1, 2, 3] });
 
         Assert.Equal(
             """{"codes":["p1",2,"p3"]}""",
@@ -549,7 +549,7 @@ public sealed class FormatAttributeTests
         using var client = new ApiClient(server.Url);
 
         var error = await Assert.ThrowsAnyAsync<AxiosException>(
-            () => client.RequestAsync(new ThrowingPathRequest { Id = 7 }));
+            () => client.RequestFullAsync(new ThrowingPathRequest { Id = 7 }));
 
         Assert.Equal(AxiosException.ErrBadRequest, error.Code);
         Assert.Empty(server.Received);
@@ -562,7 +562,7 @@ public sealed class FormatAttributeTests
         using var client = new ApiClient(server.Url);
 
         var error = await Assert.ThrowsAnyAsync<AxiosException>(
-            () => client.RequestAsync(new ThrowingQueryRequest { Name = "abc" }));
+            () => client.RequestFullAsync(new ThrowingQueryRequest { Name = "abc" }));
 
         Assert.Equal(AxiosException.ErrBadRequest, error.Code);
         Assert.Empty(server.Received);
@@ -588,7 +588,7 @@ public sealed class FormatAttributeTests
             throw new InvalidOperationException("boom"));
 
         var error = await Assert.ThrowsAnyAsync<AxiosException>(
-            () => client.RequestAsync(new HookedHeaderCollectionRequest
+            () => client.RequestFullAsync(new HookedHeaderCollectionRequest
             {
                 Extra = new Dictionary<string, string> { ["X-K"] = "v" }
             }));
@@ -608,7 +608,7 @@ public sealed class FormatAttributeTests
         using var client = new ApiClient(server.Url, c => c.Serialization.ValueText = (_, _) => "v\r\nX-Evil: 1");
 
         var error = await Assert.ThrowsAnyAsync<AxiosException>(
-            () => client.RequestAsync(new HookedHeaderCollectionRequest
+            () => client.RequestFullAsync(new HookedHeaderCollectionRequest
             {
                 Extra = new Dictionary<string, string> { ["X-K"] = "raw" }
             }));
@@ -628,7 +628,7 @@ public sealed class FormatAttributeTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url, c => c.Serialization.ValueText = (_, _) => null);
 
-        await client.RequestAsync(new HookedHeaderCollectionRequest
+        await client.RequestFullAsync(new HookedHeaderCollectionRequest
         {
             Extra = new Dictionary<string, string> { ["X-K"] = "raw" }
         });
@@ -646,7 +646,7 @@ public sealed class FormatAttributeTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url, c => c.Serialization.ValueText = (_, _) => string.Empty);
 
-        await client.RequestAsync(new EmptyTextRequest { Id = 1, Trace = 2 });
+        await client.RequestFullAsync(new EmptyTextRequest { Id = 1, Trace = 2 });
 
         var received = Assert.Single(server.Received);
         Assert.Equal("Id=", received.Query);

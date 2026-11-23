@@ -24,7 +24,7 @@ public sealed class DeleteAndErrorExample : IExample
         var client = _client ??= new ApiClient(context.BaseUrl);
 
         var deleted = await client.RequestAsync(new DeleteUserRequest { Id = 2 });
-        Console.WriteLine($"  {deleted.Status} -> {ExampleConsole.Pretty(deleted.Data)}");
+        Console.WriteLine($"  已删除 -> {ExampleConsole.Pretty(deleted)}");
 
         try
         {

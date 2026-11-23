@@ -117,7 +117,7 @@ public sealed class CompatIntegrationTests
         using var server = MiniServer.Start((_, _, _, _) => (200, "application/json", Utf8.Text("{\"name\":\"decl\",\"age\":7}")));
         using var client = new ApiClient(server.Url);
 
-        var response = await client.RequestAsync(new GetPersonRequest { Id = 42, Verbose = "1" });
+        var response = await client.RequestFullAsync(new GetPersonRequest { Id = 42, Verbose = "1" });
 
         Assert.Equal("decl", response.Data!.Name);
         Assert.Equal("/people/42", server.Paths.First());
@@ -130,7 +130,7 @@ public sealed class CompatIntegrationTests
         using var server = MiniServer.Start((_, _, _, _) => (200, "application/json", Utf8.Text("{}")));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new FormattedRequest { Since = new DateTime(2026, 11, 13) });
+        await client.RequestFullAsync(new FormattedRequest { Since = new DateTime(2026, 11, 13) });
 
         // [Format("yyyy-MM-dd")] 只有模块初始化器把格式化读取器注册进内核才会生效；
         // 未注册时输出会退化成 ISO / 区域性默认格式。
@@ -276,7 +276,7 @@ public sealed class CompatIntegrationTests
         var provider = new RotatingTokenProvider();
         using var client = new ApiClient(server.Url) { CredentialProvider = provider };
 
-        var response = await client.RequestAsync(new AuthorizedRequest());
+        var response = await client.RequestFullAsync(new AuthorizedRequest());
 
         Assert.Equal("authed", response.Data!.Name);
 

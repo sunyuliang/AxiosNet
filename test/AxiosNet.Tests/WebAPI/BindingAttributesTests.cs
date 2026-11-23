@@ -22,7 +22,7 @@ public sealed class BindingAttributesTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new StaticHeaderRequest { Trace = "dynamic" });
+        await client.RequestFullAsync(new StaticHeaderRequest { Trace = "dynamic" });
 
         var received = Assert.Single(server.Received);
         Assert.Equal("application/json", received.Headers["Accept"]);
@@ -37,7 +37,7 @@ public sealed class BindingAttributesTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         using var client = new ApiClient(server.Url, defaults => defaults.Headers.Set("X-Remove", "old"));
 
-        await client.RequestAsync(new RemoveHeaderRequest());
+        await client.RequestFullAsync(new RemoveHeaderRequest());
 
         var received = Assert.Single(server.Received);
         Assert.False(received.Headers.ContainsKey("X-Remove"));
@@ -52,7 +52,7 @@ public sealed class BindingAttributesTests
         // 参数头更具体，必须压过删除声明——否则合并层最后统一 Delete，会把手写进去的签名头静默摘掉。
         using var client = new ApiClient(server.Url, defaults => defaults.Headers.Set("X-Sign", "default"));
 
-        await client.RequestAsync(new RemovedThenSuppliedRequest { Sign = "computed" });
+        await client.RequestFullAsync(new RemovedThenSuppliedRequest { Sign = "computed" });
 
         var received = Assert.Single(server.Received);
         Assert.Equal("computed", received.Headers["X-Sign"]);
@@ -67,7 +67,7 @@ public sealed class BindingAttributesTests
         // 剩下那条仍会在合并层把头删掉，属性头算出来的签名就发不出去。
         using var client = new ApiClient(server.Url, defaults => defaults.Headers.Set("X-Sign", "default"));
 
-        await client.RequestAsync(new DuplicateRemovalThenSuppliedRequest { Sign = "computed" });
+        await client.RequestFullAsync(new DuplicateRemovalThenSuppliedRequest { Sign = "computed" });
 
         var received = Assert.Single(server.Received);
         Assert.Equal("computed", received.Headers["X-Sign"]);
@@ -79,7 +79,7 @@ public sealed class BindingAttributesTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new HeaderCollectionRequest
+        await client.RequestFullAsync(new HeaderCollectionRequest
         {
             Extra = new Dictionary<string, string?>
             {
@@ -124,7 +124,7 @@ public sealed class BindingAttributesTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new SearchMapRequest
+        await client.RequestFullAsync(new SearchMapRequest
         {
             Filters = new Dictionary<string, object?> { ["role"] = "admin", ["page"] = 2 }
         });
@@ -141,7 +141,7 @@ public sealed class BindingAttributesTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new SearchMapRequest
+        await client.RequestFullAsync(new SearchMapRequest
         {
             Filters = new Dictionary<string, object?> { ["role"] = null }
         });
@@ -155,7 +155,7 @@ public sealed class BindingAttributesTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new NamedMapRequest
+        await client.RequestFullAsync(new NamedMapRequest
         {
             Filters = new Dictionary<string, object?> { ["role"] = "admin" }
         });
@@ -171,7 +171,7 @@ public sealed class BindingAttributesTests
             TestJson.Response(new[] { new Person("alice", 1) }));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(
+        await client.RequestFullAsync(
             new ListUsersRequest { Ids = [1, 2], Role = null },
             config => config.Serialization.CollectionFormat = AxiosCollectionFormat.Csv);
 
@@ -187,7 +187,7 @@ public sealed class BindingAttributesTests
         using var client = new ApiClient(server.Url,
             defaults => defaults.Serialization.CollectionFormat = AxiosCollectionFormat.Multi);
 
-        await client.RequestAsync(new ListUsersRequest { Ids = [1, 2], Role = null });
+        await client.RequestFullAsync(new ListUsersRequest { Ids = [1, 2], Role = null });
 
         var query = Uri.UnescapeDataString(Assert.Single(server.Received).Query ?? string.Empty);
         Assert.Contains("Ids=1", query);
@@ -232,7 +232,7 @@ public sealed class BindingAttributesTests
             _ => null // 其余值走默认规则
         };
 
-        await client.RequestAsync(new FormattedRequest
+        await client.RequestFullAsync(new FormattedRequest
         {
             Id = 7,
             When = new DateTime(2024, 1, 2, 3, 4, 5, DateTimeKind.Utc)
@@ -251,7 +251,7 @@ public sealed class BindingAttributesTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new DerivedStaticHeaderRequest());
+        await client.RequestFullAsync(new DerivedStaticHeaderRequest());
 
         var received = Assert.Single(server.Received);
         Assert.True(received.Headers.TryGetValue("X-Trace", out var trace), "X-Trace 被基类的删除声明误删");

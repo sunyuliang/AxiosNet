@@ -75,7 +75,7 @@ builder.Services.AddApiClient("b", "https://b.example.com",
 // 消费：站点名运行时才知道（来自配置 / 数据库）时用解析器
 public sealed class Dispatcher(IApiClientResolver resolver)
 {
-    public Task<AxiosResponse<T>> SendAsync<T>(string site, IApiRequest<T> request)
+    public Task<T> SendAsync<T>(string site, IApiRequest<T> request)
         => resolver.Get(site).RequestAsync(request);
 }
 
@@ -203,7 +203,7 @@ builder.Services.AddApiClient("b", "https://b.example.com",
 // Consumption: when the site is only known at runtime (config / database), use the resolver
 public sealed class Dispatcher(IApiClientResolver resolver)
 {
-    public Task<AxiosResponse<T>> SendAsync<T>(string site, IApiRequest<T> request)
+    public Task<T> SendAsync<T>(string site, IApiRequest<T> request)
         => resolver.Get(site).RequestAsync(request);
 }
 

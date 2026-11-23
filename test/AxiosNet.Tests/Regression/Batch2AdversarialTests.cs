@@ -17,7 +17,7 @@ public sealed class Batch2AdversarialTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(new AxiosConfig { Body = "instance-secret" });
 
-        await client.GetAsync(server.Url + "shortcut", data: null);
+        await client.GetAsync(server.Url + "shortcut", c => c.Body = null);
         await client.RequestAsync(new AxiosConfig
         {
             Url = server.Url + "generic",

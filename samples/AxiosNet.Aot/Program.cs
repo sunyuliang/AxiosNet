@@ -43,7 +43,7 @@ var api = new ApiClient(server.BaseAddress, defaults =>
 });
 api.CredentialProvider = new FixedTokenProvider();
 
-var fetched = await api.RequestAsync(new GetPersonRequest
+var fetched = await api.RequestFullAsync(new GetPersonRequest
 {
     Id = 7,
     Verbose = "true",
@@ -57,7 +57,7 @@ Verify(
     ("X-Trace", "trace-1"),
     ("Authorization", "Bearer aot-token"));
 
-var created = await api.RequestAsync(new CreatePersonRequest
+var created = await api.RequestFullAsync(new CreatePersonRequest
 {
     Person = payload,
     Notify = true,
@@ -74,7 +74,7 @@ if (!createRequest.Body.Contains("\"name\":\"alice\"", StringComparison.Ordinal)
     throw new InvalidOperationException($"POST 请求体没有按 STJ（camelCase）序列化：{createRequest.Body}");
 }
 
-var searched = await api.RequestAsync(new SearchPersonRequest
+var searched = await api.RequestFullAsync(new SearchPersonRequest
 {
     Term = "alice",
     Page = 2,
@@ -137,7 +137,7 @@ foreach (var expected in new[] { "name=title", "avatar", "name=file", "filename=
 
 // 自定义只读字典（值类型值）：值类型的字典不满足 IReadOnlyDictionary<string,object> 的协变匹配，
 // AOT 下必须由源生成器烘焙映射访问器；声明为接口时只登记接口键，运行时沿接口命中。
-var mapped = await api.RequestAsync(new MapRequest());
+var mapped = await api.RequestFullAsync(new MapRequest());
 Verify(server.TakeLast(), "GET /map?a=1&b=2 HTTP/1.1", ("Authorization", "Bearer aot-token"));
 if (mapped.Data?.Name != "alice")
 {

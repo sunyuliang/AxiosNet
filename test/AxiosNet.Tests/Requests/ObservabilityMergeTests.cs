@@ -163,7 +163,7 @@ public sealed class ObservabilityMergeTests
     }
 
     [Fact]
-    public async Task Replay_RequestAsync_DoesNotCarrySourceInstanceCallback()
+    public async Task Replay_RequestFullAsync_DoesNotCarrySourceInstanceCallback()
     {
         await using var server = TestHttpServer.Start(_ => Json());
 

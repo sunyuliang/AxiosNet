@@ -33,10 +33,10 @@ internal sealed class AxiosNetModelTarget : IAxiosNetTarget
         /// <summary>发一次 <c>RequestAsync(请求模型)</c>；正文由请求模型的 <c>[RootBody]</c> 成员提供，读回 <c>User</c>。</summary>
         public async Task SendAsync(CancellationToken cancellationToken)
         {
-            var response = await client.RequestAsync(request, cancellationToken).ConfigureAwait(false);
-            if (response.Data is null)
+            var user = await client.RequestAsync(request, cancellationToken).ConfigureAwait(false);
+            if (user is null)
             {
-                throw new InvalidOperationException($"AxiosNet 模型式返回空数据：status={response.Status}。");
+                throw new InvalidOperationException("AxiosNet 模型式返回空数据。");
             }
         }
 

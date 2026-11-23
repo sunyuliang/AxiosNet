@@ -37,13 +37,13 @@ public static class AxiosClientDeclarativeExtensions
             | DynamicallyAccessedMemberTypes.Interfaces)] Type interfaceType)
         => Wrap(client).Create(interfaceType);
 
-    /// <summary>发送请求模型描述的请求；返回类型由请求模型的 <see cref="IApiRequest{TResponse}"/> 泛型确定。</summary>
+    /// <summary>发送请求模型描述的请求，只交付正文：正文类型就是 <see cref="IApiRequest{TResponse}"/> 的泛型。</summary>
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2072",
         Justification = "请求模型的运行时类型无法静态标注：AOT 下由 AxiosNet 源生成器在编译期写入成员取值委托，注册表命中后不再反射；"
             + "未命中且无动态代码时抛 AxiosAotMetadataException，不会反射模型成员（README「运行时与 AOT」）。")]
-    public static Task<AxiosResponse<TResponse>> RequestAsync<TResponse>(
+    public static Task<TResponse> RequestAsync<TResponse>(
         this AxiosClient client,
         IApiRequest<TResponse> request,
         CancellationToken cancellationToken = default)
@@ -55,12 +55,37 @@ public static class AxiosClientDeclarativeExtensions
         "IL2072",
         Justification = "请求模型的运行时类型无法静态标注：AOT 下由 AxiosNet 源生成器在编译期写入成员取值委托，注册表命中后不再反射；"
             + "未命中且无动态代码时抛 AxiosAotMetadataException，不会反射模型成员（README「运行时与 AOT」）。")]
-    public static Task<AxiosResponse<TResponse>> RequestAsync<TResponse>(
+    public static Task<TResponse> RequestAsync<TResponse>(
         this AxiosClient client,
         IApiRequest<TResponse> request,
         Action<AxiosConfig>? configure,
         CancellationToken cancellationToken = default)
         => Wrap(client).RequestAsync(request, configure, cancellationToken);
+
+    /// <summary>发送请求模型描述的请求，交付完整响应（状态码 / 响应头 / 请求消息 / 正文）；语义与 <see cref="ApiClient.RequestFullAsync{TResponse}(IApiRequest{TResponse}, CancellationToken)"/> 一致。</summary>
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2072",
+        Justification = "请求模型的运行时类型无法静态标注：AOT 下由 AxiosNet 源生成器在编译期写入成员取值委托，注册表命中后不再反射；"
+            + "未命中且无动态代码时抛 AxiosAotMetadataException，不会反射模型成员（README「运行时与 AOT」）。")]
+    public static Task<AxiosResponse<TResponse>> RequestFullAsync<TResponse>(
+        this AxiosClient client,
+        IApiRequest<TResponse> request,
+        CancellationToken cancellationToken = default)
+        => Wrap(client).RequestFullAsync(request, cancellationToken);
+
+    /// <summary>同 <see cref="RequestFullAsync{TResponse}(AxiosClient, IApiRequest{TResponse}, CancellationToken)"/>，另支持按请求微调配置。</summary>
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2072",
+        Justification = "请求模型的运行时类型无法静态标注：AOT 下由 AxiosNet 源生成器在编译期写入成员取值委托，注册表命中后不再反射；"
+            + "未命中且无动态代码时抛 AxiosAotMetadataException，不会反射模型成员（README「运行时与 AOT」）。")]
+    public static Task<AxiosResponse<TResponse>> RequestFullAsync<TResponse>(
+        this AxiosClient client,
+        IApiRequest<TResponse> request,
+        Action<AxiosConfig>? configure,
+        CancellationToken cancellationToken = default)
+        => Wrap(client).RequestFullAsync(request, configure, cancellationToken);
 
     /// <summary>按请求模型拼出最终 URL，不发请求；语义与 <see cref="ApiClient.GetUri{TResponse}"/> 一致。</summary>
     [UnconditionalSuppressMessage(

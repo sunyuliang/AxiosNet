@@ -43,7 +43,7 @@ public sealed class AuthorizationTests
             CredentialProvider = CredentialProviders.Fixed("tok-1")
         };
 
-        await client.RequestAsync(new GetUserRequest { Id = 1 });
+        await client.RequestFullAsync(new GetUserRequest { Id = 1 });
 
         var received = Assert.Single(server.Received);
         Assert.Equal("Bearer tok-1", received.Headers["Authorization"]);
@@ -59,7 +59,7 @@ public sealed class AuthorizationTests
             CredentialProvider = CredentialProviders.Fixed(ApiCredential.Header("Basic dXNlcjpwYXNz"))
         };
 
-        await client.RequestAsync(new GetUserRequest { Id = 1 });
+        await client.RequestFullAsync(new GetUserRequest { Id = 1 });
 
         var received = Assert.Single(server.Received);
         Assert.Equal("Basic dXNlcjpwYXNz", received.Headers["Authorization"]);
@@ -76,7 +76,7 @@ public sealed class AuthorizationTests
             CredentialProvider = CredentialProviders.Fixed(ApiCredential.Header("authorization", "Basic dXNlcjpwYXNz"))
         };
 
-        await client.RequestAsync(new GetUserRequest { Id = 1 });
+        await client.RequestFullAsync(new GetUserRequest { Id = 1 });
 
         Assert.Equal("Basic dXNlcjpwYXNz", Assert.Single(server.Received).Headers["Authorization"]);
     }
@@ -92,7 +92,7 @@ public sealed class AuthorizationTests
 
         // 归一化后走内核槽位：与显式头并存的判定和 Header 形态一致
         var error = await Assert.ThrowsAsync<AxiosException>(
-            () => client.RequestAsync(new ExplicitAuthorizationRequest { Authorization = "Signature abc" }));
+            () => client.RequestFullAsync(new ExplicitAuthorizationRequest { Authorization = "Signature abc" }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
         Assert.Empty(server.Received);
@@ -109,7 +109,7 @@ public sealed class AuthorizationTests
             CredentialProvider = CredentialProviders.Fixed("Signature abc")
         };
 
-        await client.RequestAsync(new GetUserRequest { Id = 1 });
+        await client.RequestFullAsync(new GetUserRequest { Id = 1 });
 
         var received = Assert.Single(server.Received);
         Assert.Equal("Bearer Signature abc", received.Headers["Authorization"]);
@@ -134,8 +134,8 @@ public sealed class AuthorizationTests
                 ValueTask.FromResult(ApiCredential.Token("tok-" + Interlocked.Increment(ref calls))))
         };
 
-        await client.RequestAsync(new GetUserRequest { Id = 1 });
-        await client.RequestAsync(new GetUserRequest { Id = 2 });
+        await client.RequestFullAsync(new GetUserRequest { Id = 1 });
+        await client.RequestFullAsync(new GetUserRequest { Id = 2 });
 
         Assert.Equal(2, calls);
         Assert.Equal("Bearer tok-1", server.Received[0].Headers["Authorization"]);
@@ -152,7 +152,7 @@ public sealed class AuthorizationTests
             CredentialProvider = CredentialProviders.Fixed(ApiCredential.Token(null))
         };
 
-        await client.RequestAsync(new GetUserRequest { Id = 1 });
+        await client.RequestFullAsync(new GetUserRequest { Id = 1 });
 
         Assert.False(Assert.Single(server.Received).Headers.ContainsKey("Authorization"));
     }
@@ -178,8 +178,8 @@ public sealed class AuthorizationTests
             })
         };
 
-        var login = await client.RequestAsync(new LoginRequest { Credentials = new Person("u", 1) });
-        var guarded = await client.RequestAsync(new GetUserRequest { Id = 1 });
+        var login = await client.RequestFullAsync(new LoginRequest { Credentials = new Person("u", 1) });
+        var guarded = await client.RequestFullAsync(new GetUserRequest { Id = 1 });
 
         Assert.Equal("\"token123\"", login.Data);
         Assert.False(server.Received[0].Headers.ContainsKey("Authorization"));
@@ -201,7 +201,7 @@ public sealed class AuthorizationTests
             })
         };
 
-        await client.RequestAsync(new GetUserRequest { Id = 1, Trace = "trace-final" });
+        await client.RequestFullAsync(new GetUserRequest { Id = 1, Trace = "trace-final" });
 
         Assert.Equal("trace-final", seenTrace);
     }
@@ -221,7 +221,7 @@ public sealed class AuthorizationTests
             })
         };
 
-        await client.RequestAsync(new GetUserRequest { Id = 1, Verbose = "1" });
+        await client.RequestFullAsync(new GetUserRequest { Id = 1, Verbose = "1" });
 
         var received = Assert.Single(server.Received);
         Assert.False(received.Headers.ContainsKey("Authorization"));
@@ -259,7 +259,7 @@ public sealed class AuthorizationTests
 
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new GetUserRequest { Id = 1 });
+        await client.RequestFullAsync(new GetUserRequest { Id = 1 });
 
         var received = Assert.Single(server.Received);
         Assert.False(received.Headers.ContainsKey("Authorization"));
@@ -276,7 +276,7 @@ public sealed class AuthorizationTests
         };
 
         await Assert.ThrowsAsync<ArgumentException>(
-            () => client.RequestAsync(new GetUserRequest { Id = 1 }));
+            () => client.RequestFullAsync(new GetUserRequest { Id = 1 }));
 
         Assert.Empty(server.Received);
     }
@@ -292,7 +292,7 @@ public sealed class AuthorizationTests
         };
 
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => client.RequestAsync(new GetUserRequest { Id = 1 }));
+            () => client.RequestFullAsync(new GetUserRequest { Id = 1 }));
 
         Assert.Empty(server.Received);
     }
@@ -306,7 +306,7 @@ public sealed class AuthorizationTests
             CredentialProvider = new StaticCredentialProvider("tok-1")
         };
 
-        await client.RequestAsync(new AuthorizedRequest());
+        await client.RequestFullAsync(new AuthorizedRequest());
 
         Assert.Equal("Bearer tok-1", Assert.Single(server.Received).Headers["Authorization"]);
     }
@@ -320,7 +320,7 @@ public sealed class AuthorizationTests
             CredentialProvider = new StaticCredentialProvider("dXNlcjpwYXNz")
         };
 
-        await client.RequestAsync(new BasicAuthorizedRequest());
+        await client.RequestFullAsync(new BasicAuthorizedRequest());
 
         Assert.Equal("Basic dXNlcjpwYXNz", Assert.Single(server.Received).Headers["Authorization"]);
     }
@@ -332,7 +332,7 @@ public sealed class AuthorizationTests
         var recorder = new RecordingCredentialProvider();
         using var client = new ApiClient(server.Url) { CredentialProvider = recorder };
 
-        await client.RequestAsync(new AnonymousRequest());
+        await client.RequestFullAsync(new AnonymousRequest());
 
         Assert.False(Assert.Single(server.Received).Headers.ContainsKey("Authorization"));
         Assert.Equal(0, recorder.Calls);
@@ -349,7 +349,7 @@ public sealed class AuthorizationTests
         });
 
         var error = await Assert.ThrowsAsync<AxiosException>(
-            () => client.RequestAsync(new TokenAuthorizedRequest()));
+            () => client.RequestFullAsync(new TokenAuthorizedRequest()));
 
         // 不能静默以槽位为准：声明与头值不一致属于配置错误，发出前拦下。
         Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
@@ -366,7 +366,7 @@ public sealed class AuthorizationTests
             Transport = new() { Auth = AxiosCredential.Basic("user", "pass") },
         });
 
-        await client.RequestAsync(new BasicAuthorizedRequest());
+        await client.RequestFullAsync(new BasicAuthorizedRequest());
 
         Assert.StartsWith("Basic ", Assert.Single(server.Received).Headers["Authorization"]);
     }
@@ -381,7 +381,7 @@ public sealed class AuthorizationTests
             Transport = new() { Auth = AxiosCredential.Bearer("tok-1", "Token") },
         });
 
-        await client.RequestAsync(new TokenAuthorizedRequest());
+        await client.RequestFullAsync(new TokenAuthorizedRequest());
 
         Assert.Equal("Token tok-1", Assert.Single(server.Received).Headers["Authorization"]);
     }
@@ -399,7 +399,7 @@ public sealed class AuthorizationTests
         };
 
         // 匿名 = 无凭据：实例默认的静态槽位也被清掉，而不是只跳过 CredentialProvider。
-        await client.RequestAsync(new AnonymousRequest());
+        await client.RequestFullAsync(new AnonymousRequest());
 
         Assert.False(Assert.Single(server.Received).Headers.ContainsKey("Authorization"));
         Assert.Equal(0, recorder.Calls);
@@ -415,7 +415,7 @@ public sealed class AuthorizationTests
         };
 
         // 按请求显式设置的槽位属于调用方显式覆盖，优先于 [AllowAnonymous] 的「清空默认值」。
-        await client.RequestAsync(
+        await client.RequestFullAsync(
             new AnonymousRequest(),
             config => config.Transport.Auth = AxiosCredential.Basic("u", "p"));
 
@@ -434,7 +434,7 @@ public sealed class AuthorizationTests
         };
 
         // 按请求显式清空默认槽位（AuthSet）：本次不用静态凭据，提供方可以接管。
-        await client.RequestAsync(new AuthorizedRequest(), config => config.Transport.Auth = null);
+        await client.RequestFullAsync(new AuthorizedRequest(), config => config.Transport.Auth = null);
 
         Assert.Equal("Bearer tok-1", Assert.Single(server.Received).Headers["Authorization"]);
     }
@@ -448,7 +448,7 @@ public sealed class AuthorizationTests
 
         // 显式头与凭据槽位同时设置 = 配置冲突：不静默二选一，也不白取一次令牌。
         var error = await Assert.ThrowsAsync<AxiosException>(
-            () => client.RequestAsync(new ExplicitAuthorizationRequest { Authorization = "Signature abc" }));
+            () => client.RequestFullAsync(new ExplicitAuthorizationRequest { Authorization = "Signature abc" }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
         Assert.Equal(0, recorder.Calls);
@@ -463,7 +463,7 @@ public sealed class AuthorizationTests
 
         // 冲突在调用提供方之前判掉：即便提供方会失败，也不影响「先报配置冲突」。
         var error = await Assert.ThrowsAsync<AxiosException>(
-            () => client.RequestAsync(new ExplicitAuthorizationRequest { Authorization = "Signature abc" }));
+            () => client.RequestFullAsync(new ExplicitAuthorizationRequest { Authorization = "Signature abc" }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
         Assert.Empty(server.Received);
@@ -481,7 +481,7 @@ public sealed class AuthorizationTests
             CredentialProvider = recorder
         };
 
-        var error = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new AuthorizedRequest()));
+        var error = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new AuthorizedRequest()));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
         Assert.Equal(0, recorder.Calls);
@@ -501,7 +501,7 @@ public sealed class AuthorizationTests
             })
         };
 
-        await client.RequestAsync(new AuthorizedRequest());
+        await client.RequestFullAsync(new AuthorizedRequest());
 
         Assert.Equal("Final xyz", Assert.Single(server.Received).Headers["Authorization"]);
     }
@@ -523,7 +523,7 @@ public sealed class AuthorizationTests
             })
         };
 
-        await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new AuthorizedRequest()));
+        await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new AuthorizedRequest()));
 
         Assert.Equal(1, calls);
         Assert.Single(server.Received);
@@ -538,7 +538,7 @@ public sealed class AuthorizationTests
             CredentialProvider = new StaticCredentialProvider("tok-1")
         };
 
-        var error = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new AuthorizedRequest()));
+        var error = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new AuthorizedRequest()));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
         Assert.Empty(server.Received);
@@ -553,7 +553,7 @@ public sealed class AuthorizationTests
             CredentialProvider = new StaticCredentialProvider(null)
         };
 
-        await client.RequestAsync(new AuthorizedRequest());
+        await client.RequestFullAsync(new AuthorizedRequest());
 
         Assert.False(Assert.Single(server.Received).Headers.ContainsKey("Authorization"));
     }
@@ -570,7 +570,7 @@ public sealed class AuthorizationTests
         };
 
         // 同一个凭据槽位不能有两个来源：静态凭据与提供方并存直接报错。
-        var error = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new AuthorizedRequest()));
+        var error = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new AuthorizedRequest()));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
         Assert.Empty(server.Received);
@@ -585,7 +585,7 @@ public sealed class AuthorizationTests
             defaults => defaults.Transport.Auth = AxiosCredential.Basic("u", "p"));
 
         // 声明写的是 Basic，静态槽位也是 Basic：scheme 一致才照常落头。
-        await client.RequestAsync(new BasicAuthorizedRequest());
+        await client.RequestFullAsync(new BasicAuthorizedRequest());
 
         Assert.Equal("Basic dTpw", Assert.Single(server.Received).Headers["Authorization"]);
     }
@@ -598,7 +598,7 @@ public sealed class AuthorizationTests
             server.Url,
             defaults => defaults.Transport.Auth = AxiosCredential.Bearer("tok-1"));
 
-        await client.RequestAsync(new AuthorizedRequest());
+        await client.RequestFullAsync(new AuthorizedRequest());
 
         Assert.Equal("Bearer tok-1", Assert.Single(server.Received).Headers["Authorization"]);
     }
@@ -610,7 +610,7 @@ public sealed class AuthorizationTests
         var recorder = new RecordingCredentialProvider();
         using var client = new ApiClient(server.Url) { CredentialProvider = recorder };
 
-        await client.RequestAsync(new UnannotatedRequest());
+        await client.RequestFullAsync(new UnannotatedRequest());
 
         Assert.Equal(1, recorder.Calls);
     }

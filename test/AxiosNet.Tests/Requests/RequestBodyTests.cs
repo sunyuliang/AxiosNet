@@ -412,8 +412,11 @@ public sealed class RequestBodyTests
 
         await client.GetAsync(
             server.Url + "with-body",
-            "payload",
-            c => c.Headers.Set("Content-Type", "text/plain; charset=utf-8"));
+            c =>
+            {
+                c.Body = "payload";
+                c.Headers.Set("Content-Type", "text/plain; charset=utf-8");
+            });
 
         var request = server.Received[0];
         Assert.Equal("text/plain; charset=utf-8", request.Headers.GetValueOrDefault("content-type"));
@@ -834,19 +837,19 @@ public sealed class RequestBodyTests
         switch (method)
         {
             case "GET":
-                await client.GetAsync(server.Url + "x", new { name = "bob" });
-                await client.GetAsync<JsonElement>(server.Url + "x", new Dictionary<string, object?> { ["name"] = "bob" });
+                await client.GetAsync(server.Url + "x", c => c.Body = new { name = "bob" });
+                await client.GetAsync<JsonElement>(server.Url + "x", c => c.Body = new Dictionary<string, object?> { ["name"] = "bob" });
                 break;
             case "DELETE":
-                await client.DeleteAsync(server.Url + "x", new { name = "bob" });
-                await client.DeleteAsync(server.Url + "x", "raw-text");
+                await client.DeleteAsync(server.Url + "x", c => c.Body = new { name = "bob" });
+                await client.DeleteAsync(server.Url + "x", c => c.Body = "raw-text");
                 break;
             case "OPTIONS":
-                await client.OptionsAsync(server.Url + "x", new { name = "bob" });
-                await client.OptionsAsync(server.Url + "x", new byte[] { 1, 2, 3 });
+                await client.OptionsAsync(server.Url + "x", c => c.Body = new { name = "bob" });
+                await client.OptionsAsync(server.Url + "x", c => c.Body = new byte[] { 1, 2, 3 });
                 break;
             case "HEAD":
-                await client.HeadAsync(server.Url + "x", new { name = "bob" });
+                await client.HeadAsync(server.Url + "x", c => c.Body = new { name = "bob" });
                 break;
         }
 
@@ -858,6 +861,40 @@ public sealed class RequestBodyTests
         Assert.Equal("""{"name":"bob"}""", Body_RequestBody(first));
     }
 
+    [Theory]
+    [InlineData("GET")]
+    [InlineData("DELETE")]
+    [InlineData("OPTIONS")]
+    [InlineData("HEAD")]
+    public async Task EveryMethod_ShortcutArgumentIsQuery(string method)
+    {
+        await using var server = TestHttpServer.Start(req => req.Method == "HEAD"
+            ? new TestResponse(204, "No Content")
+            : TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient();
+
+        switch (method)
+        {
+            case "GET":
+                await client.GetAsync(server.Url + "x", new { name = "bob" });
+                await client.GetAsync<JsonElement>(server.Url + "x", new Dictionary<string, object?> { ["name"] = "bob" });
+                break;
+            case "DELETE":
+                await client.DeleteAsync(server.Url + "x", new { name = "bob" });
+                break;
+            case "OPTIONS":
+                await client.OptionsAsync(server.Url + "x", new { name = "bob" });
+                break;
+            case "HEAD":
+                await client.HeadAsync(server.Url + "x", new { name = "bob" });
+                break;
+        }
+
+        Assert.All(server.Received, request => Assert.Equal(method, request.Method));
+        Assert.All(server.Received, request => Assert.Equal("name=bob", request.Query));
+        Assert.All(server.Received, request => Assert.Empty(request.Body));
+    }
+
     [Fact]
     public async Task GetAsync_WithStreamBody_IsSupported()
     {
@@ -865,10 +902,24 @@ public sealed class RequestBodyTests
         using var client = new AxiosClient();
 
         using var stream = new MemoryStream(Encoding.UTF8.GetBytes("stream-body"));
-        await client.GetAsync(server.Url + "x", stream);
+        await client.GetAsync(server.Url + "x", c => c.Body = stream);
 
         Assert.Equal("GET", server.Received[0].Method);
         Assert.Equal("stream-body", Body_RequestBody(server.Received[0]));
+    }
+
+    [Fact]
+    public async Task GetAsync_StreamInQueryPosition_IsRejected()
+    {
+        await using var server = TestHttpServer.Start(EchoJson);
+        using var client = new AxiosClient();
+
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes("stream-body"));
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x", stream));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.Contains("config.Body", ex.Message);
+        Assert.Empty(server.Received);
     }
 
     // ------------------------------------------------------------------

@@ -22,44 +22,45 @@ public sealed class OpenApiGeneratedExample : IExample
         ExampleConsole.Section(Number, Title);
 
         // 生成的请求模型由源生成器在编译期烘焙声明（Native AOT 同样可用），这里只负责发请求。
+        // 用 RequestFullAsync 是为了顺带打印每个端点的状态码；只要正文换成 RequestAsync。
         var client = _client ??= new ApiClient(context.BaseUrl)
         {
             CredentialProvider = CredentialProviders.Fixed(DemoApiServer.DemoToken)
         };
 
         // 1) tag=users → UsersRequests.g.cs：查询数组按 explode=true 生成，类上 [Authorize] 自动带 Bearer 头
-        var listed = await client.RequestAsync(new Generated.ListUsersRequest { Role = "admin", Ids = [1] });
+        var listed = await client.RequestFullAsync(new Generated.ListUsersRequest { Role = "admin", Ids = [1] });
         Console.WriteLine($"  GET    /api/users?role=admin&ids=1 -> {listed.Status} {ExampleConsole.Pretty(listed.Data)}");
 
-        var created = await client.RequestAsync(new Generated.CreateUserRequest
+        var created = await client.RequestFullAsync(new Generated.CreateUserRequest
         {
             Body = new Generated.NewUser { Name = "carol", Age = 22 }
         });
         Console.WriteLine($"  POST   /api/users -> {created.Status} {ExampleConsole.Pretty(created.Data)}");
 
-        var deleted = await client.RequestAsync(new Generated.DeleteUserRequest { Id = 2 });
+        var deleted = await client.RequestFullAsync(new Generated.DeleteUserRequest { Id = 2 });
         Console.WriteLine($"  DELETE /api/users/2 -> {deleted.Status} {ExampleConsole.Pretty(deleted.Data)}");
 
         // 2) tag=auth → AuthRequests.g.cs：两个登录请求来自 security: []，类上生成 [AllowAnonymous]
-        var login = await client.RequestAsync(new Generated.LoginRequest
+        var login = await client.RequestFullAsync(new Generated.LoginRequest
         {
             Body = new Generated.LoginPayload { Username = "alice", Password = "wonderland" }
         });
         Console.WriteLine($"  POST   /api/auth/login（JSON）-> {login.Status} token={login.Data!.Token}");
 
         // 表单正文没有方法级特性可写，生成器把编码方式写进 Configure（config.ContentType）。
-        var form = await client.RequestAsync(new Generated.LoginFormRequest
+        var form = await client.RequestFullAsync(new Generated.LoginFormRequest
         {
             Body = new Generated.LoginPayload { Username = "alice", Password = "wonderland" }
         });
         Console.WriteLine($"  POST   /api/auth/login/form（Configure 决定编码）-> {form.Status} user={form.Data!.User}");
 
         // 3) 继承根级 security 的操作在自己的请求模型上生成 [Authorize]
-        var profile = await client.RequestAsync(new Generated.GetProfileRequest { XDevice = "sample-console" });
+        var profile = await client.RequestFullAsync(new Generated.GetProfileRequest { XDevice = "sample-console" });
         Console.WriteLine($"  GET    /api/secure/profile（[Authorize]）-> {profile.Status} {ExampleConsole.Pretty(profile.Data)}");
 
         // 4) multipart/form-data 被展开成请求模型上的 [Part] 属性
-        var upload = await client.RequestAsync(new Generated.UploadRequest
+        var upload = await client.RequestFullAsync(new Generated.UploadRequest
         {
             Title = "OpenAPI 导入示例",
             File = Encoding.UTF8.GetBytes("这是由生成代码发送的文件内容。")

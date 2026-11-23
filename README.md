@@ -3,8 +3,8 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2883%20passed-success)](#构建与测试)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2738%20passed-success)](#构建与测试)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2895%20passed-success)](#构建与测试)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2750%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-92.1%25_(branch_87.7%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -61,7 +61,7 @@ dotnet tool install -g AxiosNet.Cli               # 可选：从 OpenAPI 生成�
 
 **运行时基线**：现代资产覆盖 .NET 6 及以上；兼容资产覆盖 .NET Framework 4.7.2+、.NET Core 2.0+（含 3.1）与 .NET 5。NuGet 自动选资产，无需配置。.NET Core 1.0 / 1.1 只支持到 `netstandard1.6`，不在支持范围内；能力边界见 [.NET Standard 2.0 兼容资产](#net-standard-20-兼容资产)。
 
-**从 1.x 升级**：字段改名与行为收紧见 [1.5 破坏性变更](docs/breaking-changes-1.5.md)。
+**从 1.x 升级**：字段改名与行为收紧见 [1.5 破坏性变更](docs/breaking-changes-1.5.md)；声明式返回形态、读动词的查询参数见 [1.8 破坏性变更](docs/breaking-changes-1.8.md)。
 
 ## 快速上手
 
@@ -113,7 +113,7 @@ public sealed class GetUserRequest : IApiRequest<User>
 }
 
 var client = new ApiClient("https://api.example.com/");
-var user = (await client.RequestAsync(new GetUserRequest { Id = 5 })).Data!;   // User
+var user = await client.RequestAsync(new GetUserRequest { Id = 5 });          // User
 ```
 
 **接口式**
@@ -125,12 +125,14 @@ using AxiosNet.WebAPI.Attributes;
 public interface IUserApi
 {
     [Get("users/{id}")]
-    Task<AxiosResponse<User>> GetAsync([Path] int id, CancellationToken cancellationToken = default);
+    Task<User> GetAsync([Path] int id, CancellationToken cancellationToken = default);
 }
 
 var api = client.Create<IUserApi>();
-var user = (await api.GetAsync(5)).Data!;                                      // User
+var user = await api.GetAsync(5);                                             // User
 ```
+
+两条路默认都只交付正文：模型式用 `RequestAsync`、接口式声明 `Task<T>`。要状态码 / 响应头 / 请求消息，模型式换 `RequestFullAsync`、接口式把返回类型写成 `Task<AxiosResponse<T>>`。
 
 扩展入口与 `ApiClient` 共用同一个门面（按 `AxiosClient` 缓存）：先 `new ApiClient(client)` 配好 `CredentialProvider` / `ErrorFactory`，再走 `client.Create<T>()` / `RequestAsync` / `RequestStreamAsync`，这些状态照常生效，不会静默变成另一个匿名门面。
 
@@ -183,15 +185,15 @@ await http.PostAsync("login", new Dictionary<string, object?>          // 表单
 
 await http.PostAsync("bin", bytes, c => c.ContentType = AxiosContentType.OctetStream);   // 二进制：显式声明
 
-await http.GetAsync("reports/query", new { from = "2024-01-01" });      // 任意方法都能带 body
-await http.DeleteAsync("users/1", new { reason = "duplicated" });
+await http.GetAsync("reports/query", new { from = "2024-01-01" });      // -> ?from=2024-01-01
+await http.DeleteAsync("users", new { reason = "duplicated" });         // -> ?reason=duplicated
 ```
 
 常用常量：`AxiosContentType.Json` / `FormUrlEncoded` / `MultipartFormData` / `OctetStream` / `Xml` / `JsonPatch` / `ProblemJson` / `TextPlain` / `TextHtml`；也可直接写带参字符串：`"multipart/form-data; boundary=----axios-net"`。
 
-> **省略 `data` 与写 `data: null` 等价**：`Params` / `Body` 按「有没有赋值过」合并，不按是否为 `null`，而快捷方法的 `data` 参数位**一旦存在就表示「本次正文」**。
-> - `PostAsync` / `PutAsync` / `PatchAsync` / `PostFormAsync` / `PutFormAsync` 的 `data` 是**有默认值的可选参数**：`PostAsync("orders")` 与 `PostAsync("orders", data: null)` 完全等价，都会**摘掉**实例上的 `Defaults.Body` 并发出空正文。想连默认正文一起发，请用 `PostAsync("orders", new AxiosConfig { ... })`（那份配置没碰 `Body`，合并时才继承默认值），或直接用通用入口 `RequestAsync`。
-> - `GetAsync` / `DeleteAsync` / `HeadAsync` / `OptionsAsync` 另有**不带 `data`** 的重载：`DeleteAsync("orders/1")` 不表达「本次没有正文」，会继承 `Defaults.Body`；要发空正文得写 `DeleteAsync("orders/1", data: null)`。
+> **第二个参数是什么，只看动词**：`PostAsync` / `PutAsync` / `PatchAsync` / `PostFormAsync` / `PutFormAsync` 收**正文**；`GetAsync` / `DeleteAsync` / `HeadAsync` / `OptionsAsync` 收**查询参数**（展平与转义规则同 `Params`）。读动词要发正文，写 `c => c.Body = ...`。
+> - 写动词的 `data` 是**有默认值的可选参数**：`PostAsync("orders")` 与 `PostAsync("orders", data: null)` 完全等价，都会**摘掉**实例上的 `Defaults.Body` 并发出空正文。想连默认正文一起发，请用 `PostAsync("orders", new AxiosConfig { ... })`（那份配置没碰 `Body`，合并时才继承默认值），或直接用通用入口 `RequestAsync`。
+> - 读动词的第二个参数不是「本次正文」，所以 `DeleteAsync("orders/1")` 照样继承 `Defaults.Body`；要发空正文写 `DeleteAsync("orders/1", c => c.Body = null)`。
 >
 > 混用实例默认值与单次请求时的差异，详见[实例默认值 vs 单次请求](#客户端)。
 
@@ -201,12 +203,13 @@ await http.DeleteAsync("users/1", new { reason = "duplicated" });
 | --- | --- | --- |
 | 只要响应，不反序列化 | `GetAsync(url, c => …, ct)` | `AxiosResponse`（`Data` 是 `object`） |
 | 反序列化成 `T` | `GetAsync<T>(url, c => …, ct)` | `AxiosResponse<T>` |
-| 带请求正文 | `GetAsync(url, data, c => …, ct)`；body 动词写成 `PostAsync(url, data)`（`data` 有默认值） | 同上两种 |
+| 带查询参数 | `GetAsync(url, query, c => …, ct)` | 同上两种 |
+| 带请求正文 | `PostAsync(url, data, c => …, ct)`；读动词写 `c => c.Body = …` | 同上两种 |
 | 只传取消令牌 | `GetAsync(url, ct)` | `AxiosResponse` / `AxiosResponse<T>` |
 
-- 后三个参数（`data` / `configure` / `cancellationToken`）都有默认值，`GetAsync(url)` 就能发；`GetAsync(url, ct)` 是**显式令牌**形态，令牌不会被当成正文。
+- 后三个参数（`query` / `data` / `configure` / `cancellationToken`）都有默认值，`GetAsync(url)` 就能发；`GetAsync(url, ct)` 是**显式令牌**形态，令牌不会被当成正文。
 - 用**预先造好的配置**发一次请求：`RequestAsync(config)`（实例与静态门面都有，config 自己带 url / method）。实例的 `GetAsync` / `DeleteAsync` / `HeadAsync` / `OptionsAsync` / `PostAsync` / `PutAsync` / `PatchAsync` 另有 `(url, config)` 形态，会用参数上的 url / method 覆盖配置里的同名项、**不就地改调用方的对象**；表单动词（`PostFormAsync` 等）没有这一形态；它们的作用是设置表单 `ContentType`，需要配置形态时直接用 `RequestAsync`。
-- 把 `AxiosConfig` 或 `CancellationToken` 放到 `data` 位置会立刻抛 `ERR_BAD_OPTION_VALUE` 并指路：`object? data` 能吞下一切，不拦就会「把配置 / 令牌当正文发出去」，或者退化成一句与真实原因无关的「正文序列化失败」。
+- 把 `AxiosConfig` / `CancellationToken` 放到第二个参数，或在读动词的查询参数位置传 `Stream` / `HttpContent`，都会立刻抛 `ERR_BAD_OPTION_VALUE` 并指路：`object?` 能吞下一切，不拦就会「把配置 / 令牌当正文或查询串发出去」，或者退化成一句与真实原因无关的序列化失败。
 
 ### 查询参数 params
 
@@ -1649,7 +1652,7 @@ var response = await client.GetAsync<User>("users/1",
 
 ## 声明式客户端
 
-端点一多，URL、参数、请求头散落在每个调用处就难管。声明式入口把每个端点写成**请求模型**或**接口**，调用只剩一句 `client.RequestAsync(request)` / `api.GetAsync(5)`；两种写法由同一个客户端承载：`client.Create<T>()` / `client.RequestAsync(model)` 是 `AxiosNet.WebAPI` 扩展方法；需要 `CredentialProvider` / `ErrorFactory` 时改用 `ApiClient`。命名空间 `AxiosNet.WebAPI`（特性在 `AxiosNet.WebAPI.Attributes`），与核心同包。
+端点一多，URL、参数、请求头散落在每个调用处就难管。声明式入口把每个端点写成**请求模型**或**接口**，调用只剩一句 `client.RequestAsync(request)` / `api.GetAsync(5)`，拿到的就是正文；两种写法由同一个客户端承载：`client.Create<T>()` / `client.RequestAsync(model)` 是 `AxiosNet.WebAPI` 扩展方法；需要 `CredentialProvider` / `ErrorFactory` 时改用 `ApiClient`。命名空间 `AxiosNet.WebAPI`（特性在 `AxiosNet.WebAPI.Attributes`），与核心同包。
 
 | 写法 | 长什么样 | 适合 | 代价 |
 | --- | --- | --- | --- |
@@ -1687,15 +1690,15 @@ var client = new ApiClient("https://api.example.com/")
     CredentialProvider = CredentialProviders.Fixed("token")
 };
 
-var user = (await client.RequestAsync(new GetUserRequest { Id = 5 })).Data!;   // User
+var user = await client.RequestAsync(new GetUserRequest { Id = 5 });           // User
 string url = client.GetUri(new GetUserRequest { Id = 5 });                     // 只拼 URL
 ```
 
 **调用与返回**
 
-- `IApiRequest<TResponse>` 的 `TResponse` 就是 `Data` 的类型：`RequestAsync` 返回 `AxiosResponse<TResponse>`，`GetUri` 只拼 URL、不发请求。
+- `IApiRequest<TResponse>` 的 `TResponse` 就是正文类型：`RequestAsync` 返回 `Task<TResponse>`（正文为空时是 `default(TResponse)`），`RequestFullAsync` 返回 `AxiosResponse<TResponse>`（状态码 / 响应头 / 请求消息），`GetUri` 只拼 URL、不发请求。
 - `client.RequestAsync(model)` / `RequestStreamAsync` 是 `AxiosClient` 上的扩展方法（`using AxiosNet.WebAPI;`），与 `new ApiClient(...)` 共用同一个门面、`CredentialProvider` / `ErrorFactory` 状态。
-- 按请求微调：`RequestAsync(request, config => ...)`，或继承 `ApiRequest<TResponse>` 覆写 `Configure(config)`；回调在参数绑定之后、授权之前。
+- 按请求微调：`RequestAsync(request, config => ...)` / `RequestFullAsync(request, config => ...)`，或继承 `ApiRequest<TResponse>` 覆写 `Configure(config)`；回调在参数绑定之后、授权之前。
 - `client.Axios` 直接进底层 `AxiosClient`（拦截器、池、Handler 全可用）。
 
 **绑定**
@@ -1808,11 +1811,11 @@ public interface IUserApi
         CancellationToken cancellationToken = default);
 
     [Post("users")]
-    Task<AxiosResponse<User>> CreateAsync(UserPayload payload, CancellationToken cancellationToken = default);
+    Task<AxiosResponse<User>> CreateAsync([RootBody] UserPayload payload, CancellationToken cancellationToken = default);
 }
 
 var api = client.Create<IUserApi>();
-var user = (await api.GetAsync(5)).Data!;                 // User
+var user = await api.GetAsync(5);                          // User
 ```
 
 **调用与返回**
@@ -2006,7 +2009,7 @@ public sealed class ListUsersRequest : ApiRequest<User[]>
 - 非 JSON 请求体在这里写 `config.ContentType`（表单 / XML / 自定义媒体类型）；
 - 查询数组写 `config.Serialization.CollectionFormat`。
 
-流式端点额外生成 `public const AxiosStreamFormat StreamFormat`，用 `client.RequestStreamAsync(new StreamEventsRequest(), StreamEventsRequest.StreamFormat)` 逐帧读。响应无正文时生成 `ApiRequest<object>`，照常 `RequestAsync`，`Data` 为 `null`。
+流式端点额外生成 `public const AxiosStreamFormat StreamFormat`，用 `client.RequestStreamAsync(new StreamEventsRequest(), StreamEventsRequest.StreamFormat)` 逐帧读。响应无正文时生成 `ApiRequest<object>`，照常 `RequestAsync`（返回 `default`）；要读状态码本身用 `RequestFullAsync`，`Data` 为 `null`。
 
 **默认映射规则**（都有开关或报告提示）：
 
@@ -2142,7 +2145,7 @@ public sealed class LoginRequest : IApiRequest<TokenResponse>
 ApiClient? api = null;
 using var tokens = new AccessTokenManager(new AccessTokenOptions(async ct =>
 {
-    var r = await api!.RequestAsync(new LoginRequest
+    var r = await api!.RequestFullAsync(new LoginRequest
     {
         Username = "alice",
         Password = "wonderland"
@@ -2600,6 +2603,7 @@ AOT 下不可用的能力：
 | --- | --- |
 | `axios(config)` / `axios(url, config)` | `client.RequestAsync(new AxiosConfig { ... })` / `client.GetAsync(url, c => ...)` |
 | `axios.get/post/put/patch/delete/head/options` | `GetAsync` / `PostAsync` / `PutAsync` / `PatchAsync` / `DeleteAsync` / `HeadAsync` / `OptionsAsync` |
+| `axios.get(url, { params })` / `axios.delete(url, { params })` | `GetAsync(url, new { from = "2024-01-01" })` / `DeleteAsync(url, new { reason = "duplicated" })`（第二参数即查询参数） |
 | `axios.create(config)` | `Axios.Create(config)` / `Axios.Create(config, sharedPool)` |
 | `axios.getUri(config)` | `client.GetUri(config)` / `client.GetUri(c => ...)` |
 | `axios.postForm / putForm / patchForm` | `PostFormAsync` / `PutFormAsync` / `PatchFormAsync` |
@@ -2721,11 +2725,11 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 2682 / 2669 | `net8.0` / `net6.0` | 5351 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2694 / 2681 | `net8.0` / `net6.0` | 5375 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests`（OpenAPI 生成） | 75 | `net8.0` | 75 |
 | `AxiosNet.Compat.Tests`（netstandard2.0 兼容资产） | 57 / 52 | `net8.0` / `net472` | 109 |
-| **合计** | **2883 / 2790** | | **5673** |
+| **合计** | **2895 / 2802** | | **5697** |
 
 表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。
 

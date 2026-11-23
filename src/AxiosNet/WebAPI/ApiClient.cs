@@ -62,17 +62,43 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         }
     }
 
-    /// <summary>发送请求模型描述的请求，返回类型由请求模型的 <see cref="IApiRequest{TResponse}"/> 泛型确定。</summary>
+    /// <summary>发送请求模型描述的请求，只交付正文：正文类型就是 <see cref="IApiRequest{TResponse}"/> 的泛型，正文为空时返回 <c>default</c>。</summary>
     /// <param name="request">请求模型实例（路径 / 查询 / 头 / 正文的取值来源）。</param>
     /// <param name="cancellationToken">外部取消令牌。</param>
     /// <exception cref="AxiosException">请求模型定义非法（缺路由特性、占位符未绑定、多个请求体等），错误码 <c>ERR_BAD_OPTION_VALUE</c>，内部异常在 <c>Cause</c>。</exception>
     /// <exception cref="AxiosAotMetadataException">Native AOT 下缺少该模型的生成元数据（源生成器未启用）。</exception>
-    public Task<AxiosResponse<TResponse>> RequestAsync<TResponse>(
+    public async Task<TResponse> RequestAsync<TResponse>(
         IApiRequest<TResponse> request,
         CancellationToken cancellationToken = default)
-        => RequestAsync(request, configure: null, cancellationToken);
+    {
+        var response = await RequestFullAsync(request, configure: null, cancellationToken).ConfigureAwait(false);
+        return response.Data!;
+    }
 
     /// <summary>同 <see cref="RequestAsync{TResponse}(IApiRequest{TResponse}, CancellationToken)"/>，另支持按请求微调配置。</summary>
+    /// <param name="request">请求模型实例。</param>
+    /// <param name="configure">在参数绑定与 <see cref="IApiRequestConfigurable.Configure"/> 之后、授权之前调用。</param>
+    /// <param name="cancellationToken">外部取消令牌。</param>
+    public async Task<TResponse> RequestAsync<TResponse>(
+        IApiRequest<TResponse> request,
+        Action<AxiosConfig>? configure,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await RequestFullAsync(request, configure, cancellationToken).ConfigureAwait(false);
+        return response.Data!;
+    }
+
+    /// <summary>发送请求模型描述的请求，交付完整响应（状态码 / 响应头 / 请求消息 / 正文）：要读这些元数据时用它。</summary>
+    /// <param name="request">请求模型实例（路径 / 查询 / 头 / 正文的取值来源）。</param>
+    /// <param name="cancellationToken">外部取消令牌。</param>
+    /// <exception cref="AxiosException">请求模型定义非法（缺路由特性、占位符未绑定、多个请求体等），错误码 <c>ERR_BAD_OPTION_VALUE</c>，内部异常在 <c>Cause</c>。</exception>
+    /// <exception cref="AxiosAotMetadataException">Native AOT 下缺少该模型的生成元数据（源生成器未启用）。</exception>
+    public Task<AxiosResponse<TResponse>> RequestFullAsync<TResponse>(
+        IApiRequest<TResponse> request,
+        CancellationToken cancellationToken = default)
+        => RequestFullAsync(request, configure: null, cancellationToken);
+
+    /// <summary>同 <see cref="RequestFullAsync{TResponse}(IApiRequest{TResponse}, CancellationToken)"/>，另支持按请求微调配置。</summary>
     /// <param name="request">请求模型实例。</param>
     /// <param name="configure">在参数绑定与 <see cref="IApiRequestConfigurable.Configure"/> 之后、授权之前调用。</param>
     /// <param name="cancellationToken">外部取消令牌。</param>
@@ -81,7 +107,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         "IL2072",
         Justification = "请求模型的运行时类型无法静态标注：AOT 下由 AxiosNet 源生成器在编译期写入成员取值委托，注册表命中后不再反射；"
             + "未命中且无动态代码时抛 AxiosAotMetadataException，不会反射模型成员（README「运行时与 AOT」）。")]
-    public Task<AxiosResponse<TResponse>> RequestAsync<TResponse>(
+    public Task<AxiosResponse<TResponse>> RequestFullAsync<TResponse>(
         IApiRequest<TResponse> request,
         Action<AxiosConfig>? configure,
         CancellationToken cancellationToken = default)

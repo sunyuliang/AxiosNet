@@ -604,7 +604,7 @@ public sealed class FormatMatrixTests
             Maybe = MaybeValue
         };
 
-        await client.RequestAsync(request);
+        await client.RequestFullAsync(request);
 
         var headers = Assert.Single(server.Received).Headers;
         Assert.Equal("7", headers["X-Int"]);
@@ -622,7 +622,7 @@ public sealed class FormatMatrixTests
 
         await using var hookedServer = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var hookedClient = new ApiClient(hookedServer.Url, c => c.Serialization.ValueText = Hook);
-        await hookedClient.RequestAsync(request);
+        await hookedClient.RequestFullAsync(request);
 
         var hooked = Assert.Single(hookedServer.Received).Headers;
         Assert.Equal("H7", hooked["X-Int"]);
@@ -635,7 +635,7 @@ public sealed class FormatMatrixTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new MxHeaderCollectionRequest
+        await client.RequestFullAsync(new MxHeaderCollectionRequest
         {
             Headers = new Dictionary<string, string> { ["X-A"] = "1", ["X-B"] = "two" }
         });
@@ -737,7 +737,7 @@ public sealed class FormatMatrixTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(UploadRequest(Payload()));
+        await client.RequestFullAsync(UploadRequest(Payload()));
 
         AssertParts(Assert.Single(server.Received), ModelPartDefaults(), new[]
         {
@@ -752,7 +752,7 @@ public sealed class FormatMatrixTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url, c => c.Serialization.ValueText = Hook);
 
-        await client.RequestAsync(UploadRequest(Payload()));
+        await client.RequestFullAsync(UploadRequest(Payload()));
 
         var parts = MultipartParts(Assert.Single(server.Received));
         Assert.Contains(parts, p => p.Name == "Int" && p.Content == "H7");
@@ -768,7 +768,7 @@ public sealed class FormatMatrixTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(UploadRequest(Payload()));
+        await client.RequestFullAsync(UploadRequest(Payload()));
 
         var parts = MultipartParts(Assert.Single(server.Received));
         Assert.Contains(parts, p => p.Name == "Nested[X]" && p.Content == "n1");
@@ -844,14 +844,14 @@ public sealed class FormatMatrixTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new MxJsonBodyRequest { Body = new MxJsonPayload { When = WhenUtc } });
+        await client.RequestFullAsync(new MxJsonBodyRequest { Body = new MxJsonPayload { When = WhenUtc } });
         Assert.Contains(
             "2024-03-05T06:07:08Z",
             Encoding.UTF8.GetString(Assert.Single(server.Received).Body));
 
         await using var bridgedServer = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var bridged = new ApiClient(bridgedServer.Url);
-        await bridged.RequestAsync(
+        await bridged.RequestFullAsync(
             new MxJsonBodyRequest { Body = new MxJsonPayload { When = WhenUtc } },
             c => c.Serialization.JsonOptions = AxiosJsonFormat.ApplyTo());
 
@@ -958,7 +958,7 @@ public sealed class FormatMatrixTests
         });
         client.Axios.Defaults.Serialization.ValueText = Hook;
 
-        await client.RequestAsync(new MxQueryRequest { When = WhenUtc });
+        await client.RequestFullAsync(new MxQueryRequest { When = WhenUtc });
 
         Assert.True(server.Received.Count >= 1);
         foreach (var request in server.Received)
@@ -993,7 +993,7 @@ public sealed class FormatMatrixTests
 
         // 装配失败由 WebAPI 自有的异常工厂产出（AxiosException 派生），按公共契约接住基类。
         var ex = await Assert.ThrowsAnyAsync<AxiosException>(() =>
-            client.RequestAsync(new MxQueryRequest { When = WhenUtc }));
+            client.RequestFullAsync(new MxQueryRequest { When = WhenUtc }));
 
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
         Assert.IsType<InvalidOperationException>(ex.InnerException);
@@ -1011,7 +1011,7 @@ public sealed class FormatMatrixTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var headerClient = new ApiClient(server.Url, c => c.Serialization.ValueText = (_, _) => throw new InvalidOperationException("boom"));
         var headerEx = await Assert.ThrowsAnyAsync<AxiosException>(() =>
-            headerClient.RequestAsync(new MxHeaderRequest { Int = 7 }));
+            headerClient.RequestFullAsync(new MxHeaderRequest { Int = 7 }));
         Assert.Equal(AxiosException.ErrBadRequest, headerEx.Code);
         Assert.Empty(server.Received);
     }
@@ -1053,11 +1053,11 @@ public sealed class FormatMatrixTests
             var value = new DateTime(2024, 3, 5, 6, 7, i, DateTimeKind.Utc);
             if (i % 2 == 0)
             {
-                await hooked.RequestAsync(new MxQueryRequest { When = value });
+                await hooked.RequestFullAsync(new MxQueryRequest { When = value });
             }
             else
             {
-                await plain.RequestAsync(new MxQueryRequest { When = value });
+                await plain.RequestFullAsync(new MxQueryRequest { When = value });
             }
         });
 

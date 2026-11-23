@@ -36,7 +36,7 @@ public sealed class ErrorModelTests
         var factory = new CapturingErrorFactory();
         using var client = new ApiClient(server.Url) { ErrorFactory = factory };
 
-        await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new ByteBodyErrorRequest()));
+        await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new ByteBodyErrorRequest()));
 
         Assert.NotNull(factory.Captured);
         Assert.Equal("{é}", factory.Captured!.Body);

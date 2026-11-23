@@ -413,7 +413,7 @@ public sealed class AllocationTests
         long Run(ApiClient client)
             => MinimumBytes(
                 100,
-                () => client.RequestAsync(new ContentBodyRequest { Payload = new ByteArrayContent(body) })
+                () => client.RequestFullAsync(new ContentBodyRequest { Payload = new ByteArrayContent(body) })
                     .GetAwaiter()
                     .GetResult(),
                 windows: 5);

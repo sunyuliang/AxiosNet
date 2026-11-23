@@ -17,7 +17,7 @@ public sealed class ModelEncodingDeclarationTests
         await using var server = TestHttpServer.Start(_ => new TestResponse());
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new ClassBodyModel { Payload = "hi" });
+        await client.RequestFullAsync(new ClassBodyModel { Payload = "hi" });
 
         var received = Assert.Single(server.Received);
         Assert.Equal("text/plain", received.Headers["Content-Type"]);
@@ -29,7 +29,7 @@ public sealed class ModelEncodingDeclarationTests
         await using var server = TestHttpServer.Start(_ => new TestResponse());
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new ClassQueryModel { Tags = ["a", "b"] });
+        await client.RequestFullAsync(new ClassQueryModel { Tags = ["a", "b"] });
 
         Assert.Equal("Tags=a&Tags=b", Assert.Single(server.Received).Query);
     }
@@ -62,8 +62,8 @@ public sealed class ModelEncodingDeclarationTests
         await using var server = TestHttpServer.Start(_ => new TestResponse());
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new PropertyBodyModel { Payload = "hi" });
-        await client.RequestAsync(new PropertyQueryModel { Tags = ["a", "b"] });
+        await client.RequestFullAsync(new PropertyBodyModel { Payload = "hi" });
+        await client.RequestFullAsync(new PropertyQueryModel { Tags = ["a", "b"] });
 
         Assert.Equal("application/json", server.Received[0].Headers["Content-Type"]);
         Assert.Equal("Tags=a&Tags=b", server.Received[1].Query);
@@ -97,7 +97,7 @@ public sealed class ModelEncodingDeclarationTests
         await using var server = TestHttpServer.Start(_ => new TestResponse());
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new SameValueModel { Tags = ["a", "b"] });
+        await client.RequestFullAsync(new SameValueModel { Tags = ["a", "b"] });
 
         Assert.Equal("Tags=a&Tags=b", Assert.Single(server.Received).Query);
     }
@@ -109,7 +109,7 @@ public sealed class ModelEncodingDeclarationTests
         using var client = new ApiClient(server.Url);
 
         var error = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.RequestAsync(new ConflictingBodyModel { Payload = "hi" }));
+            client.RequestFullAsync(new ConflictingBodyModel { Payload = "hi" }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
         Assert.Contains("[BodyContentType]", error.Message);
@@ -123,7 +123,7 @@ public sealed class ModelEncodingDeclarationTests
         using var client = new ApiClient(server.Url);
 
         var error = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.RequestAsync(new ConflictingQueryModel { Tags = ["a", "b"] }));
+            client.RequestFullAsync(new ConflictingQueryModel { Tags = ["a", "b"] }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
         Assert.Contains("[QueryCollectionFormat]", error.Message);
@@ -137,7 +137,7 @@ public sealed class ModelEncodingDeclarationTests
         using var client = new ApiClient(server.Url);
 
         var error = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.RequestAsync(new ConflictingStreamModel()));
+            client.RequestFullAsync(new ConflictingStreamModel()));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
         Assert.Contains("[Stream]", error.Message);

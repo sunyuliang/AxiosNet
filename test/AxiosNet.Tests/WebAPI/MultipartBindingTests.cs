@@ -19,7 +19,7 @@ public sealed class MultipartBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new UploadRequest
+        await client.RequestFullAsync(new UploadRequest
         {
             Title = "年报",
             Blob = [1, 2, 3],
@@ -47,7 +47,7 @@ public sealed class MultipartBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new PlainUploadRequest { Note = "n1", Payload = [9] });
+        await client.RequestFullAsync(new PlainUploadRequest { Note = "n1", Payload = [9] });
 
         var body = Body(Assert.Single(server.Received));
         Assert.Contains("name=Note", body);
@@ -60,7 +60,7 @@ public sealed class MultipartBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new DocumentUploadRequest
+        await client.RequestFullAsync(new DocumentUploadRequest
         {
             Doc = new FormFile("doc.pdf", "pdf-bytes"u8.ToArray()),
             Signed = new FormFile("sig.dat", "sig"u8.ToArray(), "application/zip")
@@ -82,7 +82,7 @@ public sealed class MultipartBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new MultiFileRequest
+        await client.RequestFullAsync(new MultiFileRequest
         {
             Files =
             {
@@ -102,7 +102,7 @@ public sealed class MultipartBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new SingleFileRequest
+        await client.RequestFullAsync(new SingleFileRequest
         {
             File = new FormFile("report.txt", "x"u8.ToArray(), "text/plain") { FieldName = "custom" }
         });
@@ -117,7 +117,7 @@ public sealed class MultipartBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new JsonNamedPartRequest { DisplayName = "n" });
+        await client.RequestFullAsync(new JsonNamedPartRequest { DisplayName = "n" });
 
         // 默认部件名与嵌套对象展平一致：[JsonPropertyName] 优先于属性名
         Assert.Contains("name=display_name", Body(Assert.Single(server.Received)));
@@ -129,7 +129,7 @@ public sealed class MultipartBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new FileDeclaredMapRequest
+        await client.RequestFullAsync(new FileDeclaredMapRequest
         {
             Meta = new Dictionary<string, string> { ["env"] = "test" }
         });
@@ -149,7 +149,7 @@ public sealed class MultipartBindingTests
         // 延迟执行的迭代器在物化该集合时就抛错：归成「请求体构建失败」（ERR_BAD_REQUEST），
         // 原始异常留在 InnerException 上，已经产出的流在回滚里被就地释放
         var ex = await Assert.ThrowsAnyAsync<AxiosException>(() =>
-            client.RequestAsync(new ThrowingCollectionRequest { Files = YieldThenThrow(stream) }));
+            client.RequestFullAsync(new ThrowingCollectionRequest { Files = YieldThenThrow(stream) }));
 
         Assert.Equal("ERR_BAD_REQUEST", ex.Code);
         Assert.Contains("ThrowingCollectionRequest", ex.Message);   // 绑定期失败带模型名（装配期只剩表单字典）
@@ -177,7 +177,7 @@ public sealed class MultipartBindingTests
         using var client = new ApiClient(server.Url);
         object? seen = null;
 
-        await client.RequestAsync(
+        await client.RequestFullAsync(
             new UploadRequest
             {
                 Title = "t",
@@ -206,7 +206,7 @@ public sealed class MultipartBindingTests
         var segment = Encoding.ASCII.GetBytes("seg-data");
         var stream = new MemoryStream(Encoding.ASCII.GetBytes("stream-data"));
 
-        await client.RequestAsync(new DeclaredMemoryShapesRequest
+        await client.RequestFullAsync(new DeclaredMemoryShapesRequest
         {
             Memory = new Memory<byte>(memory),
             ReadOnly = new ReadOnlyMemory<byte>(readOnly),
@@ -240,7 +240,7 @@ public sealed class MultipartBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new PlainMemoryShapesRequest
+        await client.RequestFullAsync(new PlainMemoryShapesRequest
         {
             Memory = new Memory<byte>(Encoding.ASCII.GetBytes("m")),
             ReadOnly = new ReadOnlyMemory<byte>(Encoding.ASCII.GetBytes("r")),
@@ -262,7 +262,7 @@ public sealed class MultipartBindingTests
 
         // 声明值非法在「流已交出所有权」之后才被发现：必须就地释放，且归成选项错误
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.RequestAsync(new IllegalDeclaredContentTypeOnStreamRequest { File = stream }));
+            client.RequestFullAsync(new IllegalDeclaredContentTypeOnStreamRequest { File = stream }));
 
         Assert.Equal("ERR_BAD_OPTION_VALUE", ex.Code);
         Assert.Contains("Content-Type", ex.Message);
@@ -276,7 +276,7 @@ public sealed class MultipartBindingTests
 
         // 装配期（config.Body 已只剩表单）失败也要能指出是哪个请求模型，而不是内部容器类型名
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.RequestAsync(new LazyThrowingPartRequest()));
+            client.RequestFullAsync(new LazyThrowingPartRequest()));
 
         Assert.Equal("ERR_BAD_REQUEST", ex.Code);
         Assert.Contains(nameof(LazyThrowingPartRequest), ex.Message);
@@ -290,7 +290,7 @@ public sealed class MultipartBindingTests
 
         // 声明的值写错是配置错误：与 [Part].Name 非法同一分类，不能报成「请求体序列化失败」
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.RequestAsync(new IllegalDeclaredFileNameRequest { Blob = [1, 2, 3] }));
+            client.RequestFullAsync(new IllegalDeclaredFileNameRequest { Blob = [1, 2, 3] }));
 
         Assert.Equal("ERR_BAD_OPTION_VALUE", ex.Code);
         Assert.Contains("文件名", ex.Message);
@@ -304,7 +304,7 @@ public sealed class MultipartBindingTests
         using var client = new ApiClient("http://127.0.0.1:1/");
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.RequestAsync(new IllegalDeclaredContentTypeRequest { Blob = [1, 2, 3] }));
+            client.RequestFullAsync(new IllegalDeclaredContentTypeRequest { Blob = [1, 2, 3] }));
 
         // Content-Type 是逐个部件写进头部的取值，控制字符会被 FormFile 在构造期拦下
         Assert.Equal("ERR_BAD_OPTION_VALUE", ex.Code);
@@ -319,7 +319,7 @@ public sealed class MultipartBindingTests
 
         // 显式声明的字段名压过 FormFile 自带的 FieldName：非法同样是配置错误，且已交进来的流必须释放
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.RequestAsync(new IllegalDeclaredNameOnFileRequest { File = new FormFile("a.bin", stream) }));
+            client.RequestFullAsync(new IllegalDeclaredNameOnFileRequest { File = new FormFile("a.bin", stream) }));
 
         Assert.Equal("ERR_BAD_OPTION_VALUE", ex.Code);
         Assert.False(stream.CanRead);
@@ -331,7 +331,7 @@ public sealed class MultipartBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new TextFieldRequest { Text = "hello" });
+        await client.RequestFullAsync(new TextFieldRequest { Text = "hello" });
 
         var body = Body(Assert.Single(server.Received));
         Assert.Contains("name=Text", body);
@@ -344,7 +344,7 @@ public sealed class MultipartBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new UploadRequest());
+        await client.RequestFullAsync(new UploadRequest());
 
         var received = Assert.Single(server.Received);
         Assert.DoesNotContain("name=", Body(received));
@@ -356,7 +356,7 @@ public sealed class MultipartBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(
+        await client.RequestFullAsync(
             new UploadRequest { Title = "t" },
             configure => configure.ContentType = "multipart/form-data; boundary=----axios-net");
 
@@ -373,7 +373,7 @@ public sealed class MultipartBindingTests
 
         // 属性取值经反射，异常会被包进 TargetInvocationException（这里只关心「装配中断 + 流被释放」）
         var ex = await Assert.ThrowsAnyAsync<Exception>(() =>
-            client.RequestAsync(new RawStreamThenThrowRequest { File = stream }));
+            client.RequestFullAsync(new RawStreamThenThrowRequest { File = stream }));
 
         Assert.Contains("boom", ex.ToString());
 
@@ -390,7 +390,7 @@ public sealed class MultipartBindingTests
         var stream = new MemoryStream(Encoding.UTF8.GetBytes("payload"));
 
         var ex = await Assert.ThrowsAnyAsync<Exception>(() =>
-            client.RequestAsync(new DictionaryFormFileThenThrowRequest
+            client.RequestFullAsync(new DictionaryFormFileThenThrowRequest
             {
                 Files = new Dictionary<string, FormFile>
                 {
@@ -412,7 +412,7 @@ public sealed class MultipartBindingTests
         var stream = new MemoryStream(Encoding.UTF8.GetBytes("payload"));
 
         var ex = await Assert.ThrowsAnyAsync<Exception>(() =>
-            client.RequestAsync(new ArrayListThenThrowRequest
+            client.RequestFullAsync(new ArrayListThenThrowRequest
             {
                 Files = new ArrayList { new FormFile("a.txt", stream, "text/plain") }
             }));

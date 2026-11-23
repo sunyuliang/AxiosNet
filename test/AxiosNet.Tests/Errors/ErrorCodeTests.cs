@@ -96,7 +96,7 @@ public sealed class ErrorCodeTests
         AxiosException? caught = null;
         try
         {
-            await client.RequestAsync(new FailRequest());
+            await client.RequestFullAsync(new FailRequest());
         }
         catch (AxiosException ex)
         {

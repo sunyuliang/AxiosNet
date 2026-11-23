@@ -92,7 +92,7 @@ static async Task<bool> RunNamedAsync(string[] args, IReadOnlyList<SampleMenuIte
             continue;
         }
 
-        ok &= await SampleMenu.RunItemAsync(index, items[index - 1]);
+        ok &= !await SampleMenu.RunItemAsync(index, items[index - 1]);
     }
 
     return ok;

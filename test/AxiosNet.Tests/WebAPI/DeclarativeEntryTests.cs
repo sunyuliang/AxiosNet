@@ -99,12 +99,12 @@ public sealed class DeclarativeEntryTests
     }
 
     [Fact]
-    public async Task DeclarativeRequestAsync_AndGetUri_UseModelRoute()
+    public async Task DeclarativeRequestFullAsync_AndGetUri_UseModelRoute()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("bob", 30)));
         using var client = Axios.Create(server.Url);
 
-        var response = await client.RequestAsync(new EntryGetUserRequest { Id = 7, Verbose = true });
+        var response = await client.RequestFullAsync(new EntryGetUserRequest { Id = 7, Verbose = true });
 
         Assert.Equal("bob", response.Data!.Name);
         var received = Assert.Single(server.Received);
@@ -114,12 +114,12 @@ public sealed class DeclarativeEntryTests
     }
 
     [Fact]
-    public async Task DeclarativeRequestAsync_PreservesExplicitAuthorizationHeader()
+    public async Task DeclarativeRequestFullAsync_PreservesExplicitAuthorizationHeader()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 18)));
         using var client = Axios.Create(server.Url, c => c.Headers.Set("Authorization", "Bearer fixed"));
 
-        await client.RequestAsync(new EntryAuthorizedRequest());
+        await client.RequestFullAsync(new EntryAuthorizedRequest());
 
         Assert.Equal("Bearer fixed", Assert.Single(server.Received).Headers["Authorization"]);
     }
@@ -144,14 +144,14 @@ public sealed class DeclarativeEntryTests
     }
 
     [Fact]
-    public async Task DeclarativeRequestAsync_OnDisposedClient_FailsInsteadOfResurrecting()
+    public async Task DeclarativeRequestFullAsync_OnDisposedClient_FailsInsteadOfResurrecting()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 18)));
         var client = Axios.Create(server.Url);
         client.Dispose();
 
         var error = await Assert.ThrowsAnyAsync<AxiosException>(
-            () => client.RequestAsync(new EntryGetUserRequest { Id = 1 }));
+            () => client.RequestFullAsync(new EntryGetUserRequest { Id = 1 }));
 
         Assert.Equal(AxiosException.ErrCanceled, error.Code);
         Assert.Empty(server.Received);
@@ -185,7 +185,7 @@ public sealed class DeclarativeEntryTests
         using var facade = new ApiClient(client) { ErrorFactory = new ApiErrorFactory<FacadeProblem>() };
 
         var error = await Assert.ThrowsAsync<ApiError<FacadeProblem>>(
-            () => client.RequestAsync(new EntryGetUserRequest { Id = 1 }));
+            () => client.RequestFullAsync(new EntryGetUserRequest { Id = 1 }));
 
         Assert.Equal("E42", error.Error?.Code);
     }
@@ -201,7 +201,7 @@ public sealed class DeclarativeEntryTests
         client.CredentialProvider = new StaticTokenProvider("once");
 
         await client.Axios.Create<IAuthorizedApi>().GetAsync();
-        await client.Axios.RequestAsync(new EntryAuthorizedRequest());
+        await client.Axios.RequestFullAsync(new EntryAuthorizedRequest());
 
         Assert.Equal(2, server.Received.Count);
         Assert.All(server.Received, request => Assert.Equal("Bearer once", request.Headers["Authorization"]));

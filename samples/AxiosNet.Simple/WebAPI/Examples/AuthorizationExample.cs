@@ -45,7 +45,7 @@ public sealed class AuthorizationExample : IExample
         client.CredentialProvider = tokens;
 
         // 1) 登录模型标了 [AllowAnonymous]：整条授权链路跳过（提供方不会被调用），也不带 Authorization 头
-        var login = await client.RequestAsync(new LoginRequest
+        var login = await client.RequestFullAsync(new LoginRequest
         {
             Username = "alice",
             Password = "wonderland"
@@ -58,7 +58,7 @@ public sealed class AuthorizationExample : IExample
         tokens.SetToken(login.Data.Token);
 
         // 2) [Authorize]：库自动拼 Authorization: Bearer {token}
-        var profile = await client.RequestAsync(new SecureProfileRequest());
+        var profile = await client.RequestFullAsync(new SecureProfileRequest());
         Console.WriteLine($"  受保护端点（[Authorize] 自动 Bearer）-> {ExampleConsole.Pretty(profile.Data)}");
         Console.WriteLine($"    实际头 Authorization = {Header(profile.Request, "Authorization")}");
 
@@ -66,7 +66,7 @@ public sealed class AuthorizationExample : IExample
         tokens.SetToken(null);
         try
         {
-            await client.RequestAsync(new SecureProfileRequest());
+            await client.RequestFullAsync(new SecureProfileRequest());
         }
         catch (AxiosException ex)
         {
@@ -78,7 +78,7 @@ public sealed class AuthorizationExample : IExample
         var customClient = _customClient ??= new ApiClient(context.BaseUrl);
         customClient.CredentialProvider = custom;
 
-        var signed = await customClient.RequestAsync(new SecureProfileRequest());
+        var signed = await customClient.RequestFullAsync(new SecureProfileRequest());
         Console.WriteLine($"  自定义凭据 -> {signed.Status}，实际头 Authorization = {Header(signed.Request, "Authorization")}，"
             + $"X-Signed = {Header(signed.Request, "X-Signed")}");
 
@@ -88,7 +88,7 @@ public sealed class AuthorizationExample : IExample
             CredentialProvider = CredentialProviders.Fixed(DemoApiServer.DemoToken)
         };
 
-        var same = await fixedClient.RequestAsync(new SecureProfileRequest());
+        var same = await fixedClient.RequestFullAsync(new SecureProfileRequest());
         Console.WriteLine($"  固定凭据写法 -> {same.Status} {same.Data!.User}");
 
         // 6) 令牌管理器：缓存 + 到期前刷新 + 并发刷新单飞；取令牌的 HTTP 调用仍由调用方提供
@@ -101,8 +101,8 @@ public sealed class AuthorizationExample : IExample
 
         var managedClient = _managedClient ??= new ApiClient(context.BaseUrl);
         managedClient.CredentialProvider = managed;
-        await managedClient.RequestAsync(new SecureProfileRequest());
-        await managedClient.RequestAsync(new SecureProfileRequest());
+        await managedClient.RequestFullAsync(new SecureProfileRequest());
+        await managedClient.RequestFullAsync(new SecureProfileRequest());
         Console.WriteLine($"  令牌管理器：两次请求只取令牌 {acquires} 次（未进刷新窗口时直接走缓存）");
 
         // 7) 401 重放：服务端把第一个令牌判为过期，客户端刷新令牌后自动重放一次
@@ -112,7 +112,7 @@ public sealed class AuthorizationExample : IExample
         var rotatingClient = _rotatingClient ??= new ApiClient(context.BaseUrl);
         rotatingClient.CredentialProvider = rotating;
 
-        var rotated = await rotatingClient.RequestAsync(new RotatingProfileRequest());
+        var rotated = await rotatingClient.RequestFullAsync(new RotatingProfileRequest());
         Console.WriteLine($"  401 重放 -> {rotated.Status} {rotated.Data!.IssuedBy}（取令牌 {rotateCalls} 次，只重放一次）");
 
         // 8) 自举取令牌：登录接口与业务接口共用一个 ApiClient，[AllowAnonymous] 让取令牌不会重入凭据链路
@@ -120,7 +120,7 @@ public sealed class AuthorizationExample : IExample
         var logins = 0;
         using var selfHostedTokens = new AccessTokenManager(new AccessTokenOptions(async ct =>
         {
-            var result = await selfHosted!.RequestAsync(new LoginRequest
+            var result = await selfHosted!.RequestFullAsync(new LoginRequest
             {
                 Username = "alice",
                 Password = "wonderland"
@@ -132,8 +132,8 @@ public sealed class AuthorizationExample : IExample
         selfHosted = new ApiClient(context.BaseUrl) { CredentialProvider = selfHostedTokens };
         using var selfHostedClient = selfHosted;
 
-        var bootstrapped = await selfHostedClient.RequestAsync(new SecureProfileRequest());
-        await selfHostedClient.RequestAsync(new SecureProfileRequest());
+        var bootstrapped = await selfHostedClient.RequestFullAsync(new SecureProfileRequest());
+        await selfHostedClient.RequestFullAsync(new SecureProfileRequest());
         Console.WriteLine($"  自举取令牌 -> {bootstrapped.Status} {bootstrapped.Data!.User}"
             + $"（登录 {logins} 次，第二次请求走缓存）");
 
@@ -144,7 +144,7 @@ public sealed class AuthorizationExample : IExample
         queryClient.CredentialProvider = CredentialProviders.Create(async (_, ct) =>
             ApiCredential.Query("access_token", await queryTokens.GetTokenAsync(ct)));
 
-        var queryProfile = await queryClient.RequestAsync(new QueryTokenProfileRequest());
+        var queryProfile = await queryClient.RequestFullAsync(new QueryTokenProfileRequest());
         Console.WriteLine($"  query 落点 -> {queryProfile.Status} {queryProfile.Data!.User}，"
             + $"实际 query = {queryProfile.Request?.RequestUri?.Query}，"
             + $"实际头 Authorization = {Header(queryProfile.Request, "Authorization")}");
@@ -155,7 +155,7 @@ public sealed class AuthorizationExample : IExample
             CredentialProvider = CredentialProviders.Fixed(ApiCredential.Header("X-Api-Key", DemoApiServer.DemoToken))
         };
 
-        var keyProfile = await keyClient.RequestAsync(new KeyTokenProfileRequest());
+        var keyProfile = await keyClient.RequestFullAsync(new KeyTokenProfileRequest());
         Console.WriteLine($"  请求头落点 -> {keyProfile.Status} {keyProfile.Data!.User}，"
             + $"实际头 X-Api-Key = {Header(keyProfile.Request, "X-Api-Key")}，"
             + $"实际头 Authorization = {Header(keyProfile.Request, "Authorization")}");

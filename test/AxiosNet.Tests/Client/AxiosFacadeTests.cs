@@ -168,7 +168,7 @@ public sealed class AxiosFacadeTests
     }
 
     [Fact]
-    public async Task Facade_RequestAsyncOverloads_ShareTheDefaultPipeline()
+    public async Task Facade_RequestFullAsyncOverloads_ShareTheDefaultPipeline()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
 

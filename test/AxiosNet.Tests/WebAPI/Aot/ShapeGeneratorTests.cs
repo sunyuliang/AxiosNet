@@ -516,7 +516,7 @@ public sealed class ShapeGeneratorTests
 
             public static class Boot
             {
-                public static Task IntMap(ApiClient client) => client.RequestAsync(new IntMapRequest());
+                public static Task IntMap(ApiClient client) => client.RequestFullAsync(new IntMapRequest());
 
                 public static string RawMapQuery()
                 {
@@ -1069,7 +1069,7 @@ public sealed class ShapeGeneratorTests
             }
 
             public static Task MapModel(ApiClient client)
-                => client.RequestAsync(new MapRequest());
+                => client.RequestFullAsync(new MapRequest());
 
             public static Task FormUrlEncoded(AxiosClient client, object data)
                 => client.PostFormAsync("form", data, c => c.ContentType = AxiosContentType.FormUrlEncoded);

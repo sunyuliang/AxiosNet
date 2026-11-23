@@ -128,7 +128,7 @@ public sealed class BindingErrorsTests
         using var client = new ApiClient("http://127.0.0.1:1/");
 
         var ex = await Assert.ThrowsAnyAsync<AxiosException>(
-            () => client.RequestAsync(new ThrowInQueryRequest()));
+            () => client.RequestFullAsync(new ThrowInQueryRequest()));
 
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
         Assert.Contains("query parameter", ex.Message, StringComparison.Ordinal);
@@ -143,7 +143,7 @@ public sealed class BindingErrorsTests
         using var client = new ApiClient("http://127.0.0.1:1/");
 
         var ex = await Assert.ThrowsAnyAsync<AxiosException>(
-            () => client.RequestAsync(new ThrowInPathRequest()));
+            () => client.RequestFullAsync(new ThrowInPathRequest()));
 
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
         Assert.Contains("path parameter", ex.Message, StringComparison.Ordinal);
@@ -158,7 +158,7 @@ public sealed class BindingErrorsTests
         using var client = new ApiClient("http://127.0.0.1:1/");
 
         var ex = await Assert.ThrowsAnyAsync<AxiosException>(
-            () => client.RequestAsync(new ThrowInHeaderRequest()));
+            () => client.RequestFullAsync(new ThrowInHeaderRequest()));
 
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
         Assert.Contains("header", ex.Message, StringComparison.Ordinal);
@@ -173,7 +173,7 @@ public sealed class BindingErrorsTests
         using var client = new ApiClient("http://127.0.0.1:1/");
 
         var ex = await Assert.ThrowsAnyAsync<AxiosException>(
-            () => client.RequestAsync(new ThrowInQueryMapRequest()));
+            () => client.RequestFullAsync(new ThrowInQueryMapRequest()));
 
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
         Assert.Contains("boom", ex.Message, StringComparison.Ordinal);

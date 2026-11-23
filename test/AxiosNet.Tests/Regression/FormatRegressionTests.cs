@@ -26,7 +26,7 @@ public sealed class FormatRegressionTests
         // 只处理字符串的钩子：它只应看到原始 int / DateTime，不应看到已定型的文本
         client.Axios.Defaults.Serialization.ValueText = (value, _) => value is string text ? "X" + text : null;
 
-        await client.RequestAsync(new HookQuery { Id = 7, Month = new DateTime(2024, 3, 4, 0, 0, 0, DateTimeKind.Utc) });
+        await client.RequestFullAsync(new HookQuery { Id = 7, Month = new DateTime(2024, 3, 4, 0, 0, 0, DateTimeKind.Utc) });
 
         var query = Uri.UnescapeDataString(Assert.Single(server.Received).Query ?? string.Empty);
         Assert.Equal("Id=7&Month=2024-03", query);
@@ -39,7 +39,7 @@ public sealed class FormatRegressionTests
         using var client = new ApiClient(server.Url);
         client.Axios.Defaults.Serialization.ValueText = (value, _) => value is string text ? "X" + text : null;
 
-        await client.RequestAsync(
+        await client.RequestFullAsync(
             new MapAndCsvQuery
             {
                 When = new Dictionary<string, DateTime> { ["a"] = new DateTime(2024, 3, 4, 0, 0, 0, DateTimeKind.Utc) },
@@ -60,12 +60,12 @@ public sealed class FormatRegressionTests
 
         using (var plain = new ApiClient(server.Url))
         {
-            await plain.RequestAsync(new ListQuery { Items = { new Item { Name = "a", Age = 1 } } });
+            await plain.RequestFullAsync(new ListQuery { Items = { new Item { Name = "a", Age = 1 } } });
         }
 
         using (var hooked = new ApiClient(server.Url, c => c.Serialization.ValueText = (_, _) => null))
         {
-            await hooked.RequestAsync(new ListQuery { Items = { new Item { Name = "a", Age = 1 } } });
+            await hooked.RequestFullAsync(new ListQuery { Items = { new Item { Name = "a", Age = 1 } } });
         }
 
         Assert.Equal(2, server.Received.Count);
@@ -80,7 +80,7 @@ public sealed class FormatRegressionTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new MultipartString());
+        await client.RequestFullAsync(new MultipartString());
 
         var body = Encoding.UTF8.GetString(Assert.Single(server.Received).Body);
         Assert.Contains("Fabc", body);
@@ -127,7 +127,7 @@ public sealed class FormatRegressionTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new QueryStringFormat { Code = "abc" });
+        await client.RequestFullAsync(new QueryStringFormat { Code = "abc" });
 
         var query = Uri.UnescapeDataString(Assert.Single(server.Received).Query ?? string.Empty);
         Assert.Equal("Code=Fabc", query);
@@ -139,7 +139,7 @@ public sealed class FormatRegressionTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new QueryStringListFormat { Tags = { "a", "b" } });
+        await client.RequestFullAsync(new QueryStringListFormat { Tags = { "a", "b" } });
 
         var query = Uri.UnescapeDataString(Assert.Single(server.Received).Query ?? string.Empty);
         Assert.Equal("Tags[]=Fa&Tags[]=Fb", query);
@@ -155,7 +155,7 @@ public sealed class FormatRegressionTests
 
         using (var plain = new ApiClient(server.Url))
         {
-            await plain.RequestAsync(new BinaryBody { Payload = payload });
+            await plain.RequestFullAsync(new BinaryBody { Payload = payload });
         }
 
         using var hooked = new ApiClient(server.Url);
@@ -164,7 +164,7 @@ public sealed class FormatRegressionTests
         hooked.Axios.Defaults.Serialization.ValueText =
             (value, _) => value is int number ? "p" + number.ToString(CultureInfo.InvariantCulture) : null;
 
-        await hooked.RequestAsync(new BinaryBody { Payload = payload });
+        await hooked.RequestFullAsync(new BinaryBody { Payload = payload });
 
         Assert.Equal(2, server.Received.Count);
         Assert.Equal(payload, server.Received[0].Body);
@@ -186,7 +186,7 @@ public sealed class FormatRegressionTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
 
         using var generated = new ApiClient(server.Url);
-        await generated.RequestAsync(new DerivedRequest { When = new DateTime(2024, 3, 4, 0, 0, 0, DateTimeKind.Utc) });
+        await generated.RequestFullAsync(new DerivedRequest { When = new DateTime(2024, 3, 4, 0, 0, 0, DateTimeKind.Utc) });
 
         using var reflection = new AxiosClient();
         await reflection.GetAsync(server.Url + "q", c => c.Params = new DerivedFormat
@@ -210,7 +210,7 @@ public sealed class FormatRegressionTests
         client.Axios.Defaults.Serialization.ValueText = (value, _) => value is DateTime when ? when.ToString("yyyy-MM", CultureInfo.InvariantCulture) : null;
 
         var when = new DateTime(2024, 3, 4, 0, 0, 0, DateTimeKind.Utc);
-        await client.RequestAsync(new PathHeaderRequest { When = when, HeaderWhen = when });
+        await client.RequestFullAsync(new PathHeaderRequest { When = when, HeaderWhen = when });
 
         var received = Assert.Single(server.Received);
         Assert.Equal("/probe/path/2024-03", received.Path);
@@ -232,7 +232,7 @@ public sealed class FormatRegressionTests
             return value is string text ? "H" + text : null;
         };
 
-        await client.RequestAsync(new MixedHeaderRequest
+        await client.RequestFullAsync(new MixedHeaderRequest
         {
             One = "v",
             Extra = new Dictionary<string, string> { ["X-K"] = "raw" }
@@ -276,7 +276,7 @@ public sealed class FormatRegressionTests
             return null;
         };
 
-        await client.RequestAsync(new ScalarBodyRequest { Payload = new DateTime(2024, 3, 5, 6, 7, 8, DateTimeKind.Utc) });
+        await client.RequestFullAsync(new ScalarBodyRequest { Payload = new DateTime(2024, 3, 5, 6, 7, 8, DateTimeKind.Utc) });
 
         Assert.Equal("2024-03-05T06:07:08.0000000Z", Encoding.UTF8.GetString(Assert.Single(server.Received).Body));
         Assert.Single(seen);
@@ -307,7 +307,7 @@ public sealed class FormatRegressionTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url, c => c.Serialization.ValueText = (_, _) => "HOOKED");
 
-        await client.RequestAsync(new StringBodyRequest { Text = "raw" });
+        await client.RequestFullAsync(new StringBodyRequest { Text = "raw" });
         await client.Axios.PostAsync(server.Url + "raw-str", "raw", c => c.ContentType = "text/plain");
 
         Assert.Equal(2, server.Received.Count);
@@ -322,7 +322,7 @@ public sealed class FormatRegressionTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        var error = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new SelfConfiguringRequest()));
+        var error = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new SelfConfiguringRequest()));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
         Assert.Empty(server.Received);
@@ -339,7 +339,7 @@ public sealed class FormatRegressionTests
 
         // 声明式：路径段与请求头都走同一个钩子
         var when = new DateTime(2024, 3, 4, 0, 0, 0, DateTimeKind.Utc);
-        await client.RequestAsync(new PathHeaderRequest { When = when, HeaderWhen = when });
+        await client.RequestFullAsync(new PathHeaderRequest { When = when, HeaderWhen = when });
 
         // 直接调用：裸标量正文也走同一个钩子（实例默认值里的钩子不能被按请求配置冲掉）
         await client.Axios.PostAsync(server.Url + "raw", new DateTime(2024, 5, 6, 0, 0, 0, DateTimeKind.Utc), c =>
@@ -373,7 +373,7 @@ public sealed class FormatRegressionTests
 
         var when = new DateTime(2024, 3, 4, 0, 0, 0, DateTimeKind.Utc);
         var error = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.RequestAsync(
+            client.RequestFullAsync(
                 new PathHeaderRequest { When = when, HeaderWhen = when },
                 c => c.Serialization.ValueText = (_, _) => "P"));
 
@@ -451,7 +451,7 @@ public sealed class FormatRegressionTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
-        await client.RequestAsync(new NullableRequest { Day = new DateOnly(2024, 3, 4) });
+        await client.RequestFullAsync(new NullableRequest { Day = new DateOnly(2024, 3, 4) });
 
         var query = Uri.UnescapeDataString(Assert.Single(server.Received).Query ?? string.Empty);
         Assert.Equal("Day=2024-03-04", query);

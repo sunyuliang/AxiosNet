@@ -379,7 +379,7 @@ public sealed class InterfaceTests
 
         var payload = new Person("alice", 18);
         // 模型侧重在未标注 Payload 上，接口侧靠未标注参数：两边都走聚合默认正文。
-        await modelClient.RequestAsync(new CreateUserDefaultBodyRequest { Payload = payload });
+        await modelClient.RequestFullAsync(new CreateUserDefaultBodyRequest { Payload = payload });
         await interfaceClient.Create<IUserApi>().CreateAsync(payload);
 
         var model = Assert.Single(modelServer.Received);

@@ -21,7 +21,7 @@ public sealed class UnauthorizedRetryTests
             ValueTask.FromResult(new AccessToken("tok-" + Interlocked.Increment(ref calls)))));
         using var client = new ApiClient(server.Url) { CredentialProvider = tokens };
 
-        var response = await client.RequestAsync(new SecureRequest());
+        var response = await client.RequestFullAsync(new SecureRequest());
 
         Assert.Equal(200, response.Status);
         Assert.Equal(2, server.Received.Count);
@@ -43,7 +43,7 @@ public sealed class UnauthorizedRetryTests
 
         using var client = new ApiClient(server.Url) { CredentialProvider = provider };
 
-        var response = await client.RequestAsync(new SecureRequest());
+        var response = await client.RequestFullAsync(new SecureRequest());
 
         Assert.Equal(200, response.Status);
         // staleToken 必须是头里去掉 scheme 后的令牌本体，否则管理器的「按值作废」永远不命中。
@@ -60,7 +60,7 @@ public sealed class UnauthorizedRetryTests
             CredentialProvider = CredentialProviders.Fixed(ApiCredential.Header("X-Api-Key", "key-1"))
         };
 
-        await client.RequestAsync(new SecureRequest());
+        await client.RequestFullAsync(new SecureRequest());
 
         var received = Assert.Single(server.Received);
         Assert.Equal("key-1", received.Headers["X-Api-Key"]);
@@ -82,7 +82,7 @@ public sealed class UnauthorizedRetryTests
                 ValueTask.FromResult(ApiCredential.Header("X-Api-Key", "key-" + Interlocked.Increment(ref calls))))
         };
 
-        var response = await client.RequestAsync(new SecureRequest());
+        var response = await client.RequestFullAsync(new SecureRequest());
 
         Assert.Equal(200, response.Status);
         Assert.Equal(2, server.Received.Count);
@@ -102,7 +102,7 @@ public sealed class UnauthorizedRetryTests
             CredentialProvider = CredentialProviders.Fixed(ApiCredential.Query("access_token", "tok-1"))
         };
 
-        await client.RequestAsync(new SecureRequest());
+        await client.RequestFullAsync(new SecureRequest());
 
         var received = Assert.Single(server.Received);
         Assert.Contains("access_token=tok-1", received.Query);
@@ -124,7 +124,7 @@ public sealed class UnauthorizedRetryTests
                 ValueTask.FromResult(ApiCredential.Query("access_token", "tok-" + Interlocked.Increment(ref calls))))
         };
 
-        var response = await client.RequestAsync(new SecureRequest());
+        var response = await client.RequestFullAsync(new SecureRequest());
 
         Assert.Equal(200, response.Status);
         Assert.Equal(2, server.Received.Count);
@@ -147,7 +147,7 @@ public sealed class UnauthorizedRetryTests
             })
         };
 
-        await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new SecureRequest()));
+        await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new SecureRequest()));
 
         // Custom 是「提供方自己写」：库不知道落点，也就无从作废与重放。
         Assert.Single(server.Received);
@@ -173,7 +173,7 @@ public sealed class UnauthorizedRetryTests
 
         using var client = new ApiClient(server.Url) { CredentialProvider = provider };
 
-        var response = await client.RequestAsync(new SecureRequest());
+        var response = await client.RequestFullAsync(new SecureRequest());
 
         Assert.Equal(200, response.Status);
         // 完整头值拿不到令牌本体：按无条件作废（null），与 Header 形态一致
@@ -191,7 +191,7 @@ public sealed class UnauthorizedRetryTests
             ValueTask.FromResult(new AccessToken("tok-" + Interlocked.Increment(ref calls)))));
         using var client = new ApiClient(server.Url) { CredentialProvider = tokens };
 
-        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new SecureRequest()));
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new SecureRequest()));
 
         Assert.Equal(401, ex.Status);
         Assert.Equal(2, server.Received.Count);
@@ -211,7 +211,7 @@ public sealed class UnauthorizedRetryTests
             RetryOnUnauthorized = false
         };
 
-        await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new SecureRequest()));
+        await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new SecureRequest()));
 
         Assert.Single(server.Received);
     }
@@ -224,7 +224,7 @@ public sealed class UnauthorizedRetryTests
 
         using var client = new ApiClient(server.Url) { CredentialProvider = CredentialProviders.Fixed("fixed") };
 
-        await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new SecureRequest()));
+        await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new SecureRequest()));
 
         Assert.Single(server.Received);
     }
@@ -238,7 +238,7 @@ public sealed class UnauthorizedRetryTests
         // 静态令牌：刷新后值不变，重放没有意义。
         using var client = new ApiClient(server.Url) { CredentialProvider = new StaticTokenProvider("same") };
 
-        await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new SecureRequest()));
+        await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new SecureRequest()));
 
         Assert.Single(server.Received);
     }
@@ -251,7 +251,7 @@ public sealed class UnauthorizedRetryTests
 
         using var client = new ApiClient(server.Url) { CredentialProvider = new StaticTokenProvider("tok") };
 
-        await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new AnonymousSecureRequest()));
+        await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new AnonymousSecureRequest()));
 
         Assert.Single(server.Received);
     }
@@ -264,7 +264,7 @@ public sealed class UnauthorizedRetryTests
 
         using var client = new ApiClient(server.Url) { CredentialProvider = new StaticTokenProvider("tok") };
 
-        var error = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new ExplicitAuthRequest()));
+        var error = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new ExplicitAuthRequest()));
 
         // 显式头与凭据槽位并存是配置冲突：连一次请求都不该发，更谈不上 401 重放。
         Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
@@ -281,7 +281,7 @@ public sealed class UnauthorizedRetryTests
         using var client = new ApiClient(server.Url) { CredentialProvider = tokens };
         using var body = new NonSeekableStream(new byte[] { 1, 2, 3 });
 
-        await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new StreamPutRequest { Payload = body }));
+        await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new StreamPutRequest { Payload = body }));
 
         Assert.Single(server.Received);
     }
@@ -297,7 +297,7 @@ public sealed class UnauthorizedRetryTests
         using var client = new ApiClient(server.Url) { CredentialProvider = tokens };
         using var body = new MemoryStream(new byte[] { 1, 2, 3 });
 
-        await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new StreamPutRequest { Payload = body }));
+        await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new StreamPutRequest { Payload = body }));
 
         Assert.Single(server.Received);
     }
@@ -313,7 +313,7 @@ public sealed class UnauthorizedRetryTests
         using var client = new ApiClient(server.Url) { CredentialProvider = tokens };
         using var file = new MemoryStream(new byte[] { 1, 2, 3 });
 
-        await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(
+        await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(
             new MultipartFilePutRequest { File = new FormFile("a.bin", file) }));
 
         Assert.Single(server.Received);
@@ -334,7 +334,7 @@ public sealed class UnauthorizedRetryTests
         using var client = new ApiClient(server.Url) { CredentialProvider = tokens };
         using var body = CreateSnapshotBody(kind);
 
-        var response = await client.RequestAsync(new HttpContentPutRequest { Payload = body });
+        var response = await client.RequestFullAsync(new HttpContentPutRequest { Payload = body });
 
         Assert.Equal(200, response.Status);
         // 快照在首次发送前读取正文；重放用快照字节新建内容实例，不再碰已被释放的模板正文。
@@ -351,7 +351,7 @@ public sealed class UnauthorizedRetryTests
             ValueTask.FromResult(new AccessToken("tok-" + Interlocked.Increment(ref calls)))));
         using var client = new ApiClient(server.Url) { CredentialProvider = tokens };
 
-        var response = await client.RequestAsync(new MultipartPutRequest { Name = "bob" });
+        var response = await client.RequestFullAsync(new MultipartPutRequest { Name = "bob" });
 
         Assert.Equal(200, response.Status);
         // 无流部件的 FormData 每次发送都由模型重新装配，不需要快照也能重放。
@@ -368,7 +368,7 @@ public sealed class UnauthorizedRetryTests
         using var client = new ApiClient(server.Url) { CredentialProvider = tokens };
         using var body = new StreamContent(new MemoryStream(new byte[] { 1, 2, 3 }));
 
-        await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new HttpContentPutRequest { Payload = body }));
+        await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new HttpContentPutRequest { Payload = body }));
 
         Assert.Single(server.Received);
     }
@@ -398,7 +398,7 @@ public sealed class UnauthorizedRetryTests
         using var body = JsonContent.Create(new Person(new string('x', 100), 1));
 
         var error = await Assert.ThrowsAsync<AxiosException>(
-            () => client.RequestAsync(new HttpContentPutRequest { Payload = body }));
+            () => client.RequestFullAsync(new HttpContentPutRequest { Payload = body }));
 
         // 明确行为：不建快照、不截断正文。首次发送照常发出（未知长度正文不提前拦截），
         // 401 后因超限不建快照、不重放，所以服务端只收到一次。
@@ -424,7 +424,7 @@ public sealed class UnauthorizedRetryTests
             });
         using var client = new ApiClient(axios, ownsAxiosClient: false) { CredentialProvider = tokens };
 
-        await client.RequestAsync(new SecureRequest());
+        await client.RequestFullAsync(new SecureRequest());
 
         Assert.Equal(2, server.Received.Count);
         Assert.Equal(server.Received[0].Headers["Idempotency-Key"], server.Received[1].Headers["Idempotency-Key"]);
@@ -464,7 +464,7 @@ public sealed class UnauthorizedRetryTests
             ErrorFactory = new CountingErrorFactory(() => factoryCalls++)
         };
 
-        await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new SecureRequest()));
+        await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new SecureRequest()));
 
         // 重放成功前工厂不参与：401 只被「最终失败」的那一次交给工厂。
         Assert.Equal(1, factoryCalls);
@@ -483,7 +483,7 @@ public sealed class UnauthorizedRetryTests
                 ValueTask.FromResult(ApiCredential.Header("Basic v" + Interlocked.Increment(ref issued))))
         };
 
-        var response = await client.RequestAsync(new SecureRequest());
+        var response = await client.RequestFullAsync(new SecureRequest());
 
         Assert.Equal(200, response.Status);
         Assert.Equal(2, server.Received.Count);
@@ -505,7 +505,7 @@ public sealed class UnauthorizedRetryTests
                 invalidate: stale => staleSeen = stale)
         };
 
-        var response = await client.RequestAsync(new SecureRequest());
+        var response = await client.RequestFullAsync(new SecureRequest());
 
         Assert.Equal(200, response.Status);
         // 完整头值形态拿不到「令牌本体」，只能无条件作废 —— 传 null，不能把头里切出来的碎片当 staleToken。
@@ -521,7 +521,7 @@ public sealed class UnauthorizedRetryTests
         // Fixed 走的是没给 invalidate 委托的路径：作废必须是空操作，不能 NRE。
         using var client = new ApiClient(server.Url) { CredentialProvider = CredentialProviders.Fixed("same") };
 
-        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new SecureRequest()));
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new SecureRequest()));
 
         Assert.Equal(401, ex.Status);
         Assert.Single(server.Received); // 静态令牌刷新后不变，不重放
@@ -545,7 +545,7 @@ public sealed class UnauthorizedRetryTests
             CredentialProvider = tokens
         };
 
-        var response = await client.RequestAsync(new SecureRequest());
+        var response = await client.RequestFullAsync(new SecureRequest());
 
         Assert.Equal(200, response.Status);
         // 内核在提供方槽位下不重试 401：只应出现「首次 401 + 刷新后重放一次」，不能叠成两层循环。
@@ -564,7 +564,7 @@ public sealed class UnauthorizedRetryTests
             ValueTask.FromResult(new AccessToken("tok-" + Interlocked.Increment(ref calls)))));
         using var client = new ApiClient(server.Url) { CredentialProvider = tokens };
 
-        await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new PostSecureRequest()));
+        await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new PostSecureRequest()));
 
         // 与内核同一口径：POST 默认不重发，401 重放也不该绕过这条判定。
         Assert.Single(server.Received);
@@ -585,7 +585,7 @@ public sealed class UnauthorizedRetryTests
             CredentialProvider = tokens
         };
 
-        var response = await client.RequestAsync(new PostSecureRequest());
+        var response = await client.RequestFullAsync(new PostSecureRequest());
 
         Assert.Equal(200, response.Status);
         // 配置级放行开关同时覆盖内核重试与这一层 401 重放：POST 也能刷新后重发一次。
@@ -605,7 +605,7 @@ public sealed class UnauthorizedRetryTests
             CredentialProvider = tokens
         };
 
-        var response = await client.RequestAsync(new SecureRequest());
+        var response = await client.RequestFullAsync(new SecureRequest());
 
         Assert.Equal(200, response.Status);
         Assert.Equal(2, server.Received.Count);

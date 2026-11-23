@@ -304,7 +304,7 @@ public sealed class HeadersCopyOnWriteTests
         // 不是按头计费：net8 上 1 头 136 B / 5 头 288 B / 10 头 568 B，net6 上 1 头 296 B / 5 头 600 B。
         // 所以这里不用绝对阈值（换个运行时或改个头数，阈值就变成噪音），改为「现场测一遍裸 BCL 再相减」，
         // 只钉我们自己的那一份：AxiosNet 的边际成本 − 裸 BCL 的边际成本 ≤ 64 B。
-        // 两个成本必须同一口径测：都走进程级计数（见 MeasureRequestAsync）。混用「线程级 + 进程级」
+        // 两个成本必须同一口径测：都走进程级计数（见 MeasureRequestFullAsync）。混用「线程级 + 进程级」
         // 相减会得到一个既不是前者也不是后者的数，护栏照样会假红。
         using var bare = new AxiosClient(handler: new StubHandler());
         using var rich = new AxiosClient(handler: new StubHandler());
@@ -316,8 +316,8 @@ public sealed class HeadersCopyOnWriteTests
         await Send(bare);
         await Send(rich);
 
-        var bareCost = await MeasureRequestAsync(bare);
-        var richCost = await MeasureRequestAsync(rich);
+        var bareCost = await MeasureRequestFullAsync(bare);
+        var richCost = await MeasureRequestFullAsync(rich);
         var ours = richCost - bareCost;
         var bcl = MeasureBclHeaderCost();
 
@@ -384,7 +384,7 @@ public sealed class HeadersCopyOnWriteTests
     /// 一次请求的平均分配字节数：进程级 <see cref="GC.GetTotalAllocatedBytes(bool)"/> 计数，
     /// 三轮取最小值以剔除 tier-1 JIT 等一次性分配；独占集合保证进程里没有别的分配源。
     /// </summary>
-    private static async Task<long> MeasureRequestAsync(AxiosClient client)
+    private static async Task<long> MeasureRequestFullAsync(AxiosClient client)
     {
         const int iterations = 1_000;
 
@@ -409,11 +409,11 @@ public sealed class HeadersCopyOnWriteTests
         return best;
     }
 
-    /// <summary>测量轮数：每项测量跑几轮、取最小值（见 <see cref="MeasureRequestAsync"/> 的说明）。</summary>
+    /// <summary>测量轮数：每项测量跑几轮、取最小值（见 <see cref="MeasureRequestFullAsync"/> 的说明）。</summary>
     private const int MeasurementRounds = 3;
 
     /// <summary>
-    /// 一段同步循环的「每次分配字节数」，口径与 <see cref="MeasureRequestAsync"/> 一致（进程级 + 取最小轮）。
+    /// 一段同步循环的「每次分配字节数」，口径与 <see cref="MeasureRequestFullAsync"/> 一致（进程级 + 取最小轮）。
     /// <para>用同一个计数器，才能把「我们的成本」与「裸 BCL 的成本」直接相减 —— 两个不同口径相减没有意义。</para>
     /// </summary>
     private static long AverageBytes(int iterations, Action action)

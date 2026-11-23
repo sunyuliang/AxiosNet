@@ -48,7 +48,7 @@ public sealed class ModelValidationTests
         using var client = new ApiClient("http://127.0.0.1:1/");
 
         await Assert.ThrowsAsync<ArgumentNullException>(
-            () => client.RequestAsync<Person>(null!));
+            () => client.RequestFullAsync<Person>(null!));
         Assert.Throws<ArgumentNullException>(() => client.GetUri<Person>(null!));
     }
 
@@ -184,7 +184,7 @@ public sealed class ModelValidationTests
         // 生成器对这种模型报 AXA009（生成代码取不到值）。反射路径能取到，但同一份模型
         // 一开源生成器就编译不过——两条路径必须同一口径，这里选「都拒绝」，不静默丢字段。
         var ex = await Assert.ThrowsAsync<AxiosException>(
-            () => client.RequestAsync(new PrivateGetterRequest()));
+            () => client.RequestFullAsync(new PrivateGetterRequest()));
 
         Assert.Contains("getter 不是 public", ex.Message);
     }

@@ -22,8 +22,7 @@ sealed class DeclarativeConsumerService(ApiClient client)
     /// <summary>用默认站点取受保护档案：请求模型自带路由与授权声明。</summary>
     public async Task<SecureProfile> GetSecureProfileAsync()
     {
-        var response = await client.RequestAsync(new SecureProfileRequest());
-        return response.Data!;
+        return await client.RequestAsync(new SecureProfileRequest());
     }
 }
 
@@ -33,8 +32,7 @@ sealed class MultiSiteDispatcherService(IApiClientResolver resolver)
     /// <summary>按站点名取受保护档案：站点在运行期才定，所以走解析器。</summary>
     public async Task<SecureProfile> GetSecureProfileAsync(string site)
     {
-        var response = await resolver.Get(site).RequestAsync(new SecureProfileRequest());
-        return response.Data!;
+        return await resolver.Get(site).RequestAsync(new SecureProfileRequest());
     }
 }
 
@@ -44,8 +42,7 @@ sealed class KeyedConsumerService([FromKeyedServices("a")] ApiClient clientA)
     /// <summary>从键名站点 A 取受保护档案：站点在构造参数上就固定了。</summary>
     public async Task<SecureProfile> GetFromSiteAAsync()
     {
-        var response = await clientA.RequestAsync(new SecureProfileRequest());
-        return response.Data!;
+        return await clientA.RequestAsync(new SecureProfileRequest());
     }
 }
 
@@ -56,8 +53,7 @@ sealed class KeyedDispatcherService(IServiceProvider services)
     public async Task<UserProfile> GetUserAsync(string site, long id)
     {
         var client = services.GetRequiredKeyedService<ApiClient>(site);
-        var response = await client.RequestAsync(new GetUserRequest { Id = (int)id });
-        return response.Data!;
+        return await client.RequestAsync(new GetUserRequest { Id = (int)id });
     }
 }
 

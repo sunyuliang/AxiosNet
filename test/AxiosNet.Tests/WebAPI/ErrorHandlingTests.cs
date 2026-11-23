@@ -24,7 +24,7 @@ public sealed class ErrorHandlingTests
         };
 
         var error = await Assert.ThrowsAsync<ApiError<ApiProblem>>(
-            () => client.RequestAsync(new FailRequest()));
+            () => client.RequestFullAsync(new FailRequest()));
 
         Assert.Equal(400, error.Status);
         Assert.Equal("Bad Request", error.StatusText);
@@ -46,7 +46,7 @@ public sealed class ErrorHandlingTests
         };
 
         var error = await Assert.ThrowsAsync<AxiosException>(
-            () => client.RequestAsync(new FailRequest()));
+            () => client.RequestFullAsync(new FailRequest()));
 
         Assert.Equal(AxiosException.ErrBadResponse, error.Code);
         Assert.Equal(500, error.Status);
@@ -59,7 +59,7 @@ public sealed class ErrorHandlingTests
         using var client = new ApiClient("http://127.0.0.1:1/") { ErrorFactory = factory };
 
         var error = await Assert.ThrowsAsync<AxiosException>(
-            () => client.RequestAsync(new FailRequest()));
+            () => client.RequestFullAsync(new FailRequest()));
 
         Assert.Equal(AxiosException.ErrNetwork, error.Code);
         Assert.Equal(0, factory.Calls);
@@ -73,7 +73,7 @@ public sealed class ErrorHandlingTests
         using var client = new ApiClient(server.Url) { ErrorFactory = new CapturingErrorFactory() };
 
         await Assert.ThrowsAsync<ApiError<Person>>(
-            () => client.RequestAsync(new FailPersonRequest()));
+            () => client.RequestFullAsync(new FailPersonRequest()));
 
         Assert.NotNull(CapturingErrorFactory.LastBody);
         Assert.Contains("error-body", CapturingErrorFactory.LastBody!);

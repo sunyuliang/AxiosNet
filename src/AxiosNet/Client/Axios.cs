@@ -158,13 +158,13 @@ public static class Axios
     public static Task<AxiosResponse<T>> GetAsync<T>(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.GetAsync<T>(url, configure, cancellationToken);
 
-    /// <summary>对应 axios.get 携带请求体，返回非泛型响应。</summary>
-    public static Task<AxiosResponse> GetAsync(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => DefaultClient.GetAsync(url, data, configure, cancellationToken);
+    /// <summary>对应 axios.get 携带查询参数，返回非泛型响应。</summary>
+    public static Task<AxiosResponse> GetAsync(string url, object? query, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => DefaultClient.GetAsync(url, query, configure, cancellationToken);
 
-    /// <summary>对应 axios.get 携带请求体，Data 反序列化为 <typeparamref name="T"/>。</summary>
-    public static Task<AxiosResponse<T>> GetAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => DefaultClient.GetAsync<T>(url, data, configure, cancellationToken);
+    /// <summary>对应 axios.get 携带查询参数，Data 反序列化为 <typeparamref name="T"/>。</summary>
+    public static Task<AxiosResponse<T>> GetAsync<T>(string url, object? query, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => DefaultClient.GetAsync<T>(url, query, configure, cancellationToken);
 
     /// <summary>对应 axios.delete，返回非泛型响应。</summary>
     public static Task<AxiosResponse> DeleteAsync(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
@@ -174,13 +174,13 @@ public static class Axios
     public static Task<AxiosResponse<T>> DeleteAsync<T>(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.DeleteAsync<T>(url, configure, cancellationToken);
 
-    /// <summary>对应 axios.delete 携带请求体，返回非泛型响应。</summary>
-    public static Task<AxiosResponse> DeleteAsync(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => DefaultClient.DeleteAsync(url, data, configure, cancellationToken);
+    /// <summary>对应 axios.delete 携带查询参数，返回非泛型响应。</summary>
+    public static Task<AxiosResponse> DeleteAsync(string url, object? query, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => DefaultClient.DeleteAsync(url, query, configure, cancellationToken);
 
-    /// <summary>对应 axios.delete 携带请求体，Data 反序列化为 <typeparamref name="T"/>。</summary>
-    public static Task<AxiosResponse<T>> DeleteAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => DefaultClient.DeleteAsync<T>(url, data, configure, cancellationToken);
+    /// <summary>对应 axios.delete 携带查询参数，Data 反序列化为 <typeparamref name="T"/>。</summary>
+    public static Task<AxiosResponse<T>> DeleteAsync<T>(string url, object? query, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => DefaultClient.DeleteAsync<T>(url, query, configure, cancellationToken);
 
     /// <summary>对应 axios.head，返回非泛型响应。</summary>
     public static Task<AxiosResponse> HeadAsync(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
@@ -190,13 +190,13 @@ public static class Axios
     public static Task<AxiosResponse<T>> HeadAsync<T>(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.HeadAsync<T>(url, configure, cancellationToken);
 
-    /// <summary>对应 axios.head 携带请求体，返回非泛型响应。</summary>
-    public static Task<AxiosResponse> HeadAsync(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => DefaultClient.HeadAsync(url, data, configure, cancellationToken);
+    /// <summary>对应 axios.head 携带查询参数，返回非泛型响应。</summary>
+    public static Task<AxiosResponse> HeadAsync(string url, object? query, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => DefaultClient.HeadAsync(url, query, configure, cancellationToken);
 
-    /// <summary>对应 axios.head 携带请求体，Data 反序列化为 <typeparamref name="T"/>。</summary>
-    public static Task<AxiosResponse<T>> HeadAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => DefaultClient.HeadAsync<T>(url, data, configure, cancellationToken);
+    /// <summary>对应 axios.head 携带查询参数，Data 反序列化为 <typeparamref name="T"/>。</summary>
+    public static Task<AxiosResponse<T>> HeadAsync<T>(string url, object? query, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => DefaultClient.HeadAsync<T>(url, query, configure, cancellationToken);
 
     /// <summary>对应 axios.options，返回非泛型响应。</summary>
     public static Task<AxiosResponse> OptionsAsync(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
@@ -206,13 +206,13 @@ public static class Axios
     public static Task<AxiosResponse<T>> OptionsAsync<T>(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.OptionsAsync<T>(url, configure, cancellationToken);
 
-    /// <summary>对应 axios.options 携带请求体，返回非泛型响应。</summary>
-    public static Task<AxiosResponse> OptionsAsync(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => DefaultClient.OptionsAsync(url, data, configure, cancellationToken);
+    /// <summary>对应 axios.options 携带查询参数，返回非泛型响应。</summary>
+    public static Task<AxiosResponse> OptionsAsync(string url, object? query, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => DefaultClient.OptionsAsync(url, query, configure, cancellationToken);
 
-    /// <summary>对应 axios.options 携带请求体，Data 反序列化为 <typeparamref name="T"/>。</summary>
-    public static Task<AxiosResponse<T>> OptionsAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => DefaultClient.OptionsAsync<T>(url, data, configure, cancellationToken);
+    /// <summary>对应 axios.options 携带查询参数，Data 反序列化为 <typeparamref name="T"/>。</summary>
+    public static Task<AxiosResponse<T>> OptionsAsync<T>(string url, object? query, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => DefaultClient.OptionsAsync<T>(url, query, configure, cancellationToken);
 
     /// <summary>对应 axios.post 携带请求体，返回非泛型响应。</summary>
     public static Task<AxiosResponse> PostAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)

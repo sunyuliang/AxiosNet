@@ -31,7 +31,7 @@ public sealed class SigningExample : IExample
                 AxiosNet.Serialization.SystemTextJsonSerializer.Instance,
                 DemoApiServer.SigningKey));
 
-        var response = await client.RequestAsync(new SignedEchoRequest
+        var response = await client.RequestFullAsync(new SignedEchoRequest
         {
             Payload = new UserPayload("carol", 25)
         });
@@ -45,7 +45,7 @@ public sealed class SigningExample : IExample
 
         try
         {
-            await bare.RequestAsync(new SignedEchoRequest { Payload = new UserPayload("mallory", 1) });
+            await bare.RequestFullAsync(new SignedEchoRequest { Payload = new UserPayload("mallory", 1) });
         }
         catch (AxiosException ex)
         {

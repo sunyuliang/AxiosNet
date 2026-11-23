@@ -4,7 +4,7 @@ using AxiosNet.Tests.Infrastructure;
 namespace AxiosNet.Tests.Requests;
 
 /// <summary>
-/// 快捷方法的参数位护栏：<c>object? data</c> 能吞下一切，所以「把配置 / 令牌放到 data 位置」
+/// 快捷方法的参数位护栏：<c>object? query</c> 能吞下一切，所以「把配置 / 令牌放到查询参数位置」
 /// 必须在发请求之前被拦下并指路，而不是被当成请求正文序列化出去。
 /// </summary>
 public sealed class ShortcutArgumentGuardTests
@@ -20,7 +20,7 @@ public sealed class ShortcutArgumentGuardTests
             () => client.PostFormAsync(server.Url + "x", new AxiosConfig()));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
-        Assert.Contains("RequestAsync", ex.Message);
+        Assert.Contains("RequestAsync(config)", ex.Message);
         Assert.Empty(server.Received); // 一个字都没发出去
     }
 
@@ -40,7 +40,7 @@ public sealed class ShortcutArgumentGuardTests
         Assert.Empty(server.Received);
     }
 
-    /// <summary>令牌落到 data 位置同样报错（与配置同一个口径，指路 <c>cancellationToken</c>）。</summary>
+    /// <summary>令牌落到查询参数位置同样报错（与配置同一个口径，指路 <c>cancellationToken</c>）。</summary>
     [Fact]
     public async Task TokenInDataPosition_IsRejected()
     {
@@ -49,14 +49,14 @@ public sealed class ShortcutArgumentGuardTests
         using var cts = new CancellationTokenSource();
 
         var ex = await Assert.ThrowsAsync<AxiosException>(
-            () => client.GetAsync(server.Url + "x", data: cts.Token));
+            () => client.GetAsync(server.Url + "x", query: cts.Token));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         Assert.Contains("cancellationToken", ex.Message);
         Assert.Empty(server.Received);
     }
 
-    /// <summary>正常的 data 不受影响：对象、字典、字符串照旧当正文发。</summary>
+    /// <summary>正文位置不受影响：对象、字典、字符串照旧当正文发。</summary>
     [Fact]
     public async Task NormalData_IsStillSentAsBody()
     {

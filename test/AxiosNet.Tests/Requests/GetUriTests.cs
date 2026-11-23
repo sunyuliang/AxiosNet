@@ -50,7 +50,7 @@ public sealed class GetUriTests
     }
 
     [Fact]
-    public async Task GetUri_ReplayedConfigs_UseTargetInstanceBaseAddress_LikeRequestAsync()
+    public async Task GetUri_ReplayedConfigs_UseTargetInstanceBaseAddress_LikeRequestFullAsync()
     {
         await using var first = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         await using var second = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
@@ -63,8 +63,8 @@ public sealed class GetUriTests
 
         using var target = new AxiosClient(new AxiosConfig { BaseAddress = second.Url });
 
-        // GetUri 与 RequestAsync 必须给出同一个地址：签名 / 日志按 GetUri 算、
-        // 请求按 RequestAsync 解析，两者错位就是静默的安全隐患。
+        // GetUri 与 RequestFullAsync 必须给出同一个地址：签名 / 日志按 GetUri 算、
+        // 请求按 RequestFullAsync 解析，两者错位就是静默的安全隐患。
         Assert.Equal(second.Url + "shortcut", target.GetUri(fromShortcut));
         Assert.Equal(second.Url + "object-form", target.GetUri(fromConfig));
 

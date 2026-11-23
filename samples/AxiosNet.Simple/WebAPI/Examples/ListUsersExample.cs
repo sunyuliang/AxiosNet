@@ -23,10 +23,10 @@ public sealed class ListUsersExample : IExample
         var client = _client ??= new ApiClient(context.BaseUrl);
 
         var all = await client.RequestAsync(new ListUsersRequest());
-        Console.WriteLine($"  全部 {all.Data!.Length} 人 -> {ExampleConsole.Pretty(all.Data)}");
+        Console.WriteLine($"  全部 {all.Length} 人 -> {ExampleConsole.Pretty(all)}");
 
         var filtered = await client.RequestAsync(new ListUsersRequest { Ids = [1, 2], Role = "dev" });
-        Console.WriteLine($"  role=dev 过滤 -> {ExampleConsole.Pretty(filtered.Data)}");
+        Console.WriteLine($"  role=dev 过滤 -> {ExampleConsole.Pretty(filtered)}");
 
         // client.GetUri(request)：只拼 URL 不发请求（日志 / 签名用）
         Console.WriteLine($"  GetUri -> {client.GetUri(new ListUsersRequest { Ids = [1, 2] })}");

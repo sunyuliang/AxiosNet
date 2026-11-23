@@ -185,8 +185,8 @@ public sealed class NamedApiClientRegistrationTests
         Assert.Equal(TimeSpan.FromSeconds(7), resolver.Get("a").Axios.Defaults.Timeout);
         Assert.Equal(TimeSpan.FromSeconds(11), resolver.Get("b").Axios.Defaults.Timeout);
 
-        await resolver.Get("a").RequestAsync(new GetUserRequest { Id = 5 });
-        await resolver.Get("b").RequestAsync(new GetUserRequest { Id = 6 });
+        await resolver.Get("a").RequestFullAsync(new GetUserRequest { Id = 5 });
+        await resolver.Get("b").RequestFullAsync(new GetUserRequest { Id = 6 });
 
         Assert.Equal(2, server.Received.Count);
         Assert.Equal("a", server.Received[0].Headers["X-Site"]);
@@ -213,8 +213,8 @@ public sealed class NamedApiClientRegistrationTests
         Assert.Same(fromContainer, resolver.Get("a").CredentialProvider);
         Assert.Same(fromContainer, resolver.Get("b").CredentialProvider);
 
-        await resolver.Get("a").RequestAsync(new GetUserRequest { Id = 5 });
-        await resolver.Get("b").RequestAsync(new GetUserRequest { Id = 6 });
+        await resolver.Get("a").RequestFullAsync(new GetUserRequest { Id = 5 });
+        await resolver.Get("b").RequestFullAsync(new GetUserRequest { Id = 6 });
 
         Assert.Equal(2, server.Received.Count);
         Assert.All(server.Received, received =>
@@ -240,8 +240,8 @@ public sealed class NamedApiClientRegistrationTests
 
         var resolver = provider.GetRequiredService<IApiClientResolver>();
 
-        await resolver.Get("a").RequestAsync(new GetUserRequest { Id = 5 });
-        await resolver.Get("b").RequestAsync(new GetUserRequest { Id = 6 });
+        await resolver.Get("a").RequestFullAsync(new GetUserRequest { Id = 5 });
+        await resolver.Get("b").RequestFullAsync(new GetUserRequest { Id = 6 });
 
         // 每站点授权相互独立：容器提供方只兜底，显式配置的按站点生效
         Assert.Equal(2, server.Received.Count);
@@ -300,8 +300,8 @@ public sealed class NamedApiClientRegistrationTests
 
         var resolver = provider.GetRequiredService<IApiClientResolver>();
 
-        var fromA = await resolver.Get("a").RequestAsync(new GetUserRequest { Id = 5 });
-        var fromB = await resolver.Get("b").RequestAsync(new GetUserRequest { Id = 6 });
+        var fromA = await resolver.Get("a").RequestFullAsync(new GetUserRequest { Id = 5 });
+        var fromB = await resolver.Get("b").RequestFullAsync(new GetUserRequest { Id = 6 });
 
         Assert.Equal(200, fromA.Status);
         Assert.Equal("alice", fromA.Data!.Name);
@@ -321,7 +321,7 @@ public sealed class NamedApiClientRegistrationTests
         var resolver = provider.GetRequiredService<IApiClientResolver>();
         var client = resolver.Get("a");
 
-        var response = await client.RequestAsync(new GetUserRequest { Id = 5 });
+        var response = await client.RequestFullAsync(new GetUserRequest { Id = 5 });
         Assert.Equal(200, response.Status);
 
         // 解析器是各站点自建客户端的属主：释放后站点客户端不再可用（连接池不泄漏）

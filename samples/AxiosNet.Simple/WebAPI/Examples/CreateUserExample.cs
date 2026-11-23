@@ -23,15 +23,13 @@ public sealed class CreateUserExample : IExample
         // 静态复用：首次运行创建，之后复用同一实例与连接池
         var client = _client ??= new ApiClient(context.BaseUrl);
 
-        var response = await client.RequestAsync(new CreateUserRequest
+        var created = await client.RequestAsync(new CreateUserRequest
         {
             Name = "carol",
             Age = 25
         });
 
         Console.WriteLine("  正文键：user_name（[Body(\"user_name\")] 显式命名，原样发送）、age（成员名套 camelCase）");
-        Console.WriteLine($"  {response.Status} {response.StatusText}");
-        var created = response.Data!;
         Console.WriteLine($"  Data = {ExampleConsole.Pretty(created)}");
         Console.WriteLine($"  服务器回显 X-Trace = {created.Trace}（由 CreateUserRequest.Configure 写入）");
     }

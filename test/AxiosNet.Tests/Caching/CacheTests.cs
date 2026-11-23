@@ -1054,11 +1054,11 @@ public sealed class CacheTests
                 ValueTask.FromResult(ApiCredential.Header("X-Api-Key", current)))
         };
 
-        var first = await client.RequestAsync(new AxiosNet.Tests.WebAPI.SecureRequest());
+        var first = await client.RequestFullAsync(new AxiosNet.Tests.WebAPI.SecureRequest());
         current = "bob";
-        var second = await client.RequestAsync(new AxiosNet.Tests.WebAPI.SecureRequest());
+        var second = await client.RequestFullAsync(new AxiosNet.Tests.WebAPI.SecureRequest());
         current = "alice";
-        var third = await client.RequestAsync(new AxiosNet.Tests.WebAPI.SecureRequest());
+        var third = await client.RequestFullAsync(new AxiosNet.Tests.WebAPI.SecureRequest());
 
         Assert.Equal(2, server.Received.Count);
         Assert.Equal("alice", first.Data!.Name);
@@ -1903,8 +1903,8 @@ public sealed class CacheTests
         using var api = new ApiClient(server.Url);
         api.Axios.Defaults.Caching = NewCache();
 
-        await api.RequestAsync(new PersonRequest());
-        await api.RequestAsync(new PersonRequest());
+        await api.RequestFullAsync(new PersonRequest());
+        await api.RequestFullAsync(new PersonRequest());
 
         Assert.Single(server.Received);
     }

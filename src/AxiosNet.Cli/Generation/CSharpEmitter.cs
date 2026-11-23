@@ -281,7 +281,7 @@ internal sealed class CSharpEmitter
         else if (operation.ResponseVoid)
         {
             builder.Append("/// <remarks>声明没有响应正文：<c>client.RequestAsync(new ")
-                .Append(operation.ClassName).Append("())</c> 的 <c>Data</c> 通常为 <c>null</c>。</remarks>\n");
+                .Append(operation.ClassName).Append("())</c> 返回 <c>default</c>；要读状态码用 <c>RequestFullAsync</c>。</remarks>\n");
         }
 
         if (operation.Deprecated)

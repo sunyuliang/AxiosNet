@@ -42,7 +42,7 @@ public sealed class HeadersTests
     // ===============================================================
 
     [Fact]
-    public async Task DefaultsRemoveHeaders_AppliesOnRequestAsyncPathToo()
+    public async Task DefaultsRemoveHeaders_AppliesOnRequestFullAsyncPathToo()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
         using var client = new AxiosClient(new AxiosConfig

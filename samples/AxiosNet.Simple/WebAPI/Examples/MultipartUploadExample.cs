@@ -23,15 +23,15 @@ public sealed class MultipartUploadExample : IExample
         // 静态复用：首次运行创建，之后复用同一实例与连接池
         var client = _client ??= new ApiClient(context.BaseUrl);
 
-        var response = await client.RequestAsync(new MultipartUploadRequest
+        var upload = await client.RequestAsync(new MultipartUploadRequest
         {
             Title = "年度报告",
             Blob = "二进制内容（含中文与换行）\r\nsecond line"u8.ToArray(),
             Tags = new Dictionary<string, string> { ["env"] = "sample" }
         });
 
-        Console.WriteLine($"  上传完成：{response.Data!.PartCount} 个部件，Title = {response.Data.Title}");
-        foreach (var part in response.Data.Parts)
+        Console.WriteLine($"  上传完成：{upload.PartCount} 个部件，Title = {upload.Title}");
+        foreach (var part in upload.Parts)
         {
             Console.WriteLine(
                 $"  <- {part.Name}  filename={part.FileName ?? "-"}  type={part.ContentType ?? "-"}  {part.Length}B");

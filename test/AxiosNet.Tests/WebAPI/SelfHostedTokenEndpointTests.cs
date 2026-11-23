@@ -27,13 +27,13 @@ public sealed class SelfHostedTokenEndpointTests
         ApiClient? client = null;
         using var tokens = new AccessTokenManager(new AccessTokenOptions(async ct =>
         {
-            var result = await client!.RequestAsync(new AcquireTokenRequest(), cancellationToken: ct);
+            var result = await client!.RequestFullAsync(new AcquireTokenRequest(), cancellationToken: ct);
             return ToAccessToken(result);
         })
         {
             RefreshAsync = async ct =>
             {
-                var result = await client!.RequestAsync(new RefreshTokenRequest(), cancellationToken: ct);
+                var result = await client!.RequestFullAsync(new RefreshTokenRequest(), cancellationToken: ct);
                 return ToAccessToken(result);
             }
         });
@@ -41,8 +41,8 @@ public sealed class SelfHostedTokenEndpointTests
         client = new ApiClient(server.Url) { CredentialProvider = tokens };
         using var api = client!;
 
-        var first = await api.RequestAsync(new SelfHostedProtectedRequest());
-        var second = await api.RequestAsync(new SelfHostedProtectedRequest());
+        var first = await api.RequestFullAsync(new SelfHostedProtectedRequest());
+        var second = await api.RequestFullAsync(new SelfHostedProtectedRequest());
 
         Assert.Equal(200, first.Status);
         Assert.Equal(200, second.Status);

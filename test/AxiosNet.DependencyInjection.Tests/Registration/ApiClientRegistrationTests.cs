@@ -94,7 +94,7 @@ public sealed class ApiClientRegistrationTests
                 configure: client => client.CredentialProvider = CredentialProviders.Fixed("token-1")));
 
         var client = provider.GetRequiredService<ApiClient>();
-        var response = await client.RequestAsync(new GetUserRequest { Id = 5 });
+        var response = await client.RequestFullAsync(new GetUserRequest { Id = 5 });
 
         Assert.Equal(200, response.Status);
         Assert.Equal("Bearer token-1", Assert.Single(server.Received).Headers["Authorization"]);
@@ -117,7 +117,7 @@ public sealed class ApiClientRegistrationTests
         var client = provider.GetRequiredService<ApiClient>();
         Assert.Same(fromContainer, client.CredentialProvider);
 
-        var response = await client.RequestAsync(new GetUserRequest { Id = 5 });
+        var response = await client.RequestFullAsync(new GetUserRequest { Id = 5 });
 
         Assert.Equal(200, response.Status);
         Assert.Equal("Bearer token-from-di", Assert.Single(server.Received).Headers["Authorization"]);
@@ -180,7 +180,7 @@ public sealed class ApiClientRegistrationTests
             services.AddApiClient(server.Url, configureDefaults: config => config.Headers.Set("X-App", "di")));
 
         var client = provider.GetRequiredService<ApiClient>();
-        var response = await client.RequestAsync(new GetUserRequest { Id = 5, Trace = "trace-di" });
+        var response = await client.RequestFullAsync(new GetUserRequest { Id = 5, Trace = "trace-di" });
 
         Assert.Equal(200, response.Status);
         Assert.Equal("alice", response.Data!.Name);
@@ -211,7 +211,7 @@ public sealed class ApiClientRegistrationTests
 
         Assert.Same(axiosClient, apiClient.Axios);
 
-        var response = await apiClient.RequestAsync(new GetUserRequest { Id = 5 });
+        var response = await apiClient.RequestFullAsync(new GetUserRequest { Id = 5 });
 
         Assert.Equal(200, response.Status);
         Assert.Equal("alice", response.Data!.Name);

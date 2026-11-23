@@ -31,14 +31,14 @@ public sealed class ApiInterfaceExample : IExample
         Console.WriteLine($"  GET  /api/users/1 -> {one.Status} {ExampleConsole.Pretty(one.Data)}");
         Console.WriteLine($"    实际头 X-Client = {Header(one.Request, "X-Client")}，X-Trace = {Header(one.Request, "X-Trace")}");
 
-        // 2) 未标注的数组参数按 Query 绑定，沿用 a[]=v 规则
+        // 2) 未标注的数组参数按 Query 绑定，沿用 a[]=v 规则；方法声明返回 Task<T> 时只交付正文
         var page = await api.ListAsync([1, 2], role: "admin");
-        Console.WriteLine($"  GET  /api/users?ids[]=1&ids[]=2&role=admin -> {page.Status} {ExampleConsole.Pretty(page.Data)}");
+        Console.WriteLine($"  GET  /api/users?ids[]=1&ids[]=2&role=admin -> {page.Length} 人 {ExampleConsole.Pretty(page)}");
 
-        // 3) POST 的未标注参数按键名聚合成对象正文：{ "payload": { "name": "carol", "age": 25 } }（无需 [Body]）
+        // 3) [RootBody] 把参数直接当整个正文：{ "name": "carol", "age": 25 }（不加壳）
         var created = await api.CreateAsync(new UserPayload("carol", 25), trace: "iface-create");
         Console.WriteLine($"  POST /api/users -> {created.Status} {ExampleConsole.Pretty(created.Data)}");
-        Console.WriteLine($"    默认通道生效（聚合 Body），服务器回显 X-Trace = {created.Data!.Trace}");
+        Console.WriteLine($"    服务器回显 X-Trace = {created.Data!.Trace}");
     }
 
     /// <summary>读请求消息上的某个头；没有请求消息时返回 <c>none</c>。</summary>
@@ -60,14 +60,14 @@ public interface IUsersApi
         CancellationToken cancellationToken = default);
 
     [Get("api/users")]
-    Task<AxiosResponse<UserProfile[]>> ListAsync(
+    Task<UserProfile[]> ListAsync(
         int[]? ids = null,
         string? role = null,
         CancellationToken cancellationToken = default);
 
     [Post("api/users")]
     Task<AxiosResponse<CreatedUser>> CreateAsync(
-        UserPayload payload,
+        [RootBody] UserPayload payload,
         [Header("X-Trace")] string? trace = null,
         CancellationToken cancellationToken = default);
 }

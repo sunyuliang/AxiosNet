@@ -375,7 +375,7 @@ public sealed class Batch1AdversarialTests
         var provider = new CountingApiProvider(_ => ApiCredential.None);
 
         using var client = new ApiClient(server.Url) { CredentialProvider = provider };
-        var error = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new SecureRequest()));
+        var error = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new SecureRequest()));
 
         Assert.Equal(401, error.Status);
         Assert.Single(server.Received);
@@ -393,7 +393,7 @@ public sealed class Batch1AdversarialTests
         var provider = new CountingApiProvider(CountingApiProvider.Rotate("tok"));
 
         using var client = new ApiClient(server.Url) { CredentialProvider = provider };
-        var response = await client.RequestAsync(new SecureRequest());
+        var response = await client.RequestFullAsync(new SecureRequest());
 
         Assert.Equal(200, response.Status);
         Assert.Equal(2, server.Received.Count);
@@ -446,8 +446,8 @@ public sealed class Batch1AdversarialTests
         var second = new Batch1ConcurrentPostRequest { Id = "B", Payload = new Batch1Payload("B", "beta") };
 
         var responses = await Task.WhenAll(
-            client.RequestAsync(first),
-            client.RequestAsync(second));
+            client.RequestFullAsync(first),
+            client.RequestFullAsync(second));
 
         Assert.Equal(200, responses[0].Status);
         Assert.Equal(200, responses[1].Status);
@@ -481,7 +481,7 @@ public sealed class Batch1AdversarialTests
         var body = new FailsOnSecondReadContent(new byte[] { 1, 2, 3 });
 
         var error = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.RequestAsync(new HttpContentPutRequest { Payload = body }));
+            client.RequestFullAsync(new HttpContentPutRequest { Payload = body }));
 
         Assert.Equal(401, error.Status);
         // 快照读失败不能变成第二个请求，也不能把 IO 异常漏出去。
@@ -501,7 +501,7 @@ public sealed class Batch1AdversarialTests
         using var client = new ApiClient(server.Url) { CredentialProvider = provider };
         var body = new DisposeCountingContent(new byte[] { 9, 8, 7 });
 
-        var response = await client.RequestAsync(new HttpContentPutRequest { Payload = body });
+        var response = await client.RequestFullAsync(new HttpContentPutRequest { Payload = body });
 
         Assert.Equal(200, response.Status);
         Assert.Equal(2, server.Received.Count);

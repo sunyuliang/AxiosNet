@@ -308,7 +308,7 @@ public sealed class AccessTokenManagerTests
         using var tokens = new AccessTokenManager(Options(_ => new AccessToken("managed")));
         using var client = new ApiClient(server.Url) { CredentialProvider = tokens };
 
-        await client.RequestAsync(new GetUserRequest { Id = 1 });
+        await client.RequestFullAsync(new GetUserRequest { Id = 1 });
 
         Assert.Equal("Bearer managed", Assert.Single(server.Received).Headers["Authorization"]);
     }

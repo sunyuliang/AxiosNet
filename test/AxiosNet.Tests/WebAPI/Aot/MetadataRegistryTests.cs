@@ -37,7 +37,7 @@ public sealed class MetadataRegistryTests
             await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
             using var client = new ApiClient(server.Url);
 
-            await client.RequestAsync(new RegisteredGetRequest { Id = 42, Search = "x", Token = "t" });
+            await client.RequestFullAsync(new RegisteredGetRequest { Id = 42, Search = "x", Token = "t" });
 
             var received = Assert.Single(server.Received);
             Assert.Equal("/orders/42", received.Path);

@@ -3,8 +3,8 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2883%20passed-success)](#build-and-test)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2738%20passed-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2895%20passed-success)](#build-and-test)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2750%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-92.1%25_(branch_87.7%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -61,7 +61,7 @@ Referencing the source tree: `dotnet add your-app.csproj reference src/AxiosNet/
 
 **Runtime baseline**: the modern assets cover .NET 6 and later; the compatibility asset covers .NET Framework 4.7.2+, .NET Core 2.0+ (including 3.1) and .NET 5. NuGet picks the asset automatically. .NET Core 1.0 / 1.1 only supports up to `netstandard1.6` and is out of scope; see [.NET Standard 2.0 compatibility asset](#net-standard-20-compatibility-asset) for the capability boundaries.
 
-**Upgrading from 1.x**: see [breaking changes in 1.5](docs/breaking-changes-1.5.en.md) for renames and tightened behavior.
+**Upgrading from 1.x**: see [breaking changes in 1.5](docs/breaking-changes-1.5.en.md) for renames and tightened behavior; [breaking changes in 1.8](docs/breaking-changes-1.8.en.md) covers the declarative return shape and query parameters on read verbs.
 
 ## Quick start
 
@@ -113,7 +113,7 @@ public sealed class GetUserRequest : IApiRequest<User>
 }
 
 var client = new ApiClient("https://api.example.com/");
-var user = (await client.RequestAsync(new GetUserRequest { Id = 5 })).Data!;   // User
+var user = await client.RequestAsync(new GetUserRequest { Id = 5 });          // User
 ```
 
 **Interface-based**
@@ -125,12 +125,14 @@ using AxiosNet.WebAPI.Attributes;
 public interface IUserApi
 {
     [Get("users/{id}")]
-    Task<AxiosResponse<User>> GetAsync([Path] int id, CancellationToken cancellationToken = default);
+    Task<User> GetAsync([Path] int id, CancellationToken cancellationToken = default);
 }
 
 var api = client.Create<IUserApi>();
-var user = (await api.GetAsync(5)).Data!;                                      // User
+var user = await api.GetAsync(5);                                             // User
 ```
+
+Both paths deliver only the body by default: `RequestAsync` for request models, `Task<T>` for interfaces. For status codes / response headers / the request message, switch to `RequestFullAsync` (models) or declare `Task<AxiosResponse<T>>` (interfaces).
 
 The extension entry points share the same facade as `ApiClient` (cached per `AxiosClient`): construct `new ApiClient(client)`, set `CredentialProvider` / `ErrorFactory`, then use `client.Create<T>()` / `RequestAsync` / `RequestStreamAsync` — that state still applies instead of silently becoming a separate anonymous facade.
 
@@ -183,15 +185,15 @@ await http.PostAsync("login", new Dictionary<string, object?>          // form
 
 await http.PostAsync("bin", bytes, c => c.ContentType = AxiosContentType.OctetStream);   // binary: say so
 
-await http.GetAsync("reports/query", new { from = "2024-01-01" });      // any verb may carry a body
-await http.DeleteAsync("users/1", new { reason = "duplicated" });
+await http.GetAsync("reports/query", new { from = "2024-01-01" });      // -> ?from=2024-01-01
+await http.DeleteAsync("users", new { reason = "duplicated" });         // -> ?reason=duplicated
 ```
 
 Constants: `AxiosContentType.Json` / `FormUrlEncoded` / `MultipartFormData` / `OctetStream` / `Xml` / `JsonPatch` / `ProblemJson` / `TextPlain` / `TextHtml`; a parameterized string works too: `"multipart/form-data; boundary=----axios-net"`.
 
-> **Omitting `data` is the same as writing `data: null`**: `Params` / `Body` merge on "was it assigned", not on "is it `null`" — and a shortcut's `data` slot always means "this request's body" once the slot exists.
-> - `PostAsync` / `PutAsync` / `PatchAsync` / `PostFormAsync` / `PutFormAsync` take `data` as an **optional parameter with a default**: `PostAsync("orders")` is exactly `PostAsync("orders", data: null)`, so it **drops** `Defaults.Body` and sends an empty body. To send the default body along, use `PostAsync("orders", new AxiosConfig { ... })` (that config never touches `Body`, so the merge inherits it) or go through `RequestAsync`.
-> - `GetAsync` / `DeleteAsync` / `HeadAsync` / `OptionsAsync` have a separate **no-`data`** overload: `DeleteAsync("orders/1")` does not mean "no body this time" and therefore inherits `Defaults.Body`; write `DeleteAsync("orders/1", data: null)` to send an empty one.
+> **The second argument depends on the verb alone**: `PostAsync` / `PutAsync` / `PatchAsync` / `PostFormAsync` / `PutFormAsync` take a **body**; `GetAsync` / `DeleteAsync` / `HeadAsync` / `OptionsAsync` take **query parameters** (same flattening / escaping rules as `Params`). To send a body on a read verb, write `c => c.Body = ...`.
+> - On write verbs `data` is an **optional parameter with a default**: `PostAsync("orders")` is exactly `PostAsync("orders", data: null)`, so it **drops** `Defaults.Body` and sends an empty body. To send the default body along, use `PostAsync("orders", new AxiosConfig { ... })` (that config never touches `Body`, so the merge inherits it) or go through `RequestAsync`.
+> - On read verbs the second argument is not "this request's body", so `DeleteAsync("orders/1")` still inherits `Defaults.Body`; write `DeleteAsync("orders/1", c => c.Body = null)` to send an empty one.
 >
 > Mixing instance defaults with per-request overrides: see [instance defaults vs. per-request](#clients).
 
@@ -201,12 +203,13 @@ Constants: `AxiosContentType.Json` / `FormUrlEncoded` / `MultipartFormData` / `O
 | --- | --- | --- |
 | The response without deserializing | `GetAsync(url, c => …, ct)` | `AxiosResponse` (`Data` is `object`) |
 | Deserialized into `T` | `GetAsync<T>(url, c => …, ct)` | `AxiosResponse<T>` |
-| A request body | `GetAsync(url, data, c => …, ct)`; body verbs read `PostAsync(url, data)` (`data` has a default) | either of the above |
+| Query parameters | `GetAsync(url, query, c => …, ct)` | either of the above |
+| A request body | `PostAsync(url, data, c => …, ct)`; on read verbs write `c => c.Body = …` | either of the above |
 | Only a cancellation token | `GetAsync(url, ct)` | `AxiosResponse` / `AxiosResponse<T>` |
 
-- The last three parameters (`data` / `configure` / `cancellationToken`) all have defaults, so `GetAsync(url)` is enough; `GetAsync(url, ct)` is the **explicit-token** shape, so a token is never mistaken for a body.
+- The trailing parameters (`query` / `data` / `configure` / `cancellationToken`) all have defaults, so `GetAsync(url)` is enough; `GetAsync(url, ct)` is the **explicit-token** shape, so a token is never mistaken for a body.
 - To send one request with a **pre-built config**, use `RequestAsync(config)` (available on both the client and the static facade; the config carries its own url / method). On the instance, `GetAsync` / `DeleteAsync` / `HeadAsync` / `OptionsAsync` / `PostAsync` / `PutAsync` / `PatchAsync` additionally take `(url, config)`: the url / method arguments override the same fields in the config, and **your object is never mutated in place**. The form verbs (`PostFormAsync` etc.) have no such shape; they exist to set the form `ContentType`, so use `RequestAsync` when you have a config.
-- Putting an `AxiosConfig` or a `CancellationToken` into the `data` position throws `ERR_BAD_OPTION_VALUE` right away and tells you where to go: `object? data` accepts anything, so without the guard it would either **send your config / token as the body** or degrade into a "body serialization failed" message that has nothing to do with the real mistake.
+- Putting an `AxiosConfig` / a `CancellationToken` into the second position, or a `Stream` / `HttpContent` into a read verb's query position, throws `ERR_BAD_OPTION_VALUE` right away and tells you where to go: `object?` accepts anything, so without the guard it would either **send your config / token as the body or query string** or degrade into a serialization message that has nothing to do with the real mistake.
 
 ### Query parameters
 
@@ -1645,7 +1648,7 @@ What is skipped is the HTTP operation itself; what is kept is the response-side 
 
 ## Declarative client
 
-Once endpoints multiply, URLs, parameters and headers scattered across call sites get hard to manage. The declarative entry point describes each endpoint as a **request model** or an **interface**, leaving calls as one-liners (`client.RequestAsync(request)` / `api.GetAsync(5)`); both forms are carried by the same client: `client.Create<T>()` / `client.RequestAsync(model)` are `AxiosNet.WebAPI` extension methods; switch to `ApiClient` when you need `CredentialProvider` / `ErrorFactory`. Namespace `AxiosNet.WebAPI` (attributes in `AxiosNet.WebAPI.Attributes`), same package as the core.
+Once endpoints multiply, URLs, parameters and headers scattered across call sites get hard to manage. The declarative entry point describes each endpoint as a **request model** or an **interface**, leaving calls as one-liners (`client.RequestAsync(request)` / `api.GetAsync(5)`) that hand back the body itself; both forms are carried by the same client: `client.Create<T>()` / `client.RequestAsync(model)` are `AxiosNet.WebAPI` extension methods; switch to `ApiClient` when you need `CredentialProvider` / `ErrorFactory`. Namespace `AxiosNet.WebAPI` (attributes in `AxiosNet.WebAPI.Attributes`), same package as the core.
 
 | Style | What it looks like | Use for | Cost |
 | --- | --- | --- | --- |
@@ -1683,15 +1686,15 @@ var client = new ApiClient("https://api.example.com/")
     CredentialProvider = CredentialProviders.Fixed("token")
 };
 
-var user = (await client.RequestAsync(new GetUserRequest { Id = 5 })).Data!;   // User
+var user = await client.RequestAsync(new GetUserRequest { Id = 5 });           // User
 string url = client.GetUri(new GetUserRequest { Id = 5 });                     // URL only
 ```
 
 **Call and return shapes**
 
-- The `TResponse` of `IApiRequest<TResponse>` is the type of `Data`: `RequestAsync` returns `AxiosResponse<TResponse>`, while `GetUri` only builds the URL and sends nothing.
+- The `TResponse` of `IApiRequest<TResponse>` is the body type: `RequestAsync` returns `Task<TResponse>` (empty body → `default(TResponse)`), `RequestFullAsync` returns `AxiosResponse<TResponse>` (status / headers / request message), and `GetUri` only builds the URL and sends nothing.
 - `client.RequestAsync(model)` / `RequestStreamAsync` are `AxiosClient` extension methods (`using AxiosNet.WebAPI;`) and share the same facade — `CredentialProvider` / `ErrorFactory` state included — with `new ApiClient(...)`.
-- Per-request tweaks: `RequestAsync(request, config => ...)`, or derive from `ApiRequest<TResponse>` and override `Configure(config)`; the callback runs after binding and before authorization.
+- Per-request tweaks: `RequestAsync(request, config => ...)` / `RequestFullAsync(request, config => ...)`, or derive from `ApiRequest<TResponse>` and override `Configure(config)`; the callback runs after binding and before authorization.
 - `client.Axios` reaches the underlying `AxiosClient` (interceptors, pool, handler injection all work).
 
 **Binding**
@@ -1804,11 +1807,11 @@ public interface IUserApi
         CancellationToken cancellationToken = default);
 
     [Post("users")]
-    Task<AxiosResponse<User>> CreateAsync(UserPayload payload, CancellationToken cancellationToken = default);
+    Task<AxiosResponse<User>> CreateAsync([RootBody] UserPayload payload, CancellationToken cancellationToken = default);
 }
 
 var api = client.Create<IUserApi>();
-var user = (await api.GetAsync(5)).Data!;                 // User
+var user = await api.GetAsync(5);                          // User
 ```
 
 **Call and return shapes**
@@ -2002,7 +2005,7 @@ public sealed class ListUsersRequest : ApiRequest<User[]>
 - non-JSON request bodies set `config.ContentType` there (forms / XML / custom media types);
 - query arrays set `config.Serialization.CollectionFormat`.
 
-Streaming endpoints additionally get `public const AxiosStreamFormat StreamFormat`, read with `client.RequestStreamAsync(new StreamEventsRequest(), StreamEventsRequest.StreamFormat)`. When a response has no body the model derives from `ApiRequest<object>` and `Data` is `null` after the usual `RequestAsync`.
+Streaming endpoints additionally get `public const AxiosStreamFormat StreamFormat`, read with `client.RequestStreamAsync(new StreamEventsRequest(), StreamEventsRequest.StreamFormat)`. When a response has no body the model derives from `ApiRequest<object>` and the usual `RequestAsync` returns `default`; use `RequestFullAsync` to read the status code itself (`Data` is `null`).
 
 **Default mapping rules** (each has a switch or shows up in the report):
 
@@ -2138,7 +2141,7 @@ public sealed class LoginRequest : IApiRequest<TokenResponse>
 ApiClient? api = null;
 using var tokens = new AccessTokenManager(new AccessTokenOptions(async ct =>
 {
-    var r = await api!.RequestAsync(new LoginRequest
+    var r = await api!.RequestFullAsync(new LoginRequest
     {
         Username = "alice",
         Password = "wonderland"
@@ -2598,6 +2601,7 @@ Four groups; click a capability to jump to its section. Boundaries and edge case
 | --- | --- |
 | `axios(config)` / `axios(url, config)` | `client.RequestAsync(new AxiosConfig { ... })` / `client.GetAsync(url, c => ...)` |
 | `axios.get/post/put/patch/delete/head/options` | `GetAsync` / `PostAsync` / `PutAsync` / `PatchAsync` / `DeleteAsync` / `HeadAsync` / `OptionsAsync` |
+| `axios.get(url, { params })` / `axios.delete(url, { params })` | `GetAsync(url, new { from = "2024-01-01" })` / `DeleteAsync(url, new { reason = "duplicated" })` (the second argument is the query) |
 | `axios.create(config)` | `Axios.Create(config)` / `Axios.Create(config, sharedPool)` |
 | `axios.getUri(config)` | `client.GetUri(config)` / `client.GetUri(c => ...)` |
 | `axios.postForm / putForm / patchForm` | `PostFormAsync` / `PutFormAsync` / `PatchFormAsync` |
@@ -2719,11 +2723,11 @@ Sources compile as **C# 12**: every project declares `<LangVersion>12.0</LangVer
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2682 / 2669 | `net8.0` / `net6.0` | 5351 |
+| `AxiosNet.Tests` (core + declarative) | 2694 / 2681 | `net8.0` / `net6.0` | 5375 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests` (OpenAPI generation) | 75 | `net8.0` | 75 |
 | `AxiosNet.Compat.Tests` (netstandard2.0 compat asset) | 57 / 52 | `net8.0` / `net472` | 109 |
-| **Total** | **2883 / 2790** | | **5673** |
+| **Total** | **2895 / 2802** | | **5697** |
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed".
 

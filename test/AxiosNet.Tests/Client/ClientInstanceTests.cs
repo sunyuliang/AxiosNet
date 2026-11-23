@@ -52,7 +52,7 @@ public sealed class ClientInstanceTests
     }
 
     [Fact]
-    public async Task RequestAsync_ConcurrencyCapacity_ComesFromInstanceOptions()
+    public async Task RequestFullAsync_ConcurrencyCapacity_ComesFromInstanceOptions()
     {
         await using var server = TestHttpServer.Start(_ => Json());
         using var client = new AxiosClient(
@@ -363,7 +363,7 @@ public sealed class ClientInstanceTests
     }
 
     [Fact]
-    public async Task RequestAsync_ActionConfigured_GoesThroughSamePipeline()
+    public async Task RequestFullAsync_ActionConfigured_GoesThroughSamePipeline()
     {
         await using var server = TestHttpServer.Start(req
             => TestJson.Response(new { echo = req.Headers.GetValueOrDefault("x-custom") }));

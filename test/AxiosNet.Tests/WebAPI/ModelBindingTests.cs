@@ -60,7 +60,7 @@ public sealed class ModelBindingTests
         var request = new DateOnlyBodyCandidateRequest { When = new DateOnly(2026, 10, 22) };
 
 #if NET8_0_OR_GREATER
-        await client.RequestAsync(request);
+        await client.RequestFullAsync(request);
 
         var received = Assert.Single(server.Received);
 
@@ -70,7 +70,7 @@ public sealed class ModelBindingTests
         Assert.Equal("2026-10-22", json.GetProperty("when").GetString());
 #else
         // net6.0 的 System.Text.Json 不支持 DateOnly：聚合正文按序列化器能力报错（显式 [RootBody] 同）。
-        var error = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(request));
+        var error = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(request));
         Assert.Contains("DateOnly", error.ToString());
         Assert.Empty(server.Received);
 #endif
@@ -82,7 +82,7 @@ public sealed class ModelBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new UriBodyCandidateRequest { Callback = new Uri("http://example.com/hook") });
+        await client.RequestFullAsync(new UriBodyCandidateRequest { Callback = new Uri("http://example.com/hook") });
 
         var received = Assert.Single(server.Received);
         Assert.Null(received.Query);
@@ -97,7 +97,7 @@ public sealed class ModelBindingTests
         using var client = new ApiClient(server.Url);
 
         // DateOnly 应被当作 Path/Header 的标量处理。
-        await client.RequestAsync(new DateOnlyPathRequest { Day = new DateOnly(2026, 10, 22) });
+        await client.RequestFullAsync(new DateOnlyPathRequest { Day = new DateOnly(2026, 10, 22) });
 
         var received = Assert.Single(server.Received);
         Assert.Equal("/reports/2026-10-22", received.Path);
@@ -109,7 +109,7 @@ public sealed class ModelBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new BodyKeyRequest { Token = "t", Page = 2, Name = "n" });
+        await client.RequestFullAsync(new BodyKeyRequest { Token = "t", Page = 2, Name = "n" });
 
         var received = Assert.Single(server.Received);
 
@@ -129,7 +129,7 @@ public sealed class ModelBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new GetWithBodyRequest { Token = "t", Page = 3 });
+        await client.RequestFullAsync(new GetWithBodyRequest { Token = "t", Page = 3 });
 
         var received = Assert.Single(server.Received);
         Assert.Equal("GET", received.Method);
@@ -146,7 +146,7 @@ public sealed class ModelBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new RawRootBodyRequest { Payload = new Person("n", 1) });
+        await client.RequestFullAsync(new RawRootBodyRequest { Payload = new Person("n", 1) });
 
         var received = Assert.Single(server.Received);
 
@@ -164,7 +164,7 @@ public sealed class ModelBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new RootBodyWithQueryRequest
+        await client.RequestFullAsync(new RootBodyWithQueryRequest
         {
             Payload = new Person("n", 1),
             Tag = "x",
@@ -190,7 +190,7 @@ public sealed class ModelBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new BodyAndRootBodyRequest
+        await client.RequestFullAsync(new BodyAndRootBodyRequest
         {
             Payload = new Person("n", 1),
             Extra = new Person("m", 2)
@@ -212,7 +212,7 @@ public sealed class ModelBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new MergedRootBodyRequest());
+        await client.RequestFullAsync(new MergedRootBodyRequest());
 
         var received = Assert.Single(server.Received);
         var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
@@ -231,7 +231,7 @@ public sealed class ModelBindingTests
         using var client = new ApiClient(server.Url);
 
         var ex = await Assert.ThrowsAsync<AxiosException>(
-            () => client.RequestAsync(new DuplicateMergedRootBodyRequest()));
+            () => client.RequestFullAsync(new DuplicateMergedRootBodyRequest()));
 
         Assert.Contains("[RootBody]", ex.Message);
         Assert.Contains("重复键", ex.Message);
@@ -243,7 +243,7 @@ public sealed class ModelBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new MixedOrderRequest());
+        await client.RequestFullAsync(new MixedOrderRequest());
 
         var received = Assert.Single(server.Received);
 
@@ -257,7 +257,7 @@ public sealed class ModelBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new BodyNameRequest());
+        await client.RequestFullAsync(new BodyNameRequest());
 
         var received = Assert.Single(server.Received);
 
@@ -271,7 +271,7 @@ public sealed class ModelBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new BlankBodyNameRequest());
+        await client.RequestFullAsync(new BlankBodyNameRequest());
 
         var received = Assert.Single(server.Received);
         Assert.Equal("{\"jp\":1}", Encoding.UTF8.GetString(received.Body));
@@ -283,7 +283,7 @@ public sealed class ModelBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new ApiClient(server.Url);
 
-        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new DuplicateBodyNameRequest()));
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new DuplicateBodyNameRequest()));
 
         Assert.Contains("重复键", ex.Message);
         Assert.Empty(server.Received);
@@ -296,7 +296,7 @@ public sealed class ModelBindingTests
         using var client = new ApiClient(server.Url);
 
         // 同一份值既展开又按键写一次，正文会翻倍且可能自相矛盾。
-        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new BodyAndRootBodySameMemberRequest()));
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new BodyAndRootBodySameMemberRequest()));
 
         Assert.Contains("[Body]", ex.Message);
         Assert.Contains("[RootBody]", ex.Message);
@@ -309,7 +309,7 @@ public sealed class ModelBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new ApiClient(server.Url);
 
-        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new CaseDifferingBodyNameRequest()));
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new CaseDifferingBodyNameRequest()));
 
         Assert.Contains("仅大小写不同", ex.Message);
         Assert.Empty(server.Received);
@@ -322,7 +322,7 @@ public sealed class ModelBindingTests
         using var client = new ApiClient(server.Url);
 
         // 表单键名的大小写由接收端解释：库只按同名判重，不再拦「仅大小写不同」。
-        await client.RequestAsync(new CaseDifferingFormBodyNameRequest());
+        await client.RequestFullAsync(new CaseDifferingFormBodyNameRequest());
 
         var body = Encoding.UTF8.GetString(Assert.Single(server.Received).Body);
         Assert.Equal("a=1&A=2", body);
@@ -348,7 +348,7 @@ public sealed class ModelBindingTests
         using var client = new ApiClient(server.Url);
 
         // 两个 [RootBody] 各自类型内部合法，展开到同一层后才撞：JSON 通道按大小写不敏感判重。
-        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new TwoSpreadCaseDifferingRequest()));
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new TwoSpreadCaseDifferingRequest()));
 
         Assert.Contains("仅大小写不同也算重复", ex.Message);
         Assert.Empty(server.Received);
@@ -360,7 +360,7 @@ public sealed class ModelBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new EmptyJsonPropertyNamePartRequest());
+        await client.RequestFullAsync(new EmptyJsonPropertyNamePartRequest());
 
         var body = Encoding.UTF8.GetString(Assert.Single(server.Received).Body);
         Assert.Contains("name=Value", body);
@@ -374,7 +374,7 @@ public sealed class ModelBindingTests
         using var client = new ApiClient(server.Url, defaults =>
             defaults.ContentType = "multipart/form-data; boundary=xyz");
 
-        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new SingleExplicitBodyRequest()));
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new SingleExplicitBodyRequest()));
 
         // 显式 [Body("x")] 不是「未标注成员」，报错不能这么说。
         Assert.Contains("合并正文", ex.Message);
@@ -400,8 +400,8 @@ public sealed class ModelBindingTests
         using var client = new ApiClient(server.Url);
 
         // 显式 [Body] 通路与未标注默认正文通路各一条：名字与属性名完全相同时也必须保留原样。
-        await client.RequestAsync(new BodySameNameJsonPropertyRequest());
-        await client.RequestAsync(new UnannotatedSameNameJsonPropertyRequest());
+        await client.RequestFullAsync(new BodySameNameJsonPropertyRequest());
+        await client.RequestFullAsync(new UnannotatedSameNameJsonPropertyRequest());
 
         Assert.Collection(
             server.Received,
@@ -416,7 +416,7 @@ public sealed class ModelBindingTests
         using var client = new ApiClient(server.Url);
 
         // ASCII 键名：具名成员与展开属性同名 → 构建/运行期都能判出来
-        var ascii = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(
+        var ascii = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(
             new AsciiDuplicateKeyRequest(),
             config => config.ContentType = AxiosConfig.FormUrlEncodedContentType));
 
@@ -424,7 +424,7 @@ public sealed class ModelBindingTests
         Assert.Empty(server.Received);
 
         // 非 ASCII 键名：表单通道按线上（编码后）形态比较，同样必须拦下，不能把两个同名键发出去
-        var cjk = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(
+        var cjk = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(
             new CjkDuplicateKeyRequest(),
             config => config.ContentType = AxiosConfig.FormUrlEncodedContentType));
 
@@ -441,7 +441,7 @@ public sealed class ModelBindingTests
         // 声明类型是 object：构建期判不出是流，直到序列化才发现 → 报错文案要给键名而不是内部类型名，且流要回收
         var stream = new DisposeTrackingStream();
         var ex = await Assert.ThrowsAsync<AxiosException>(
-            () => client.RequestAsync(new RuntimeStreamBodyRequest { Data = stream }));
+            () => client.RequestFullAsync(new RuntimeStreamBodyRequest { Data = stream }));
 
         Assert.Contains("默认正文", ex.Message);
         Assert.DoesNotContain(nameof(AxiosNet.Internal.Content.AggregateBody), ex.Message);
@@ -473,7 +473,7 @@ public sealed class ModelBindingTests
 
         // 头名来自 [Header("...")]，非法名在配置构建期就抛：声明式装配统一 ERR_BAD_REQUEST，一个字节都不发
         var error = await Assert.ThrowsAnyAsync<AxiosException>(() =>
-            api.RequestAsync(new ProbeBadHeaderNameRequest { Value = "1" }));
+            api.RequestFullAsync(new ProbeBadHeaderNameRequest { Value = "1" }));
 
         Assert.Equal(AxiosException.ErrBadRequest, error.Code);
         Assert.IsType<ArgumentException>(error.Cause);
@@ -491,7 +491,7 @@ public sealed class ModelBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new IgnoredInheritedPageRequest { Page = 7 });
+        await client.RequestFullAsync(new IgnoredInheritedPageRequest { Page = 7 });
 
         var received = Assert.Single(server.Received);
         Assert.Null(received.Query);
@@ -510,7 +510,7 @@ public sealed class ModelBindingTests
 
         var when = new DateTime(2026, 10, 22, 8, 30, 0, DateTimeKind.Utc);
 
-        await client.RequestAsync(new ScalarTextRequest { Flag = true, When = when, DryRun = false });
+        await client.RequestFullAsync(new ScalarTextRequest { Flag = true, When = when, DryRun = false });
 
         var received = Assert.Single(server.Received);
 
@@ -530,7 +530,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient(server);
 
-        await client.RequestAsync(new CaseInsensitivePathRequest { Id = 7 });
+        await client.RequestFullAsync(new CaseInsensitivePathRequest { Id = 7 });
 
         var received = Assert.Single(server.Received);
         // [Path("UID")] ↔ 模板 {uid}：大小写不敏感匹配，替换用模板原文
@@ -557,7 +557,7 @@ public sealed class ModelBindingTests
         using var client = CreateClient(server);
         var token = Guid.Parse("0cf7d4a5-1b2c-4d3e-8f90-a1b2c3d4e5f6");
 
-        await client.RequestAsync(new GuidPathRequest { Token = token });
+        await client.RequestFullAsync(new GuidPathRequest { Token = token });
 
         var received = Assert.Single(server.Received);
         // Guid.ToString() 的 "d" 格式：小写 + 连字符
@@ -572,7 +572,7 @@ public sealed class ModelBindingTests
         using var client = CreateClient(server);
 
         // 位置参数 record（init-only 属性）可直接做请求模型
-        var response = await client.RequestAsync(new RecordRequest(3));
+        var response = await client.RequestFullAsync(new RecordRequest(3));
 
         Assert.Equal(200, response.Status);
 
@@ -589,7 +589,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient(server);
 
-        await client.RequestAsync(new DefaultBodyNullRequest { Payload = null });
+        await client.RequestFullAsync(new DefaultBodyNullRequest { Payload = null });
 
         var received = Assert.Single(server.Received);
         Assert.Equal("POST", received.Method);
@@ -607,7 +607,7 @@ public sealed class ModelBindingTests
         using var client = CreateClient(server);
 
         // 数组也按成员键聚合：{ "tags": [1, 2, 3] }（要发查询参数请显式 [Query]）
-        await client.RequestAsync(new ScalarArrayDefaultBodyRequest { Tags = [1, 2, 3] });
+        await client.RequestFullAsync(new ScalarArrayDefaultBodyRequest { Tags = [1, 2, 3] });
 
         var received = Assert.Single(server.Received);
         Assert.Equal("{\"tags\":[1,2,3]}", Encoding.UTF8.GetString(received.Body));
@@ -621,7 +621,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient(server);
 
-        await client.RequestAsync(new FormBodyRequest { Payload = new UserPayload("carol", 25) });
+        await client.RequestFullAsync(new FormBodyRequest { Payload = new UserPayload("carol", 25) });
 
         var received = Assert.Single(server.Received);
         // [RootBody] 的编码规则与核心包 data 一致：ContentType 改表单就走键值对编码
@@ -640,7 +640,7 @@ public sealed class ModelBindingTests
 
         // CRLF 注入：AxiosHeaders 拦截，声明式装配统一归 ERR_BAD_REQUEST（内层仍是 ArgumentException），请求一个字节都不出
         var error = await Assert.ThrowsAnyAsync<AxiosException>(
-            () => client.RequestAsync(new EvilHeaderRequest { Evil = "a\r\nX-Evil: injected" }));
+            () => client.RequestFullAsync(new EvilHeaderRequest { Evil = "a\r\nX-Evil: injected" }));
 
         Assert.Equal(AxiosException.ErrBadRequest, error.Code);
         Assert.IsType<ArgumentException>(error.Cause);
@@ -657,7 +657,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient(server);
 
-        var response = await client.RequestAsync(new DownloadBytesRequest());
+        var response = await client.RequestFullAsync(new DownloadBytesRequest());
 
         Assert.Equal(200, response.Status);
         Assert.Equal(payload, response.Data); // byte[] 目标：字节原样到达，不做解码
@@ -671,7 +671,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient(server);
 
-        var response = await client.RequestAsync(new DownloadStreamRequest());
+        var response = await client.RequestFullAsync(new DownloadStreamRequest());
 
         Assert.Equal(200, response.Status);
 
@@ -691,8 +691,8 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient(server);
 
-        await client.RequestAsync(new GetUserRequest { Id = 1 });
-        await client.RequestAsync(new GetUserRequest { Id = 2 });
+        await client.RequestFullAsync(new GetUserRequest { Id = 1 });
+        await client.RequestFullAsync(new GetUserRequest { Id = 2 });
 
         Assert.Equal(2, server.Received.Count);
         // 长持有的 ApiClient 复用连接池：两次请求只建一条 TCP 连接
@@ -708,7 +708,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient(server);
 
-        var response = await client.RequestAsync(new PropFindRequest());
+        var response = await client.RequestFullAsync(new PropFindRequest());
 
         Assert.Equal(200, response.Status);
 
@@ -726,7 +726,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient(server);
 
-        var response = await client.RequestAsync(new DirectHttpApiDeleteRequest { Id = 4 });
+        var response = await client.RequestFullAsync(new DirectHttpApiDeleteRequest { Id = 4 });
 
         Assert.Equal(200, response.Status);
 
@@ -743,7 +743,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient(server);
 
-        await client.RequestAsync(new DirectHttpApiPostRequest { Payload = new Person("iris", 28) });
+        await client.RequestFullAsync(new DirectHttpApiPostRequest { Payload = new Person("iris", 28) });
 
         var received = Assert.Single(server.Received);
         // 归一化后的 POST 参与默认正文：未标注属性按键名聚合进对象
@@ -774,7 +774,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient_ApiClientRequest(server);
 
-        var response = await client.RequestAsync(new GetUserRequest
+        var response = await client.RequestFullAsync(new GetUserRequest
         {
             Id = 5,
             Verbose = "1",
@@ -801,7 +801,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient_ApiClientRequest(server);
 
-        var response = await client.RequestAsync(new ListUsersRequest
+        var response = await client.RequestFullAsync(new ListUsersRequest
         {
             Ids = [1, 2],
             Role = "admin"
@@ -826,7 +826,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient_ApiClientRequest(server);
 
-        var response = await client.RequestAsync(new CreateUserRequest
+        var response = await client.RequestFullAsync(new CreateUserRequest
         {
             Person = new Person("alice", 18)
         });
@@ -851,7 +851,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient_ApiClientRequest(server);
 
-        var response = await client.RequestAsync(new NullBodyRequest { Person = null });
+        var response = await client.RequestFullAsync(new NullBodyRequest { Person = null });
 
         Assert.Equal(200, response.Status);
 
@@ -867,10 +867,10 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient_ApiClientRequest(server);
 
-        var deleted = await client.RequestAsync(new DeleteUserRequest { Id = 7 });
+        var deleted = await client.RequestFullAsync(new DeleteUserRequest { Id = 7 });
         Assert.Equal(200, deleted.Status);
 
-        var ping = await client.RequestAsync(new PingRequest());
+        var ping = await client.RequestFullAsync(new PingRequest());
         Assert.Equal(200, ping.Status);
 
         Assert.Equal("DELETE", server.Received[0].Method);
@@ -887,7 +887,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient_ApiClientRequest(server);
 
-        var response = await client.RequestAsync(new EscapedPathRequest { Name = "John Doe/a b" });
+        var response = await client.RequestFullAsync(new EscapedPathRequest { Name = "John Doe/a b" });
 
         Assert.Equal(200, response.Status);
 
@@ -904,7 +904,7 @@ public sealed class ModelBindingTests
         // baseAddress 指向别处：模板里的绝对 URL 必须整体覆盖它
         using var client = new ApiClient("http://192.0.2.1:1/");
 
-        var response = await client.RequestAsync(new AbsoluteUrlRequest { Port = server.Port });
+        var response = await client.RequestFullAsync(new AbsoluteUrlRequest { Port = server.Port });
 
         Assert.Equal(200, response.Status);
 
@@ -920,7 +920,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient_ApiClientRequest(server);
 
-        var response = await client.RequestAsync(new ConfiguredGetRequest { Id = 1 });
+        var response = await client.RequestFullAsync(new ConfiguredGetRequest { Id = 1 });
 
         Assert.Equal(200, response.Status);
 
@@ -936,7 +936,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient_ApiClientRequest(server);
 
-        var response = await client.RequestAsync(
+        var response = await client.RequestFullAsync(
             new GetUserRequest { Id = 1, Trace = "trace-1" },
             configure: config => config.Headers.Set("X-Trace", "trace-override"));
 
@@ -955,7 +955,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient_ApiClientRequest(server);
 
-        var response = await client.RequestAsync(new InheritedHeaderRequest { Id = 1, Trace = "t-9" });
+        var response = await client.RequestFullAsync(new InheritedHeaderRequest { Id = 1, Trace = "t-9" });
 
         Assert.Equal(200, response.Status);
 
@@ -983,7 +983,7 @@ public sealed class ModelBindingTests
         cts.Cancel();
 
         var ex = await Assert.ThrowsAsync<AxiosException>(
-            () => client.RequestAsync(new GetUserRequest { Id = 1 }, cts.Token));
+            () => client.RequestFullAsync(new GetUserRequest { Id = 1 }, cts.Token));
 
         Assert.Equal(AxiosException.ErrCanceled, ex.Code);
     }
@@ -1000,7 +1000,7 @@ public sealed class ModelBindingTests
         using var client = CreateClient_ApiClientRequest(server);
 
         var ex = await Assert.ThrowsAsync<AxiosException>(
-            () => client.RequestAsync(
+            () => client.RequestFullAsync(
                 new ConfiguredGetRequest { Id = 1 },
                 configure: config => config.Timeout = TimeSpan.FromMilliseconds(100)));
 
@@ -1018,7 +1018,7 @@ public sealed class ModelBindingTests
         using var client = CreateClient_ApiClientRequest(server);
 
         var ex = await Assert.ThrowsAsync<AxiosException>(
-            () => client.RequestAsync(new GetUserRequest { Id = 1 }));
+            () => client.RequestFullAsync(new GetUserRequest { Id = 1 }));
 
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
         Assert.Equal(404, ex.Status);
@@ -1033,7 +1033,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient_ApiClientRequest(server);
 
-        var response = await client.RequestAsync(new DefaultBodyRequest
+        var response = await client.RequestFullAsync(new DefaultBodyRequest
         {
             Payload = new Person("carol", 25)
         });
@@ -1054,7 +1054,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient_ApiClientRequest(server);
 
-        var response = await client.RequestAsync(new PutDefaultBodyRequest
+        var response = await client.RequestFullAsync(new PutDefaultBodyRequest
         {
             Id = 7,
             Payload = new Person("dave", 40)
@@ -1076,7 +1076,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient_ApiClientRequest(server);
 
-        await client.RequestAsync(new ScalarDefaultBodyRequest { Page = 3 });
+        await client.RequestFullAsync(new ScalarDefaultBodyRequest { Page = 3 });
 
         var received = Assert.Single(server.Received);
         // 1 个未标注成员也加壳：{ "page": 3 }
@@ -1091,7 +1091,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient_ApiClientRequest(server);
 
-        await client.RequestAsync(new TwoUnannotatedRequest { Page = 2, Payload = new Person("eve", 31) });
+        await client.RequestFullAsync(new TwoUnannotatedRequest { Page = 2, Payload = new Person("eve", 31) });
 
         var received = Assert.Single(server.Received);
         // 多个未标注属性 → 同一个对象 body，键 = 属性名（camelCase）
@@ -1108,7 +1108,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient_ApiClientRequest(server);
 
-        await client.RequestAsync(
+        await client.RequestFullAsync(
             new TwoUnannotatedRequest { Page = 2, Payload = new Person("eve", 31) },
             config => config.ContentType = AxiosConfig.FormUrlEncodedContentType);
 
@@ -1129,7 +1129,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient_ApiClientRequest(server);
 
-        var response = await client.RequestAsync(new ExplicitQueryThenDefaultBodyRequest
+        var response = await client.RequestFullAsync(new ExplicitQueryThenDefaultBodyRequest
         {
             Page = 4,
             Payload = new Person("frank", 50)
@@ -1151,7 +1151,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient_ApiClientRequest(server);
 
-        await client.RequestAsync(new DeleteDefaultStaysQueryRequest { Id = 9, Payload = new Person("gina", 22) });
+        await client.RequestFullAsync(new DeleteDefaultStaysQueryRequest { Id = 9, Payload = new Person("gina", 22) });
 
         var received = Assert.Single(server.Received);
         Assert.Equal("DELETE", received.Method);
@@ -1168,7 +1168,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient_ApiClientRequest(server);
 
-        await client.RequestAsync(new IgnoredQueryRequest { Name = "alice", CacheKey = "secret-state" });
+        await client.RequestFullAsync(new IgnoredQueryRequest { Name = "alice", CacheKey = "secret-state" });
 
         var received = Assert.Single(server.Received);
         Assert.Equal("Name=alice", received.Query); // 只有正常绑定进了查询串
@@ -1182,7 +1182,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient_ApiClientRequest(server);
 
-        var response = await client.RequestAsync(new IgnoredDoesNotBlockDefaultBodyRequest
+        var response = await client.RequestFullAsync(new IgnoredDoesNotBlockDefaultBodyRequest
         {
             InternalState = "should-not-appear",
             Payload = new Person("hank", 33)
@@ -1220,7 +1220,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient_ApiClientRequest(server);
 
-        await client.RequestAsync(new PathHeaderRequest { Id = 5 });
+        await client.RequestFullAsync(new PathHeaderRequest { Id = 5 });
 
         var received = Assert.Single(server.Received);
         Assert.Equal("/users/5/scores", received.Path);
@@ -1234,7 +1234,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient_ApiClientRequest(server);
 
-        await client.RequestAsync(new QueryHeaderRequest { Trace = "t-42" });
+        await client.RequestFullAsync(new QueryHeaderRequest { Trace = "t-42" });
 
         var received = Assert.Single(server.Received);
         Assert.Equal("trace=t-42", received.Query);
@@ -1248,7 +1248,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient_ApiClientRequest(server);
 
-        var response = await client.RequestAsync(new PathBodyHeaderRequest { OrderId = 88 });
+        var response = await client.RequestFullAsync(new PathBodyHeaderRequest { OrderId = 88 });
 
         Assert.Equal(200, response.Status);
 
@@ -1265,7 +1265,7 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient_ApiClientRequest(server);
 
-        var response = await client.RequestAsync(new QueryBodyRequest
+        var response = await client.RequestFullAsync(new QueryBodyRequest
         {
             Report = new ReportPayload(66, "weekly")
         });
@@ -1309,7 +1309,7 @@ public sealed class ModelBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new FlatMapOnlyPostRequest
+        await client.RequestFullAsync(new FlatMapOnlyPostRequest
         {
             Filters = new Dictionary<string, string>
             {
@@ -1352,7 +1352,7 @@ public sealed class ModelBindingTests
         using var client = new ApiClient(server.Url);
 
         // 取值走构建期缓存的委托：int / bool 等值类型属性（装箱返回）照旧绑定正确
-        var response = await client.RequestAsync(new BoundRequest { Id = 42, Name = "n", Flag = true });
+        var response = await client.RequestFullAsync(new BoundRequest { Id = 42, Name = "n", Flag = true });
 
         var received = Assert.Single(server.Received);
         Assert.Equal("/items/42", received.Path);

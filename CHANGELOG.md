@@ -4,7 +4,22 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/)。版本号沿用 [Semantic Versioning](https://semver.org/) 的 `主.次.修订` 形式，但 **`1.x` 内允许带破坏性变更**：破坏性项单独写进「Changed (Breaking)」并在 `docs/breaking-changes-*.md` 给出迁移对照，**不发 2.0**——这个库的实际使用面小、迭代快，一次迁移文档比一个没人敢跳的大版本号更有用。
 
-> **说明：本文件从 `1.5.0` 起建立，此前版本未追述。** 更早的历史（`1.4.x` 及以前）请以 git 提交历史为准；`1.x → 1.5` 的完整迁移对照见 [`docs/breaking-changes-1.5.md`](docs/breaking-changes-1.5.md)（英文：[`docs/breaking-changes-1.5.en.md`](docs/breaking-changes-1.5.en.md)）。每个条目只记录能从版本 tag 与对应提交中取证的改动。
+> **说明：本文件从 `1.5.0` 起建立，此前版本未追述。** 更早的历史（`1.4.x` 及以前）请以 git 提交历史为准；`1.x → 1.5` 的完整迁移对照见 [`docs/breaking-changes-1.5.md`](docs/breaking-changes-1.5.md)（英文：[`docs/breaking-changes-1.5.en.md`](docs/breaking-changes-1.5.en.md)），`1.7 → 1.8` 见 [`docs/breaking-changes-1.8.md`](docs/breaking-changes-1.8.md)（英文：[`docs/breaking-changes-1.8.en.md`](docs/breaking-changes-1.8.en.md)）。每个条目只记录能从版本 tag 与对应提交中取证的改动。
+
+## [1.8.0] - 2026-11-23
+
+### Added
+
+- `ApiClient.RequestFullAsync<TResponse>` / `AxiosClientDeclarativeExtensions.RequestFullAsync<TResponse>`（各两个重载）：交付完整响应（状态码 / 响应头 / 请求消息 / 正文），与 `RequestAsync` 共用同一套装配与授权。
+
+### Changed (Breaking)
+
+- 声明式默认只交付正文：`RequestAsync` 返回 `Task<TResponse>`（此前 `Task<AxiosResponse<TResponse>>`），正文为空时返回 `default(TResponse)`，与接口式 `Task<T>` 形态一致；读响应元数据改用 `RequestFullAsync`。`RequestStreamAsync` 不变。
+- 快捷方法第二个参数的语义只看动词：`GetAsync` / `DeleteAsync` / `HeadAsync` / `OptionsAsync` 的第二个参数改为查询参数（参数名 `data` → `query`，写入 `Params`），读动词要发正文改写 `c => c.Body = ...`；`Stream` / `HttpContent` 落在查询参数位置抛 `ERR_BAD_OPTION_VALUE`。
+
+### Changed
+
+- 接口式示例的复合参数统一标 `[RootBody]`，正文不再多包一层参数名，与模型式示例对齐；`DemoApiServer` 相应去掉 `payload` 解包。绑定规则本身未变。
 
 ## [1.7.2] - 2026-11-21
 

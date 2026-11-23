@@ -21,7 +21,7 @@ public sealed class ReviewProbeTests
         Assert.Equal("/users/7", uri.AbsolutePath);
         Assert.Equal("?verbose=1", uri.Query);
 
-        await client.RequestAsync(model);
+        await client.RequestFullAsync(model);
 
         var received = Assert.Single(server.Received);
         Assert.Equal("/users/7", received.Path);
@@ -42,7 +42,7 @@ public sealed class ReviewProbeTests
         Assert.Equal("?filter=x", uri.Query);
         Assert.Equal(string.Empty, uri.Fragment);
 
-        await client.RequestAsync(model);
+        await client.RequestFullAsync(model);
 
         var received = Assert.Single(server.Received);
         Assert.Equal("/items/9", received.Path);
@@ -56,7 +56,7 @@ public sealed class ReviewProbeTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(Array.Empty<Person>()));
         using var client = Axios.Create(server.Url);
 
-        await client.RequestAsync(new ListUsersRequest { Ids = [1, 2], Role = null });
+        await client.RequestFullAsync(new ListUsersRequest { Ids = [1, 2], Role = null });
 
         var received = Assert.Single(server.Received);
         Assert.Equal("/users", received.Path);
@@ -95,7 +95,7 @@ public sealed class ReviewProbeTests
             ValueTask.FromResult(new AccessToken("tok-" + Interlocked.Increment(ref issued)))));
         using var client = new ApiClient(server.Url) { CredentialProvider = tokens };
 
-        var response = await client.RequestAsync(new ProbeSecureBodyRequest
+        var response = await client.RequestFullAsync(new ProbeSecureBodyRequest
         {
             Payload = new Person("bob", 30)
         });
@@ -116,7 +116,7 @@ public sealed class ReviewProbeTests
             TestJson.Response(new { error = "boom" }, statusCode: 500));
         using var client = Axios.Create(server.Url);
 
-        var response = await client.RequestAsync(
+        var response = await client.RequestFullAsync(
             new ProbeFailRequest(),
             configure: c => c.ValidateStatus = _ => true);
 
