@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using AxiosNet.Internal.Support;
 using AxiosNet.Telemetry;
 
 namespace AxiosNet.Pooling;
@@ -231,8 +232,8 @@ public sealed class HttpConnectionPool : IDisposable
             throw AxiosException.InvalidOption("KeepAlivePingTimeout 必须大于 0；不因 ping 超时断连请设为 Timeout.InfiniteTimeSpan。", config);
         }
 
-        // 两者都由底层计时器表达，上限同样是 uint.MaxValue-1 毫秒。
-        var pingLimit = TimeSpan.FromMilliseconds(uint.MaxValue - 1);
+        // 两者都由底层计时器表达，上限与 CancelAfter 同一口径（见 Timeouts.Max）。
+        var pingLimit = Timeouts.Max;
         if (options.KeepAlivePingDelay > pingLimit || options.KeepAlivePingTimeout > pingLimit)
         {
             throw AxiosException.InvalidOption(
