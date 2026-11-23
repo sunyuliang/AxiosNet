@@ -51,6 +51,9 @@ public sealed partial class AxiosClient
         var telemetryStart = 0L;
         AxiosRequestTrace telemetryTrace = default;
 
+        // 观测收尾（ExitRequest → span 收尾）打包成一次 Dispose；未进入观测时保持默认值。
+        TelemetryScope telemetryScope = default;
+
         // 缓存状态：命中直接返回；未命中时由领导者落库并放行跟随者。
         AxiosCache? cache = null;
         string? cacheKey = null;
@@ -219,6 +222,8 @@ public sealed partial class AxiosClient
                 }
             }
 
+            telemetryScope = new TelemetryScope(telemetry, telemetryEntered, telemetryTrace);
+
             var template = CreateRequestMessage(config, plan, telemetryTrace);
 
             // 401 重放要在第二次发送前继续持有正文；只有失败确实是 401 时才把正文交接出去。
@@ -343,39 +348,16 @@ public sealed partial class AxiosClient
                 config.RevalidationEntry = null;
             }
 
-            // 三段收尾彼此**不可连坐**：观测实现是第三方代码（AxiosTelemetry.Sink 可替换），
-            // 任一段出事其余两段照样要执行 —— 否则「观测写错了」会被放大成资源泄漏 / span 错挂。
-            // 而且三段都不许把异常带给调用方：请求已经成功 / 已经失败，结论不能被收尾改写。
+            // 观测收尾与在途计数彼此不可连坐：任一段出事，其余段照样要执行，
+            // 也都不许把异常带给调用方 —— 请求结论不能被收尾改写。
             try
             {
-                if (telemetryEntered)
-                {
-                    // 与 EnterRequest 配对的必须是同一个实现（= 进去的那个），所以用捕获到的这份，
-                    // 而不是此刻的 AxiosTelemetry.Sink；派发层已兜住异常。
-                    telemetry!.ExitRequest();
-                }
+                telemetryScope.Dispose();
             }
             finally
             {
-                try
-                {
-                    // 必须收 span，否则后续请求的 span 会错挂。
-                    // 走句柄自身的派发（而不是当前的 AxiosTelemetry.Sink）：收尾必须回到「开它的那个实现」上，
-                    // 否则请求在途时换过 Sink 就会把 Start / Stop 劈成两家（默认句柄 = 不观测，天然是空操作）。
-                    // 句柄绕过派发层直连实现，所以异常要在这里兜。
-                    try
-                    {
-                        telemetryTrace.Stop();
-                    }
-                    catch (Exception ex) when (ex is not OutOfMemoryException)
-                    {
-                    }
-                }
-                finally
-                {
-                    // 在途计数是 Dispose 的等待条件，漏一次就永远等不到 0，Dispose 会一直等下去。
-                    ReleaseInFlight();
-                }
+                // 在途计数是 Dispose 的等待条件，漏一次就永远等不到 0，Dispose 会一直等下去。
+                ReleaseInFlight();
             }
         }
     }
@@ -604,6 +586,49 @@ public sealed partial class AxiosClient
         {
             template.Dispose();
             throw;
+        }
+    }
+
+    /// <summary>一次请求的观测收尾：<c>ExitRequest</c> 与 span 收尾按固定顺序执行。</summary>
+    /// <remarks><c>sink</c> 是进入观测时的同一份快照；<c>trace</c> 自带派发，收尾回到创建它的实现。</remarks>
+    private readonly struct TelemetryScope : IDisposable
+    {
+        private readonly GuardedTelemetrySink? _sink;
+        private readonly bool _entered;
+        private readonly AxiosRequestTrace _trace;
+
+        /// <summary>记录本次请求的观测句柄；未进入观测时 <paramref name="entered"/> 为 <c>false</c>。</summary>
+        /// <param name="sink">本次请求认下的观测实现。</param>
+        /// <param name="entered">是否成功进入观测（<c>ExitRequest</c> 只与它配对）。</param>
+        /// <param name="trace">请求 span 句柄；未开 span 时为默认值。</param>
+        public TelemetryScope(GuardedTelemetrySink? sink, bool entered, AxiosRequestTrace trace)
+        {
+            _sink = sink;
+            _entered = entered;
+            _trace = trace;
+        }
+
+        /// <summary>先退出观测、再收 span；span 收尾的异常被吞掉，退出观测的异常照常上抛。</summary>
+        public void Dispose()
+        {
+            try
+            {
+                if (_entered)
+                {
+                    _sink!.ExitRequest();
+                }
+            }
+            finally
+            {
+                try
+                {
+                    _trace.Stop();
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException)
+                {
+                    // 吞掉 span 收尾异常。
+                }
+            }
         }
     }
 }
