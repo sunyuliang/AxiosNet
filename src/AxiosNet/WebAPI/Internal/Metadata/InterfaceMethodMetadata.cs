@@ -164,45 +164,7 @@ internal sealed partial class InterfaceMethodMetadata
 
     /// <summary>接口方法的 multipart 请求体：参数即表单，全部参数为 null 时不发送请求体（与请求模型一致）。</summary>
     private object? ResolveMultipartBody(object?[] args)
-    {
-        var form = new FormData { SourceName = _target };
-
-        try
-        {
-            foreach (var binding in _partBindings)
-            {
-                var value = binding.Source.GetValue(args);
-                if (value is null)
-                {
-                    continue;
-                }
-
-                if (binding.Source.Format is { } format)
-                {
-                    form.Formats[binding.Name] = format;
-                }
-
-                var partOverride = new FormPartOverride(binding.FileName, binding.ContentType, binding.HasExplicitName);
-                if (partOverride.Any)
-                {
-                    form.Overrides[binding.Name] = partOverride;
-                    form.Add(binding.Name, MultipartValues.MaterializeDeclaredCollection(value));
-                }
-                else
-                {
-                    form.Add(binding.Name, value);
-                }
-            }
-        }
-        catch
-        {
-            // 还没交给 MultipartBodyBuilder：已取得的流 / 内容必须就地释放，否则会随异常泄漏。
-            form.DisposeOwned();
-            throw;
-        }
-
-        return form.Count > 0 ? form : null;
-    }
+        => MultipartFormAssembler.Build(_target, _partBindings, args);
 
     /// <summary>调用前准备：写入调用方取消令牌、组装调用上下文并跑授权（同步完成，不包 Task）。</summary>
     private ApiInterfaceInvocation Prepare(

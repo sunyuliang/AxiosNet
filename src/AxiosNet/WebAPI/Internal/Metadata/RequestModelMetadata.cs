@@ -129,45 +129,7 @@ internal sealed class RequestModelMetadata
         }
 
         // 模型自身即表单：null 属性跳过（与 query / headers 的 null 规则一致）
-        var form = new FormData { SourceName = request.GetType().Name };
-
-        try
-        {
-            foreach (var binding in PartBindings)
-            {
-                var value = binding.Source.GetValue(request);
-                if (value is null)
-                {
-                    continue;
-                }
-
-                if (binding.Source.Format is { } format)
-                {
-                    form.Formats[binding.Name] = format;
-                }
-
-                // 声明覆盖与值分开登记，覆盖在装配时由 MultipartBodyBuilder 应用。
-                var partOverride = new FormPartOverride(binding.FileName, binding.ContentType, binding.HasExplicitName);
-                if (partOverride.Any)
-                {
-                    form.Overrides[binding.Name] = partOverride;
-                    form.Add(binding.Name, MultipartValues.MaterializeDeclaredCollection(value));
-                }
-                else
-                {
-                    form.Add(binding.Name, value);
-                }
-            }
-        }
-        catch
-        {
-            // 还没交给 MultipartBodyBuilder：已取得的流 / 内容必须就地释放，否则会随异常泄漏。
-            form.DisposeOwned();
-            throw;
-        }
-
-        // 全部属性为 null：没有可发的部件，按「无请求体」处理（与 [RootBody] 为 null 的行为一致）
-        return form.Count > 0 ? form : null;
+        return MultipartFormAssembler.Build(request.GetType().Name, PartBindings, request);
     }
 
     /// <summary>把全部 <see cref="HeaderAttribute"/> 属性写进配置；没有任何头绑定时不动配置。头名 / 头值在配置构建期按 <see cref="AxiosHeaders.Set(string, string?)"/> 校验。</summary>
