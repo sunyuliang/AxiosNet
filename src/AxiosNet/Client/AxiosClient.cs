@@ -369,4 +369,33 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         merged.EffectiveMerged = true;
         return merged;
     }
+
+    /// <summary>
+    /// 发送一份由 <see cref="NewEffectiveConfig"/> 起步、库内已填好本次请求项的配置（声明式门面用）：
+    /// 不再经过 <see cref="PreparePerCall"/> 的二次合并。
+    /// </summary>
+    /// <param name="config">已合并的按请求配置。</param>
+    internal Task<AxiosResponse> SendPreparedAsync(AxiosConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        return SendAsync(config, dataType: null, target: null);
+    }
+
+    /// <summary>同 <see cref="SendPreparedAsync(AxiosConfig)"/>，另按目标类型反序列化。</summary>
+    /// <typeparam name="T">正文的目标类型。</typeparam>
+    /// <param name="config">已合并的按请求配置。</param>
+    internal Task<AxiosResponse<T>> SendPreparedTypedAsync<T>(AxiosConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        return SendTypedAsync<T>(config);
+    }
+
+    /// <summary>同 <see cref="SendPreparedAsync(AxiosConfig)"/>，只完成请求、不装配正文（<paramref name="dataType"/> 为 <c>typeof(void)</c>）。</summary>
+    /// <param name="config">已合并的按请求配置。</param>
+    /// <param name="dataType">目标类型；<c>typeof(void)</c> 表示丢弃正文。</param>
+    internal Task<AxiosResponse> SendPreparedAsync(AxiosConfig config, Type? dataType)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        return SendAsync(config, dataType, target: null);
+    }
 }

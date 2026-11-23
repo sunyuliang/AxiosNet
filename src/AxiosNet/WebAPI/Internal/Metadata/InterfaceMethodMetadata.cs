@@ -85,12 +85,10 @@ internal sealed partial class InterfaceMethodMetadata
     /// <summary>把参数绑定成配置：URL / 查询 / 请求体（含 multipart）→ 声明级静态头 → 参数头（后者覆盖同名项）。</summary>
     private AxiosConfig BuildConfig(ApiClient client, object?[] args)
     {
+        // 配置从实例默认值的副本起步（与快捷方法 / 请求模型同一条起点），本次请求项只覆盖它需要改的部分。
         var formatter = client.Axios.Defaults.Serialization.ValueText;
-        var config = new AxiosConfig
-        {
-            Method = _method!,
-            Serialization = { ValueText = formatter }
-        };
+        var config = client.Axios.NewEffectiveConfig();
+        config.Method = _method!;
 
         // 声明式装配失败统一归 ERR_BAD_REQUEST（路径 / 查询 / 头 / 正文同口径）。
         // 各步骤以状态元组传参，静态 lambda 无捕获。
@@ -159,6 +157,8 @@ internal sealed partial class InterfaceMethodMetadata
             (_plan, args, config, formatter),
             static state => state._plan!.ApplyHeaders(state.args, state.config, state.formatter));
 
+        // 与快捷方法同一顺序：所有头都写完（含声明级删头的撤销）再执行删头。
+        AxiosClient.ApplyRemoveHeaders(config);
         return config;
     }
 
@@ -187,21 +187,36 @@ internal sealed partial class InterfaceMethodMetadata
     }
 
     /// <summary><c>Task&lt;AxiosResponse&lt;T&gt;&gt;</c>：交付完整响应（生成代理经 <c>InterfaceMethodRuntime</c> 直接调用）。</summary>
-    internal async Task<AxiosResponse<T>> SendResponseAsync<T>(ApiClient client, object?[] args, CancellationToken cancellationToken)
+    internal Task<AxiosResponse<T>> SendResponseAsync<T>(ApiClient client, object?[] args, CancellationToken cancellationToken)
     {
-        var config = BuildConfig(client, args);
-        var invocation = Prepare(client, args, config, cancellationToken);
+        // 装配期异常按异步方法的时序交给返回的 Task：调用方 await 时才看到，不在这里同步抛出。
+        try
+        {
+            var config = BuildConfig(client, args);
+            var invocation = Prepare(client, args, config, cancellationToken);
 
-        return await client.SendAsync<T>(invocation, config, invocation.Auth, cancellationToken).ConfigureAwait(false);
+            return client.SendAsync<T>(invocation, config, invocation.Auth, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            return Task.FromException<AxiosResponse<T>>(ex);
+        }
     }
 
     /// <summary><c>Task&lt;AxiosResponse&gt;</c>：交付响应，正文按 JsonElement 原样给。</summary>
-    internal async Task<AxiosResponse> SendUntypedAsync(ApiClient client, object?[] args, CancellationToken cancellationToken)
+    internal Task<AxiosResponse> SendUntypedAsync(ApiClient client, object?[] args, CancellationToken cancellationToken)
     {
-        var config = BuildConfig(client, args);
-        var invocation = Prepare(client, args, config, cancellationToken);
+        try
+        {
+            var config = BuildConfig(client, args);
+            var invocation = Prepare(client, args, config, cancellationToken);
 
-        return await client.SendUntypedAsync(invocation, config, invocation.Auth, cancellationToken).ConfigureAwait(false);
+            return client.SendUntypedAsync(invocation, config, invocation.Auth, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            return Task.FromException<AxiosResponse>(ex);
+        }
     }
 
     /// <summary><c>Task&lt;T&gt;</c>：只交付正文。</summary>
@@ -212,12 +227,19 @@ internal sealed partial class InterfaceMethodMetadata
     }
 
     /// <summary><c>Task</c>：只完成请求，正文丢弃。</summary>
-    internal async Task SendVoidAsync(ApiClient client, object?[] args, CancellationToken cancellationToken)
+    internal Task SendVoidAsync(ApiClient client, object?[] args, CancellationToken cancellationToken)
     {
-        var config = BuildConfig(client, args);
-        var invocation = Prepare(client, args, config, cancellationToken);
+        try
+        {
+            var config = BuildConfig(client, args);
+            var invocation = Prepare(client, args, config, cancellationToken);
 
-        await client.SendWithoutBodyAsync(invocation, config, invocation.Auth, cancellationToken).ConfigureAwait(false);
+            return client.SendWithoutBodyAsync(invocation, config, invocation.Auth, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            return Task.FromException(ex);
+        }
     }
 
     /// <summary>接口侧流式发送：绑定配置后把授权交给客户端内核统一执行。</summary>

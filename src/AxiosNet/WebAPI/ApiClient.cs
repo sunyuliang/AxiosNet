@@ -98,19 +98,27 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         "IL2072",
         Justification = "请求模型的运行时类型无法静态标注：AOT 下由 AxiosNet 源生成器在编译期写入成员取值委托，注册表命中后不再反射；"
             + "未命中且无动态代码时抛 AxiosAotMetadataException，不会反射模型成员（README「运行时与 AOT」）。")]
-    public async Task<AxiosResponse<TResponse>> RequestAsync<TResponse>(
+    public Task<AxiosResponse<TResponse>> RequestAsync<TResponse>(
         IApiRequest<TResponse> request,
         Action<AxiosConfig>? configure,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(request);
+        // 装配期异常按异步方法的时序交给返回的 Task：调用方 await 时才看到，不在这里同步抛出。
+        try
+        {
+            ArgumentNullException.ThrowIfNull(request);
 
-        var metadata = AcquireMetadata(request.GetType());
-        var config = BuildConfig(metadata, request, configure, cancellationToken);
+            var metadata = AcquireMetadata(request.GetType());
+            var config = BuildConfig(metadata, request, configure, cancellationToken);
 
-        var auth = ApplyAuthorization(metadata.Authorization, request, config);
+            var auth = ApplyAuthorization(metadata.Authorization, request, config);
 
-        return await SendAsync<TResponse>(request, config, auth, cancellationToken).ConfigureAwait(false);
+            return SendAsync<TResponse>(request, config, auth, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            return Task.FromException<AxiosResponse<TResponse>>(ex);
+        }
     }
 
     /// <summary>按请求模型拼出最终 URL（含路径替换、查询参数与 BaseAddress 合并），不发请求。可用于日志与签名；返回实际发送形态（已转义）。</summary>
@@ -170,14 +178,12 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         Action<AxiosConfig>? configure,
         CancellationToken cancellationToken)
     {
-        // 格式化钩子只有一个来源（客户端的实例默认值）：绑定参数时就要用它，所以这里先取定，再写进本次配置供发送期的表单 / multipart 使用。
+        // 格式化钩子只有一个来源（客户端的实例默认值）：绑定参数时就要用它，所以这里先取定。
+        // 配置从实例默认值的副本起步（与快捷方法同一条起点），本次请求项只覆盖它需要改的部分。
         var formatter = Axios.Defaults.Serialization.ValueText;
         var target = request.GetType().Name;
-        var config = new AxiosConfig
-        {
-            Method = metadata.Method,
-            Serialization = { ValueText = formatter }
-        };
+        var config = Axios.NewEffectiveConfig();
+        config.Method = metadata.Method;
 
         // 声明式装配失败统一归 ERR_BAD_REQUEST（路径 / 查询 / 头 / 正文同口径）。
         // 各步骤以状态元组传参，静态 lambda 无捕获。
@@ -256,6 +262,8 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
             config.ContentType = AxiosContentType.MultipartFormData;
         }
 
+        // 与快捷方法同一顺序：所有头都写完（含声明级删头的撤销）再执行删头。
+        AxiosClient.ApplyRemoveHeaders(config);
         return config;
     }
 
@@ -331,7 +339,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         AxiosConfig config,
         ApiCredentialProviderAdapter? auth,
         CancellationToken cancellationToken)
-        => GuardAsync(request, cancellationToken, () => SendWithAuthRetryAsync(request, config, auth, cancellationToken, () => Axios.RequestAsync<TResponse>(config)));
+        => SendCoreAsync(request, config, auth, cancellationToken, TypedSender<TResponse>.Send);
 
     /// <summary>发送请求并交付非泛型响应（正文按 <see cref="System.Text.Json.JsonElement"/>）；错误处理同 <see cref="SendAsync{TResponse}"/>。</summary>
     /// <param name="request">请求载荷。</param>
@@ -343,7 +351,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         AxiosConfig config,
         ApiCredentialProviderAdapter? auth,
         CancellationToken cancellationToken)
-        => GuardAsync(request, cancellationToken, () => SendWithAuthRetryAsync(request, config, auth, cancellationToken, () => Axios.SendInternalAsync(config, dataType: null, target: null)));
+        => SendCoreAsync(request, config, auth, cancellationToken, ResponseSenders.Untyped);
 
     /// <summary>只完成请求、不装配正文（接口声明返回 <c>Task</c>）；错误处理同 <see cref="SendAsync{TResponse}"/>。</summary>
     /// <param name="request">请求载荷。</param>
@@ -356,7 +364,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         ApiCredentialProviderAdapter? auth,
         CancellationToken cancellationToken)
     {
-        var response = await GuardAsync(request, cancellationToken, () => SendWithAuthRetryAsync(request, config, auth, cancellationToken, () => Axios.SendInternalAsync(config, typeof(void), target: null)))
+        var response = await SendCoreAsync(request, config, auth, cancellationToken, ResponseSenders.Void)
             .ConfigureAwait(false);
 
         // 显式把 responseType 配成 Stream 时正文归我们：Task 方法的调用方拿不到这个响应对象。
@@ -367,98 +375,144 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         }
     }
 
-    /// <summary>发送一次；401 且本次凭据由库托管时，刷新令牌后重放一次（重放同样只有一次）。</summary>
+    /// <summary>按返回类型缓存的发送委托：静态 lambda 无捕获，每请求只多一次间接调用。</summary>
+    private static class TypedSender<T>
+    {
+        /// <summary>按 <typeparamref name="T"/> 缓存的泛型发送委托。</summary>
+        internal static readonly Func<AxiosClient, AxiosConfig, Task<AxiosResponse<T>>> Send =
+            static (client, config) => client.SendPreparedTypedAsync<T>(config);
+    }
+
+    /// <summary>非泛型响应的发送委托：<c>null</c> = 内核默认形态，<c>typeof(void)</c> = 丢弃正文。</summary>
+    private static class ResponseSenders
+    {
+        /// <summary>内核默认形态（正文按 <see cref="System.Text.Json.JsonElement"/>）的发送委托。</summary>
+        internal static readonly Func<AxiosClient, AxiosConfig, Task<AxiosResponse>> Untyped =
+            static (client, config) => client.SendPreparedAsync(config);
+
+        /// <summary>只完成请求、丢弃正文（<c>typeof(void)</c>）的发送委托。</summary>
+        internal static readonly Func<AxiosClient, AxiosConfig, Task<AxiosResponse>> Void =
+            static (client, config) => client.SendPreparedAsync(config, typeof(void));
+    }
+
+    /// <summary>发送一次并在同一条链路里收尾：401 重放（仅托管凭据）、装配失败改判、错误工厂接管。</summary>
     /// <param name="request">请求载荷。</param>
     /// <param name="config">本次请求的生效配置。</param>
     /// <param name="auth">授权链路挂到凭据槽位的适配器。</param>
     /// <param name="cancellationToken">调用方的取消令牌。</param>
     /// <param name="send">真正发送的委托（重放时再调一次）。</param>
-    private async Task<TResult> SendWithAuthRetryAsync<TResult>(
+    private async Task<TResult> SendCoreAsync<TResult>(
         object request,
         AxiosConfig config,
         ApiCredentialProviderAdapter? auth,
         CancellationToken cancellationToken,
-        Func<Task<TResult>> send)
+        Func<AxiosClient, AxiosConfig, Task<TResult>> send)
     {
-        // 首次发送前只算一个布尔结论：默认路径（没 401）不能读正文——1KB 正文的快照会白付两份缓冲。
-        var bodyReplayable = CanPrepareReplay(config, auth);
-        var bodyIsContent = config.Body is HttpContent;
-
-        if (bodyReplayable && bodyIsContent)
-        {
-            // 不预读正文：让管线在 401 收尾保留正文，只有真要重放时才读。
-            config.RetainBodyContent = true;
-        }
-
-        HttpContent? retained = null;
-
         try
         {
-            return await send().ConfigureAwait(false);
-        }
-        catch (AxiosException error) when (CanReplayForAuth(error, auth, bodyReplayable))
-        {
-            // 401 收尾没有释放正文，快照在这里读；真正发送的正文可能经过 transformRequest，取失败配置里的那份。
-            retained = TakeRetainedBody(error);
+            // 首次发送前只算一个布尔结论：默认路径（没 401）不能读正文——1KB 正文的快照会白付两份缓冲。
+            var bodyReplayable = CanPrepareReplay(config, auth);
+            var bodyIsContent = config.Body is HttpContent;
 
-            // 重放是同一个逻辑请求：沿用上次实际发出的幂等键。
-            if (error.Config?.IdempotencyOrNull is { Enabled: true, GeneratedKey: { } key })
+            if (bodyReplayable && bodyIsContent)
             {
-                config.Resilience.Idempotency.Key = key;
+                // 不预读正文：让管线在 401 收尾保留正文，只有真要重放时才读。
+                config.RetainBodyContent = true;
             }
 
-            if (!await ReauthorizeAsync(auth!, config, cancellationToken).ConfigureAwait(false))
-            {
-                throw;
-            }
+            HttpContent? retained = null;
 
-            if (bodyIsContent)
+            try
             {
-                RequestBodySnapshot? snapshot = null;
-                if (retained is not null)
+                return await send(Axios, config).ConfigureAwait(false);
+            }
+            catch (AxiosException error) when (CanReplayForAuth(error, auth, bodyReplayable))
+            {
+                // 401 收尾没有释放正文，快照在这里读；真正发送的正文可能经过 transformRequest，取失败配置里的那份。
+                retained = TakeRetainedBody(error);
+
+                // 重放是同一个逻辑请求：沿用上次实际发出的幂等键。
+                if (error.Config?.IdempotencyOrNull is { Enabled: true, GeneratedKey: { } key })
                 {
-                    try
-                    {
-                        snapshot = await RequestBodySnapshot
-                            .TryCreateAsync(retained, ResolveMaxRequestBytes(config), cancellationToken)
-                            .ConfigureAwait(false);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        throw;
-                    }
-                    catch (Exception)
-                    {
-                        // 快照只是重放前置动作：读不出来就不重放，原样抛出本次 401。
-                        snapshot = null;
-                    }
+                    config.Resilience.Idempotency.Key = key;
                 }
 
-                // 读不出来或超 MaxRequestBytes（未知长度正文不提前拦截）：不截断正文，本次退成不可重放。
-                if (snapshot is null)
+                if (!await ReauthorizeAsync(auth!, config, cancellationToken).ConfigureAwait(false))
                 {
                     throw;
                 }
 
-                // 重放前换成一份新的内容实例：管线的保留缓冲不再复用。
-                config.Body = snapshot.CreateContent();
+                if (bodyIsContent)
+                {
+                    RequestBodySnapshot? snapshot = null;
+                    if (retained is not null)
+                    {
+                        try
+                        {
+                            snapshot = await RequestBodySnapshot
+                                .TryCreateAsync(retained, ResolveMaxRequestBytes(config), cancellationToken)
+                                .ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            throw;
+                        }
+                        catch (Exception)
+                        {
+                            // 快照只是重放前置动作：读不出来就不重放，原样抛出本次 401。
+                            snapshot = null;
+                        }
+                    }
+
+                    // 读不出来或超 MaxRequestBytes（未知长度正文不提前拦截）：不截断正文，本次退成不可重放。
+                    if (snapshot is null)
+                    {
+                        throw;
+                    }
+
+                    // 重放前换成一份新的内容实例：管线的保留缓冲不再复用。
+                    config.Body = snapshot.CreateContent();
+                }
+
+                // 第二次发送自己会释放新正文，不要再次保留。
+                config.RetainBodyContent = false;
+
+                return await send(Axios, config).ConfigureAwait(false);
+            }
+            catch (AxiosException error)
+            {
+                // 这次 401 不重放：把管线保留的正文取走，交给 finally 释放。
+                retained = TakeRetainedBody(error);
+                throw;
+            }
+            finally
+            {
+                config.RetainBodyContent = false;
+                retained?.Dispose();
+            }
+        }
+        catch (AxiosException error) when (error.IsRequestConstructionFailure)
+        {
+            // 查询展平阶段的取值 / 格式化失败：WebAPI 口径是「请求装配失败」，改判 ERR_BAD_REQUEST，原因保留原始异常。
+            throw RequestBindingErrors.Create(
+                error.Config,
+                request: null,
+                InvocationTargetName(request),
+                error.Cause ?? error);
+        }
+        catch (AxiosException error) when (ErrorFactory is not null && error.Response is not null)
+        {
+            // 只接管「服务端给了响应」的错误；工厂返回 null 时原样再抛。
+            var replacement = await ErrorFactory
+                .CreateAsync(new ApiErrorContext(request, error), cancellationToken)
+                .ConfigureAwait(false);
+
+            if (replacement is not null)
+            {
+                throw replacement;
             }
 
-            // 第二次发送自己会释放新正文，不要再次保留。
-            config.RetainBodyContent = false;
-
-            return await send().ConfigureAwait(false);
-        }
-        catch (AxiosException error)
-        {
-            // 这次 401 不重放：把管线保留的正文取走，交给 finally 释放。
-            retained = TakeRetainedBody(error);
             throw;
-        }
-        finally
-        {
-            config.RetainBodyContent = false;
-            retained?.Dispose();
         }
     }
 
@@ -541,41 +595,6 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         var next = await auth.RefreshAsync(config, cancellationToken).ConfigureAwait(false);
         return next is { Value: { } value }
             && !string.Equals(value, previousValue, StringComparison.Ordinal);
-    }
-
-    /// <summary>「服务端给了响应却是错误状态码」时交给 <see cref="ErrorFactory"/>；网络 / 超时 / 取消不经过工厂。</summary>
-    private async Task<TResult> GuardAsync<TResult>(
-        object request,
-        CancellationToken cancellationToken,
-        Func<Task<TResult>> send)
-    {
-        try
-        {
-            return await send().ConfigureAwait(false);
-        }
-        catch (AxiosException error) when (error.IsRequestConstructionFailure)
-        {
-            // 查询展平阶段的取值 / 格式化失败：WebAPI 口径是「请求装配失败」，改判 ERR_BAD_REQUEST，原因保留原始异常。
-            throw RequestBindingErrors.Create(
-                error.Config,
-                request: null,
-                InvocationTargetName(request),
-                error.Cause ?? error);
-        }
-        catch (AxiosException error) when (ErrorFactory is not null && error.Response is not null)
-        {
-            // 只接管「服务端给了响应」的错误；工厂返回 null 时原样再抛。
-            var replacement = await ErrorFactory
-                .CreateAsync(new ApiErrorContext(request, error), cancellationToken)
-                .ConfigureAwait(false);
-
-            if (replacement is not null)
-            {
-                throw replacement;
-            }
-
-            throw;
-        }
     }
 
     /// <summary>错误消息里的目标名：请求模型类型名，或接口调用的 <c>接口.方法</c>。</summary>

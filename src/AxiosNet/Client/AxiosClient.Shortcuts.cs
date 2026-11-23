@@ -408,8 +408,8 @@ public sealed partial class AxiosClient
         return config;
     }
 
-    /// <summary>本次请求生效配置的起点：实例默认值的副本，已标记 <see cref="AxiosConfig.EffectiveMerged"/>。</summary>
-    private AxiosConfig NewEffectiveConfig()
+    /// <summary>本次请求生效配置的起点：实例默认值的副本，已标记 <see cref="AxiosConfig.EffectiveMerged"/>。声明式门面共用这条起点。</summary>
+    internal AxiosConfig NewEffectiveConfig()
     {
         var config = Defaults.Clone();
         config.EffectiveMerged = true;
@@ -425,7 +425,7 @@ public sealed partial class AxiosClient
     }
 
     /// <summary>按 <see cref="AxiosConfig.RemoveHeaders"/> 删头，必须在 configure 写完头之后执行。</summary>
-    private static void ApplyRemoveHeaders(AxiosConfig config)
+    internal static void ApplyRemoveHeaders(AxiosConfig config)
     {
         if (config.HasHeaders && config.RemoveHeadersSnapshot is { } removeHeaders)
         {
