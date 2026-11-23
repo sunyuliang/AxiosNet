@@ -202,7 +202,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             var effective = (poolOptions ?? Options.Pool ?? new ConnectionPoolOptions()).Clone();
 
             // 池选项非法时在构造期带配置抛错。
-            HttpConnectionPool.ValidateOptions(effective, Defaults);
+            ConnectionPoolOptionsValidator.Validate(effective, Defaults);
 
             // maxRedirects：0 = 不跟随重定向，> 0 = 覆盖池默认上限；按 *Set 判断是否显式配置。
             if (Options.MaxRedirectsSet)

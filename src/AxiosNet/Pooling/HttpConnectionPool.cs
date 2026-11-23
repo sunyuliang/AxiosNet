@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using AxiosNet.Internal.Support;
 using AxiosNet.Telemetry;
 
 namespace AxiosNet.Pooling;
@@ -46,7 +45,7 @@ public sealed class HttpConnectionPool : IDisposable
     {
         // 克隆：调用方之后修改自己持有的 options 不影响已建成的池。
         _options = (options ?? new ConnectionPoolOptions()).Clone();
-        ValidateOptions(_options);
+        ConnectionPoolOptionsValidator.Validate(_options);
 
         _transports = new Dictionary<string, ConnectionTransportOptions>(StringComparer.Ordinal);
         foreach (var pair in _options.Transports)
@@ -78,201 +77,6 @@ public sealed class HttpConnectionPool : IDisposable
         // 存活池数（进程级水位）：先校验后计数。
         AxiosTelemetry.Dispatch.EnterPool();
     }
-
-    /// <summary>
-    /// 构造期校验：这些值非法时统一收敛到 <c>ERR_BAD_OPTION_VALUE</c>。
-    /// </summary>
-    internal static void ValidateOptions(ConnectionPoolOptions options, AxiosConfig? config = null)
-    {
-        if (options.MaxConnectionsPerServer <= 0)
-        {
-            throw AxiosException.InvalidOption($"MaxConnectionsPerServer 必须大于 0（当前 {options.MaxConnectionsPerServer}）。", config);
-        }
-
-#if NETSTANDARD2_0
-        // 兼容资产的默认 Handler 是 HttpClientHandler：下列连接级选项没有可映射的位置，设置了也不会生效。
-        // 在构造期显式拒绝（默认值放行），避免「配了却没反应」的静默失效。
-        // 只有全局 HandlerFactory 才接管默认档；命名传输档的工厂只作用于该档（见 PooledEndpoint.CreateHandler），
-        // 不能拿它给默认档豁免，否则默认档上这些选项依旧静默失效。
-        if (options.HandlerFactory is null)
-        {
-            if (options.PooledConnectionLifetime != ConnectionPoolOptions.DefaultPooledConnectionLifetime)
-            {
-                throw UnmappedOnCompatibilityAsset("PooledConnectionLifetime", config);
-            }
-
-            if (options.PooledConnectionIdleTimeout != ConnectionPoolOptions.DefaultPooledConnectionIdleTimeout)
-            {
-                throw UnmappedOnCompatibilityAsset("PooledConnectionIdleTimeout", config);
-            }
-
-            if (options.ConnectTimeout != ConnectionPoolOptions.DefaultConnectTimeout)
-            {
-                throw UnmappedOnCompatibilityAsset("ConnectTimeout", config);
-            }
-
-            if (!options.EnableMultipleHttp2Connections)
-            {
-                throw UnmappedOnCompatibilityAsset("EnableMultipleHttp2Connections", config);
-            }
-
-            if (options.KeepAlivePingDelay != Timeout.InfiniteTimeSpan
-                || options.KeepAlivePingTimeout != ConnectionPoolOptions.DefaultKeepAlivePingTimeout)
-            {
-                throw UnmappedOnCompatibilityAsset("KeepAlivePingDelay / KeepAlivePingTimeout", config);
-            }
-        }
-#endif
-
-        if (IsNegativeLimit(options.PooledConnectionLifetime))
-        {
-            throw AxiosException.InvalidOption("PooledConnectionLifetime 不能为负（0 表示连接不复用；不限生命周期请用 Timeout.InfiniteTimeSpan）。", config);
-        }
-
-        if (IsNegativeLimit(options.PooledConnectionIdleTimeout))
-        {
-            throw AxiosException.InvalidOption("PooledConnectionIdleTimeout 不能为负（0 表示不保留空闲连接；不限请用 Timeout.InfiniteTimeSpan）。", config);
-        }
-
-        if (options.ConnectTimeout <= TimeSpan.Zero && options.ConnectTimeout != Timeout.InfiniteTimeSpan)
-        {
-            throw AxiosException.InvalidOption("ConnectTimeout 必须大于 0；不限请用 Timeout.InfiniteTimeSpan。", config);
-        }
-
-        // 上限是 int.MaxValue 毫秒（约 24.85 天）。
-        if (options.ConnectTimeout > TimeSpan.FromMilliseconds(int.MaxValue))
-        {
-            throw AxiosException.InvalidOption(
-                $"ConnectTimeout（{options.ConnectTimeout}）超出底层 Handler 上限（约 24.85 天）：请调小，"
-                + "或不限请用 Timeout.InfiniteTimeSpan。",
-                config);
-        }
-
-        // SocketsHttpHandler 只接受正数：没有「0 表示不限制」的写法。
-        if (options.MaxResponseHeadersLength <= 0)
-        {
-            throw AxiosException.InvalidOption(
-                $"MaxResponseHeadersLength 必须大于 0（当前 {options.MaxResponseHeadersLength} KB）："
-                + "它是响应头的绝对上限；需要更大余量请设成更大的 KB 值。", config);
-        }
-
-        if (options.MaxAutomaticRedirections <= 0)
-        {
-            throw AxiosException.InvalidOption("MaxAutomaticRedirections 必须大于 0；不跟随重定向请设 AllowAutoRedirect = false。", config);
-        }
-
-        // Cookie 容器容量三项只在真的建容器时才有意义：没开 UseCookies 时不校验，避免关掉 cookie 后还被无关项拦下。
-        if (options.UseCookies)
-        {
-            if (options.CookieCapacity <= 0)
-            {
-                throw AxiosException.InvalidOption($"CookieCapacity 必须大于 0（当前 {options.CookieCapacity}）。", config);
-            }
-
-            if (options.CookiePerDomainCapacity <= 0 || options.CookiePerDomainCapacity > options.CookieCapacity)
-            {
-                throw AxiosException.InvalidOption(
-                    $"CookiePerDomainCapacity 必须在 1 到 CookieCapacity（{options.CookieCapacity}）之间（当前 {options.CookiePerDomainCapacity}）："
-                    + "只调小总容量时请一并调小单域上限。", config);
-            }
-
-            if (options.CookieMaxCookieSize <= 0)
-            {
-                throw AxiosException.InvalidOption($"CookieMaxCookieSize 必须大于 0（当前 {options.CookieMaxCookieSize}）。", config);
-            }
-        }
-
-        // DecompressionMethods.All 在 BCL 里是 -1（每一位都亮），属合法的「全开」；
-        // 超出 gzip / deflate / br 的位按配置错误拦下。
-#if NETSTANDARD2_0
-        // 兼容资产没有 Brotli / All：合法位只有 gzip / deflate，直接按位判定。
-        const DecompressionMethods knownDecompression =
-            DecompressionMethods.GZip | DecompressionMethods.Deflate;
-        const string allowedDecompression = "GZip / Deflate 的任意组合";
-        var requestedDecompression = options.Decompression;
-#else
-        const DecompressionMethods knownDecompression =
-            DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli;
-        const string allowedDecompression = "GZip / Deflate / Brotli 的组合或 All";
-        var requestedDecompression = options.Decompression == DecompressionMethods.All
-            ? knownDecompression
-            : options.Decompression;
-#endif
-        if ((requestedDecompression & ~knownDecompression) != 0)
-        {
-            throw AxiosException.InvalidOption(
-                $"Decompression 含不支持的算法（当前 {options.Decompression}）：只允许 {allowedDecompression}，"
-                + "一个都不解压请设为 None（或把 AutomaticDecompression 设为 false）。", config);
-        }
-
-        if (IsNegativeLimit(options.IdleHandlerLifetime))
-        {
-            throw AxiosException.InvalidOption("IdleHandlerLifetime 不能为负（0 表示任何空闲节点立即可被驱逐；不限请用 Timeout.InfiniteTimeSpan）。", config);
-        }
-
-        if (options.EvictionInterval < TimeSpan.Zero)
-        {
-            throw AxiosException.InvalidOption("EvictionInterval 不能为负（0 表示不启用后台驱逐定时器；要永不驱逐请设为 0 并手动调用 EvictIdleEndpoints）。", config);
-        }
-
-        // Timer 的 dueTime / period 上限是 uint.MaxValue-1 毫秒（约 49.7 天）。
-        if (options.EvictionInterval > TimeSpan.FromMilliseconds(uint.MaxValue - 1))
-        {
-            throw AxiosException.InvalidOption($"EvictionInterval（{options.EvictionInterval}）超出后台计时器上限（约 49.7 天）：请调小，或设为 0 改用手动驱逐。", config);
-        }
-
-        // 0 不是「不 ping」而是「立刻 ping」：不 ping 只有 InfiniteTimeSpan 一种写法。
-        if (options.KeepAlivePingDelay <= TimeSpan.Zero && options.KeepAlivePingDelay != Timeout.InfiniteTimeSpan)
-        {
-            throw AxiosException.InvalidOption("KeepAlivePingDelay 必须大于 0；不发 keep-alive ping 请设为 Timeout.InfiniteTimeSpan。", config);
-        }
-
-        if (options.KeepAlivePingTimeout <= TimeSpan.Zero && options.KeepAlivePingTimeout != Timeout.InfiniteTimeSpan)
-        {
-            throw AxiosException.InvalidOption("KeepAlivePingTimeout 必须大于 0；不因 ping 超时断连请设为 Timeout.InfiniteTimeSpan。", config);
-        }
-
-        // 两者都由底层计时器表达，上限与 CancelAfter 同一口径（见 Timeouts.Max）。
-        var pingLimit = Timeouts.Max;
-        if (options.KeepAlivePingDelay > pingLimit || options.KeepAlivePingTimeout > pingLimit)
-        {
-            throw AxiosException.InvalidOption(
-                $"KeepAlivePingDelay / KeepAlivePingTimeout 超出计时器上限（约 49.7 天）：请调小，"
-                + "或不发 ping 请设为 Timeout.InfiniteTimeSpan。",
-                config);
-        }
-
-#if !NETSTANDARD2_0
-        // 枚举只认两个值，别的值底层会当成「不 ping」。兼容资产没有该枚举与 h2 ping 能力，整块校验不适用。
-        if (options.KeepAlivePingPolicy is not (HttpKeepAlivePingPolicy.WithActiveRequests or HttpKeepAlivePingPolicy.Always))
-        {
-            throw AxiosException.InvalidOption(
-                $"KeepAlivePingPolicy 取值非法（当前 {(int)options.KeepAlivePingPolicy}）："
-                + "只支持 WithActiveRequests（只在有在途请求时 ping）与 Always。",
-                config);
-        }
-#endif
-    }
-
-    /// <summary>是否为非法的负时长（<see cref="Timeout.InfiniteTimeSpan"/> 表示「不限」，放行）。</summary>
-    private static bool IsNegativeLimit(TimeSpan value)
-        => value < TimeSpan.Zero && value != Timeout.InfiniteTimeSpan;
-
-#if NETSTANDARD2_0
-    /// <summary>
-    /// 兼容资产上「没有对应配置入口」的池选项统一报错：与其静默忽略，不如让调用方换目标框架或换 Handler。
-    /// </summary>
-    /// <param name="optionName">被拒绝的选项名（用于消息定位）。</param>
-    /// <param name="config">当前配置（可为 <c>null</c>，用于异常上下文）。</param>
-    /// <returns>可直接抛出的配置错误。</returns>
-    private static AxiosException UnmappedOnCompatibilityAsset(string optionName, AxiosConfig? config)
-        => AxiosException.InvalidOption(
-            $"{optionName} 在 netstandard2.0 兼容资产上无法生效：该资产由 HttpClientHandler 承载，"
-            + "没有连接生命周期 / 建连超时 / h2 ping 的配置入口。请让消费方运行 .NET 6+ 以取到 net6.0 / net8.0 资产，"
-            + "或用 ConnectionPoolOptions.HandlerFactory 接管默认档 Handler（命名传输档的工厂只作用于该档）；"
-            + "空闲节点驱逐可改用 IdleHandlerLifetime（该选项在兼容资产上有效）。",
-            config);
-#endif
 
     // ---- 命名共享池 ----
 
