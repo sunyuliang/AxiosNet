@@ -3,10 +3,10 @@ using AxiosNet.Comparison.Models;
 namespace AxiosNet.Comparison.Targets;
 
 /// <summary>
-/// 被测对象：AxiosNet 默认实例（连接池 + 默认配置，不做任何调优）。
+/// 被测对象：AxiosNet 强类型入口（<c>PostAsync&lt;User&gt;</c>）+ 默认实例（连接池 + 默认配置，不做任何调优）。
 /// 与其它实现的差别正是「这一层管线」——同一回环服务器、同一负载、同一份正文。
 /// </summary>
-internal sealed class AxiosNetTarget : ITarget
+internal sealed class AxiosNetTarget : IAxiosNetTarget
 {
     private readonly AxiosClient _client;
 
@@ -16,6 +16,8 @@ internal sealed class AxiosNetTarget : ITarget
     }
 
     public string Name => "AxiosNet";
+
+    public ApiStyle? Style => ApiStyle.Typed;
 
     /// <summary>为一个 worker 开一条会话；底层客户端与连接池都在实例上，各 worker 共用。</summary>
     public ITargetSession OpenSession() => new Session(_client);

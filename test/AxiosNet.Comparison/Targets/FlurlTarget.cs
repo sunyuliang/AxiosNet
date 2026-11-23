@@ -21,6 +21,8 @@ internal sealed class FlurlTarget : ITarget
 
     public string Name => "Flurl";
 
+    public ApiStyle? Style => ApiStyle.Typed;
+
     /// <summary>为一个 worker 开一条会话；Flurl 客户端同样在实例上共享。</summary>
     public ITargetSession OpenSession() => new Session(_client, _url);
 

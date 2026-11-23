@@ -23,6 +23,9 @@ internal sealed class RawSocketTarget : ITarget
 
     public string Name => "RawSocket";
 
+    /// <summary>裸 socket 只是服务端基线，不经任何 HTTP 客户端的 API 形态。</summary>
+    public ApiStyle? Style => null;
+
     /// <summary>为一个 worker 开一条独占连接：裸 socket 基线按「一条会话 = 一条连接」，没有连接池。</summary>
     public ITargetSession OpenSession() => new Session(_endpoint, _request);
 

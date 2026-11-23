@@ -24,6 +24,11 @@ internal sealed class Options
     /// <summary>参与对比的实现（已归一成 <see cref="LibraryCatalog"/> 里的标准名）；RawSocket 基线由目录自动追加。</summary>
     public IReadOnlyList<string> Libraries { get; private set; } = LibraryCatalog.DefaultLibraries;
 
+    /// <summary>
+    /// 本次对比使用的 API 形态（<c>--api-style</c>），按选择顺序各跑一遍；空表示未指定，由入口在启动时交互多选。
+    /// </summary>
+    public IReadOnlyList<ApiStyle> Styles { get; private set; } = [];
+
     /// <summary>AxiosNet 吞吐 / HttpClient 吞吐的下限；null 表示不做门禁。</summary>
     public double? MinRatio { get; private set; }
 
@@ -81,6 +86,10 @@ internal sealed class Options
                 case "--libs":
                     options.Libraries = ParseLibraries(Value());
                     break;
+                case "--api-style":
+                case "--api-styles":
+                    options.Styles = ParseStyles(name, Value());
+                    break;
                 case "--min-ratio":
                     options.MinRatio = ParseDouble(name, Value(), min: 0);
                     break;
@@ -125,6 +134,13 @@ internal sealed class Options
               --cooldown <秒>          预热后等待分层编译（默认 2）
               --libs <a,b,...>         参与对比的实现（默认 HttpClient,Refit,RestSharp,Flurl,AxiosNet）
                                        RawSocket 会自动追加为服务端基线
+              --api-style <形态,...>   对比使用的 API 形态，可多选（默认不传：启动后交互多选）
+                                       多选时按输入顺序各跑一遍，每个形态各自出一份报告
+                                       typed / 强类型：client.PostAsync<User>(route, model)
+                                       model / 模型式：client.RequestAsync(new SaveUserRequest { ... })
+                                       interface / 接口式：client.Create<ISaveUserApi>().SaveUserAsync(...)
+                                       也认 1 / 2 / 3 与 all；不支持所选形态的实现按自身支持的形态参与
+                                       （表里「模式」列标注）
               --min-ratio <比值>       RPS 门禁：AxiosNet / HttpClient 低于该值退出码 1（0.85 = 85%）
               --max-alloc-ratio <x>    分配门禁：AxiosNet / HttpClient 净分配高于该值退出码 1
               --min-cpu-share <比值>   CPU 份额门槛（默认 0.42）：低于它时吞吐/比值不可判定，
@@ -134,15 +150,19 @@ internal sealed class Options
               -h, --help               显示本帮助
 
             退出码：0 正常；1 门禁未通过；2 存在失败请求（数字不可信）；3 参数错误。
+                    多选形态时取其中最严重的一档（2 优先于 1）。
 
             示例：
-              dotnet run -c Release
+              dotnet run -c Release -- --api-style model
+              dotnet run -c Release -- --api-style typed,model,interface --tag all-styles
               dotnet run -c Release -- --rounds 7 --min-ratio 0.85 --max-alloc-ratio 2
-              dotnet run -c Release -- --libs AxiosNet,HttpClient --duration 2 --tag quick
+              dotnet run -c Release -- --libs AxiosNet,HttpClient --api-style "1 3" --duration 2 --tag quick
 
             口径提示：
               · 每轮轮转实现顺序；预热后用 RawSocket 校准机器状态（最近 3 窗 RPS 极差 ≤ 15% 才开测）。
               · 负载是「POST 一个 User 负载并读回」：延迟与分配都含请求体序列化与响应反序列化。
+              · AxiosNet 三种形态都支持；其余实现只有一种入口，按各自支持的形态参与对比。
+              · 多选形态时按输入顺序逐个跑完整流程（各自预热 + 校准 + 轮转测量），跨形态的绝对值来自不同窗口。
               · 分配是进程级（含同进程回环服务端），报告里的「净分配」已减掉 RawSocket 基线。
               · 汇总列是轮中位数；另附「离散度」表给出各轮最小~最大与 RPS 波动。
               · CPU 份额低于 --min-cpu-share 的行在表里带 *：该实现吞吐与比值不可判定。
@@ -171,6 +191,13 @@ internal sealed class Options
             && value >= min
             ? value
             : throw new ArgumentException($"{name} 需要 ≥ {min:0.##} 的有限数，收到「{text}」。");
+
+    /// <summary>解析 API 形态多选：逗号 / 空格分隔，<see cref="ApiStyles.TryParseSelection"/> 同时认英文、中文名与 1 / 2 / 3。</summary>
+    private static IReadOnlyList<ApiStyle> ParseStyles(string name, string text)
+        => ApiStyles.TryParseSelection(text, out var styles)
+            ? styles
+            : throw new ArgumentException(
+                $"{name} 需要 typed / model / interface 中的一个或多个（逗号或空格分隔，也可写 1 / 2 / 3、all），收到「{text}」。");
 
     /// <summary>解析逗号分隔的实现名列表并逐个规范化；有未知名字时报错并列出可选值。</summary>
     private static IReadOnlyList<string> ParseLibraries(string text)

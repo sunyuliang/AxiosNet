@@ -24,6 +24,8 @@ internal sealed class RefitTarget : ITarget
 
     public string Name => "Refit";
 
+    public ApiStyle? Style => ApiStyle.Interface;
+
     /// <summary>为一个 worker 开一条会话；Refit 生成的接口只借用共享的 <see cref="HttpClient"/>。</summary>
     public ITargetSession OpenSession() => new Session(_api);
 

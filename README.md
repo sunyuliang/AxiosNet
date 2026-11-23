@@ -2803,6 +2803,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 跨实现横向对比见 [`test/AxiosNet.Comparison`](test/AxiosNet.Comparison)：
 
 - 同一回环服务器、同一负载（默认 8 并发 × 2s × 6 轮、每轮轮转顺序），各实现用惯用 API 把同一个 `User` 负载序列化上送并读回，对比裸 `HttpClient` / Refit / RestSharp / Flurl / AxiosNet 的 RPS、p50 / p99 / max、每请求分配与每请求 CPU 成本，输出控制台表 + Markdown / CSV 报告。
+- AxiosNet 可选一种或多种入口参与对比（`--api-style typed|model|interface`，可多选、按顺序逐个跑；不传时启动后交互多选）：强类型 `PostAsync<User>`、模型式 `RequestAsync(请求模型)`、接口式 `Create<T>()` 代理；其余实现只有一种入口，按各自支持的形态参与，报告「模式」列标注每行实际形态。
 - 加 `--min-ratio` / `--max-alloc-ratio` 可当回归门禁；不设阈值时只出数字、不判定。
 - 结论版（功能 / 性能 / 易用性 + 选型建议）见 [`docs/http-client-comparison.md`](docs/http-client-comparison.md)。
 

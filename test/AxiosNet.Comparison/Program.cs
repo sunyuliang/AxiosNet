@@ -10,7 +10,7 @@ using AxiosNet.Tests.Infrastructure;
 
 return await ComparisonProgram.RunAsync(args);
 
-/// <summary>对比程序入口：解析参数 → 起回环服务器 → 预热与校准 → 轮转测量 → 汇总导出 → 门禁判定。</summary>
+/// <summary>对比程序入口：解析参数 →（未传 --api-style 时交互多选形态）→ 逐个形态跑完整流程 → 跨形态小结 → 汇总退出码。</summary>
 internal static class ComparisonProgram
 {
     /// <summary>跑完整流程并返回进程退出码；任何一处统计不可信（有失败请求、服务器少收请求）都直接反映到退出码上。</summary>
@@ -48,24 +48,70 @@ internal static class ComparisonProgram
         CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
         CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
 
+        var styles = options.Styles.Count > 0 ? options.Styles : SelectApiStyles();
+        var runs = new List<(ApiStyle Style, SummarySet Set)>(styles.Count);
+        var codes = new List<int>(styles.Count);
+
+        for (var index = 0; index < styles.Count; index++)
+        {
+            var apiStyle = styles[index];
+
+            if (styles.Count > 1)
+            {
+                Console.WriteLine();
+                Console.WriteLine($"===== API 形态 {index + 1}/{styles.Count}：{ApiStyles.Describe(apiStyle)} =====");
+                Console.WriteLine();
+            }
+
+            // 多选时把形态写进报告文件名，否则同一 --tag 下多份报告只差时间戳、事后分不清哪份是哪种形态。
+            var (set, code) = await RunOneAsync(options, apiStyle, styles.Count > 1 ? ApiStyles.Token(apiStyle) : null);
+            runs.Add((apiStyle, set));
+            codes.Add(code);
+        }
+
+        if (runs.Count > 1)
+        {
+            Console.WriteLine();
+            Console.WriteLine("跨形态小结（每行来自各自独立的测量窗口，绝对值不可跨行直接相减）：");
+            Console.WriteLine(Report.ModeComparisonTable(runs));
+            Console.WriteLine();
+        }
+
+        return AggregateExitCode(codes);
+    }
+
+    /// <summary>跑一个形态的完整流程：起回环服务器 → 预热与校准 → 轮转测量 → 汇总导出 → 门禁判定。</summary>
+    private static async Task<(SummarySet Set, int Code)> RunOneAsync(
+        Options options,
+        ApiStyle apiStyle,
+        string? styleSuffix)
+    {
         var started = DateTimeOffset.Now;
+        var spec = new RunSpec(
+            options.Concurrency,
+            options.DurationSeconds,
+            options.Rounds,
+            options.WarmupSeconds,
+            apiStyle);
 
         // 服务器与 ConcurrencyPerformanceTests 同一份 PerfHttpServer：两端口径能互相印证。
         await using var server = PerfHttpServer.Start(Payloads.UserJson.ToArray());
-        var targets = LibraryCatalog.Create(options.Libraries, server.Url);
-        var runner = new LoadRunner(options.Concurrency);
+        var targets = LibraryCatalog.Create(options.Libraries, server.Url, apiStyle);
+        var runner = new LoadRunner(spec.Concurrency);
 
         try
         {
             Console.WriteLine($"回环服务器：{server.Url}（正文 {Payloads.UserJson.Length} B，HTTP/1.1 keep-alive）");
             Console.WriteLine(
-                $"负载：{options.Concurrency} 并发 × {options.DurationSeconds:0.#}s × {options.Rounds} 轮，"
-                + $"每实现预热 {options.WarmupSeconds:0.#}s；每轮轮转实现顺序");
+                $"API 形态：{ApiStyles.Describe(apiStyle)}（{Report.DescribeStyleFallbacks(targets, apiStyle)}）");
+            Console.WriteLine(
+                $"负载：{spec.Concurrency} 并发 × {spec.DurationSeconds:0.#}s × {spec.Rounds} 轮，"
+                + $"每实现预热 {spec.WarmupSeconds:0.#}s；每轮轮转实现顺序");
             Console.WriteLine();
 
             foreach (var target in targets)
             {
-                var warmup = await runner.RunAsync(target, TimeSpan.FromSeconds(options.WarmupSeconds));
+                var warmup = await runner.RunAsync(target, TimeSpan.FromSeconds(spec.WarmupSeconds));
                 Console.WriteLine($"  预热 {target.Name,-12} {warmup.Completed,10:N0} 请求{DescribeWindow(warmup)}");
             }
 
@@ -77,20 +123,20 @@ internal static class ComparisonProgram
 
             // 机器刚跑热时频率/调度还在爬坡（实测前两轮吞吐可以只有稳态的一半），
             // 先用服务端基线连续量几窗，稳定了才开测，否则「谁排在第一轮谁吃亏」。
-            await CalibrateAsync(runner, targets.OfType<RawSocketTarget>().First(), options.DurationSeconds);
+            await CalibrateAsync(runner, targets.OfType<RawSocketTarget>().First(), spec.DurationSeconds);
 
             Console.WriteLine();
 
             var windows = targets.ToDictionary(t => t, _ => new List<WindowResult>());
             var serverBefore = server.Requests;
-            for (var round = 0; round < options.Rounds; round++)
+            for (var round = 0; round < spec.Rounds; round++)
             {
                 var order = Rotate(targets, round);
                 var line = new StringBuilder($"第 {round + 1} 轮：");
 
                 foreach (var target in order)
                 {
-                    var result = await runner.RunAsync(target, TimeSpan.FromSeconds(options.DurationSeconds));
+                    var result = await runner.RunAsync(target, TimeSpan.FromSeconds(spec.DurationSeconds));
                     windows[target].Add(result);
                     line.Append($"  {target.Name} {result.Rps:N0} req/s / p99 {result.P99Microseconds:N0} µs");
                     if (result.Errors > 0)
@@ -128,12 +174,12 @@ internal static class ComparisonProgram
             }
 
             Console.WriteLine();
-            foreach (var path in Export(set, options, started, server.Requests))
+            foreach (var path in Export(set, spec, options, started, server.Requests, styleSuffix))
             {
                 Console.WriteLine($"报告：{path}");
             }
 
-            return Evaluate(set, options);
+            return (set, Evaluate(set, options));
         }
         finally
         {
@@ -141,6 +187,62 @@ internal static class ComparisonProgram
             {
                 target.Dispose();
             }
+        }
+    }
+
+    /// <summary>合并多个形态的退出码：有失败请求（2）优先于门禁未过（1），都没命中才是 0。</summary>
+    private static int AggregateExitCode(IReadOnlyList<int> codes)
+    {
+        if (codes.Contains(2))
+        {
+            return 2;
+        }
+
+        return codes.Contains(1) ? 1 : 0;
+    }
+
+    /// <summary>未传 <c>--api-style</c> 时的交互多选：标准输入被重定向（管道 / CI）时按默认强类型继续，不等待输入。</summary>
+    private static IReadOnlyList<ApiStyle> SelectApiStyles()
+    {
+        Console.WriteLine("未指定 --api-style，请选择本次对比使用的 API 形态（可多选；AxiosNet 三种都支持）：");
+        foreach (var option in ApiStyles.All)
+        {
+            Console.WriteLine($"  {(int)option + 1}) {ApiStyles.Describe(option)}  {ApiStyles.Example(option)}");
+        }
+
+        var styles = ChooseApiStyles();
+        Console.WriteLine(
+            $"  已选：{string.Join("、", styles.Select(style => ApiStyles.Describe(style)))}"
+            + (styles.Count > 1 ? "（按此顺序各跑一遍）" : string.Empty));
+        Console.WriteLine();
+        return styles;
+    }
+
+    /// <summary>读取菜单输入：编号或形态名都可以多选（空格 / 逗号分隔），回车取默认强类型。</summary>
+    private static IReadOnlyList<ApiStyle> ChooseApiStyles()
+    {
+        if (Console.IsInputRedirected)
+        {
+            Console.WriteLine($"  标准输入被重定向，按默认「{ApiStyles.Describe(ApiStyle.Typed)}」运行。");
+            return [ApiStyle.Typed];
+        }
+
+        while (true)
+        {
+            Console.Write(
+                $"  输入编号或名称，可多选（如 1 3 / typed,interface；回车默认 1 = {ApiStyles.Describe(ApiStyle.Typed)}）：");
+            var line = Console.ReadLine();
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                return [ApiStyle.Typed];
+            }
+
+            if (ApiStyles.TryParseSelection(line, out var styles))
+            {
+                return styles;
+            }
+
+            Console.WriteLine($"  无法识别「{line.Trim()}」，请输入 1 / 2 / 3 的组合或 all。");
         }
     }
 
@@ -196,21 +298,33 @@ internal static class ComparisonProgram
             ? $"（{window.Errors} 个失败：{window.FirstError?.GetType().Name}）"
             : string.Empty;
 
-    /// <summary>把本轮结果导出到输出目录：按启动时间戳命名，返回写出的文件路径。</summary>
+    /// <summary>把本轮结果导出到输出目录：按启动时间戳命名，返回写出的文件路径。多形态时 <paramref name="styleSuffix"/> 接在 tag 之后。</summary>
     private static IEnumerable<string> Export(
         SummarySet set,
+        RunSpec spec,
         Options options,
         DateTimeOffset started,
-        long serverRequests)
+        long serverRequests,
+        string? styleSuffix)
     {
         var directory = Path.GetFullPath(options.OutputDirectory, Environment.CurrentDirectory);
         Directory.CreateDirectory(directory);
 
         var stamp = started.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
         var tag = SanitizeTag(options.Tag);
-        var name = tag is null
-            ? $"comparison-{stamp}"
-            : $"comparison-{tag}-{stamp}";
+
+        var name = "comparison";
+        if (tag is not null)
+        {
+            name += "-" + tag;
+        }
+
+        if (styleSuffix is not null)
+        {
+            name += "-" + styleSuffix;
+        }
+
+        name += "-" + stamp;
 
         var markdownPath = Path.Combine(directory, name + ".md");
         var csvPath = Path.Combine(directory, name + ".csv");
@@ -219,10 +333,7 @@ internal static class ComparisonProgram
             markdownPath,
             Report.BuildMarkdown(
                 set,
-                options.Concurrency,
-                options.DurationSeconds,
-                options.Rounds,
-                options.WarmupSeconds,
+                spec,
                 started,
                 DescribeEnvironment(),
                 serverRequests,

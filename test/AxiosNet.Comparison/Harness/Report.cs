@@ -115,7 +115,7 @@ internal sealed class SummarySet
         // 用户可以用 --libs 把 RawSocket 排在任意位置；展示顺序固定为「客户端在前、基线在最后」。
         Targets = targets.Where(t => !ReferenceEquals(t, Baseline)).Append(Baseline).ToArray();
         HttpClient = Targets.SingleOrDefault(t => t.Target is HttpClientTarget);
-        AxiosNet = Targets.SingleOrDefault(t => t.Target is AxiosNetTarget);
+        AxiosNet = Targets.SingleOrDefault(t => t.Target is IAxiosNetTarget);
 
         foreach (var target in Targets)
         {
@@ -146,7 +146,7 @@ internal static class Report
     public static string ConsoleTable(SummarySet set, double minCpuShare)
     {
         string[] headers =
-            ["实现", "RPS", "p50 (µs)", "p99 (µs)", "max (µs)", "分配/请求", "净分配/请求", "CPU", "CPU µs/请求", "净 CPU µs/请求", "vs HttpClient"];
+            ["实现", "模式", "RPS", "p50 (µs)", "p99 (µs)", "max (µs)", "分配/请求", "净分配/请求", "CPU", "CPU µs/请求", "净 CPU µs/请求", "vs HttpClient"];
 
         var rows = new List<string[]>();
         foreach (var summary in set.Targets)
@@ -158,6 +158,7 @@ internal static class Report
             rows.Add(
             [
                 summary.Target.Name,
+                ApiStyles.Describe(summary.Target.Style),
                 summary.Rps.ToString("N0", CultureInfo.InvariantCulture),
                 summary.P50Microseconds.ToString("N0", CultureInfo.InvariantCulture),
                 summary.P99Microseconds.ToString("N0", CultureInfo.InvariantCulture),
@@ -203,13 +204,10 @@ internal static class Report
         return FormatTable(headers, rows);
     }
 
-    /// <summary>Markdown 报告：先写清口径（并发/轮数/分配是进程级），再给汇总表、CPU 门槛判定、离散度与每轮原始 RPS，便于贴进 PR 或归档。</summary>
+    /// <summary>Markdown 报告：先写清口径（并发/轮数/API 形态/分配是进程级），再给汇总表、CPU 门槛判定、离散度与每轮原始 RPS，便于贴进 PR 或归档。</summary>
     public static string BuildMarkdown(
         SummarySet set,
-        int concurrency,
-        double durationSeconds,
-        int rounds,
-        double warmupSeconds,
+        RunSpec spec,
         DateTimeOffset started,
         string environment,
         long serverRequests,
@@ -220,15 +218,20 @@ internal static class Report
         md.AppendLine();
         md.AppendLine($"- 时间：{started:yyyy-MM-dd HH:mm:ss zzz}");
         md.AppendLine($"- 环境：{environment}");
-        md.AppendLine($"- 负载：每实现 {concurrency} 并发 × {durationSeconds:0.#}s × {rounds} 轮（每轮轮转实现顺序），预热 {warmupSeconds:0.#}s；同一回环服务器、同一个 `User` 负载（POST 上送并读回）。");
+        md.AppendLine(
+            $"- 负载：每实现 {spec.Concurrency} 并发 × {spec.DurationSeconds:0.#}s × {spec.Rounds} 轮（每轮轮转实现顺序），"
+            + $"预热 {spec.WarmupSeconds:0.#}s；同一回环服务器、同一个 `User` 负载（POST 上送并读回）。");
+        md.AppendLine(
+            $"- API 形态：{ApiStyles.Describe(spec.ApiStyle)}（{DescribeStyleFallbacks(set.Targets.Select(t => t.Target), spec.ApiStyle)}）；"
+            + "表内「模式」列是各行实际使用的形态。");
         md.AppendLine("- 对齐：HttpClient / Refit / RestSharp / Flurl 注入与 AxiosNet 默认连接池逐项对齐的 `SocketsHttpHandler`；Refit 只走 source-generated 模式。");
         md.AppendLine($"- 分配是进程级口径（含同进程回环服务端；本次运行服务器共回复 {serverRequests:N0} 个请求）：`净分配` = 总分配 − RawSocket 行。");
         md.AppendLine("- `CPU µs/请求` = 窗口内进程 CPU 时间 ÷ 完成请求数（同样含同进程服务端）：`净 CPU` = 该值 − RawSocket 行。它衡量每请求的机器成本，不是吞吐。");
         md.AppendLine("- p50 / p99 为客户端观察值，含请求体序列化、服务端处理、回环 RTT 与 JSON 反序列化；各列为轮中位数，各轮最小 ~ 最大见「离散度」节。");
         md.AppendLine($"- CPU 列带 * 的行份额低于门槛 {FormatPercent(minCpuShare)}：该实现的吞吐与比值**不可判定**（机器未打满或外部负载抢核）。");
         md.AppendLine();
-        md.AppendLine("| 实现 | RPS | p50 (µs) | p99 (µs) | max (µs) | 分配/请求 | 净分配/请求 | CPU | CPU µs/请求 | 净 CPU µs/请求 | RPS vs HttpClient |");
-        md.AppendLine("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+        md.AppendLine("| 实现 | 模式 | RPS | p50 (µs) | p99 (µs) | max (µs) | 分配/请求 | 净分配/请求 | CPU | CPU µs/请求 | 净 CPU µs/请求 | RPS vs HttpClient |");
+        md.AppendLine("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
 
         foreach (var summary in set.Targets)
         {
@@ -237,7 +240,7 @@ internal static class Report
                 : FormatRatio(summary.Rps / set.HttpClient.Rps);
 
             md.AppendLine(
-                $"| {summary.Target.Name} | {summary.Rps:N0} | {summary.P50Microseconds:N0} | "
+                $"| {summary.Target.Name} | {ApiStyles.Describe(summary.Target.Style)} | {summary.Rps:N0} | {summary.P50Microseconds:N0} | "
                 + $"{summary.P99Microseconds:N0} | {summary.MaxMicroseconds:N0} | "
                 + $"{FormatBytes(summary.AllocatedBytesPerRequest)} | "
                 + $"{FormatBytes(summary.NetAllocatedBytesPerRequest)} | {FormatCpuShare(summary, minCpuShare)} | "
@@ -283,14 +286,14 @@ internal static class Report
         md.AppendLine("## 每轮原始 RPS");
         md.AppendLine();
         md.Append("| 实现 |");
-        for (var round = 1; round <= rounds; round++)
+        for (var round = 1; round <= spec.Rounds; round++)
         {
             md.Append($" 第 {round} 轮 |");
         }
 
         md.AppendLine();
         md.Append("| --- |");
-        for (var round = 1; round <= rounds; round++)
+        for (var round = 1; round <= spec.Rounds; round++)
         {
             md.Append(" ---: |");
         }
@@ -321,7 +324,7 @@ internal static class Report
     public static string BuildCsv(SummarySet set)
     {
         var csv = new StringBuilder();
-        csv.AppendLine("target,round,seconds,completed,errors,rps,p50_us,p99_us,max_us,allocated_bytes_per_request,cpu_share,cpu_us_per_request");
+        csv.AppendLine("target,api_style,round,seconds,completed,errors,rps,p50_us,p99_us,max_us,allocated_bytes_per_request,cpu_share,cpu_us_per_request");
 
         foreach (var summary in set.Targets)
         {
@@ -329,6 +332,7 @@ internal static class Report
             {
                 var window = summary.Windows[i];
                 csv.Append(summary.Target.Name).Append(',')
+                    .Append(ApiStyles.Token(summary.Target.Style)).Append(',')
                     .Append(i + 1).Append(',')
                     .Append(window.Seconds.ToString("0.###", CultureInfo.InvariantCulture)).Append(',')
                     .Append(window.Completed).Append(',')
@@ -345,6 +349,46 @@ internal static class Report
         }
 
         return csv.ToString();
+    }
+
+    /// <summary>多形态串行跑完后的横向小结：每个形态一行，只取 AxiosNet 行的吞吐、比值、p99、净分配与失败数。</summary>
+    public static string ModeComparisonTable(IReadOnlyList<(ApiStyle Style, SummarySet Set)> runs)
+    {
+        string[] headers = ["形态", "AxiosNet RPS", "vs HttpClient", "p99 (µs)", "净分配/请求", "失败"];
+
+        var rows = new List<string[]>(runs.Count);
+        foreach (var (style, set) in runs)
+        {
+            var subject = set.AxiosNet;
+            var baseline = set.HttpClient;
+
+            rows.Add(
+            [
+                ApiStyles.Describe(style),
+                subject is null ? "—" : subject.Rps.ToString("N0", CultureInfo.InvariantCulture),
+                subject is null || baseline is null || baseline.Rps <= 0
+                    ? "—"
+                    : FormatRatio(subject.Rps / baseline.Rps),
+                subject is null ? "—" : subject.P99Microseconds.ToString("N0", CultureInfo.InvariantCulture),
+                subject is null ? "—" : FormatBytes(subject.NetAllocatedBytesPerRequest),
+                set.Targets.Sum(t => t.Errors).ToString(CultureInfo.InvariantCulture)
+            ]);
+        }
+
+        return FormatTable(headers, rows);
+    }
+
+    /// <summary>没有采用所选形态的实现，写成「名字 + 实际形态」；全部支持时给出一句提示。</summary>
+    public static string DescribeStyleFallbacks(IEnumerable<ITarget> targets, ApiStyle style)
+    {
+        var fallbacks = targets
+            .Where(t => t.Style is { } actual && actual != style)
+            .Select(t => $"{t.Name} {ApiStyles.Describe(t.Style)}")
+            .ToArray();
+
+        return fallbacks.Length == 0
+            ? "全部实现都使用该形态"
+            : "按自身形态参与：" + string.Join("、", fallbacks);
     }
 
     /// <summary>字节数按 B / KB / MB 自适应量级。</summary>

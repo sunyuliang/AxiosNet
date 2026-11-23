@@ -9,11 +9,19 @@ internal interface ITarget : IDisposable
     /// <summary>表里显示的名字（保持 ASCII，方便对齐）。</summary>
     string Name { get; }
 
+    /// <summary>本次实例实际使用的 API 形态；服务端基线不区分形态，为 null。</summary>
+    ApiStyle? Style { get; }
+
     /// <summary>
     /// 为一个 worker 开一条会话。HttpClient 系实现共享同一个客户端实例（连接池本来就在实例上），
     /// 只有裸 socket 基线需要「一条会话 = 一条连接」。
     /// </summary>
     ITargetSession OpenSession();
+}
+
+/// <summary>被测对象（AxiosNet）的标记：门禁判定按它定位分子行，与实例具体用哪种 API 形态无关。</summary>
+internal interface IAxiosNetTarget : ITarget
+{
 }
 
 /// <summary>单个 worker 的请求入口；<see cref="IDisposable"/> 用于释放该 worker 独占的连接。</summary>

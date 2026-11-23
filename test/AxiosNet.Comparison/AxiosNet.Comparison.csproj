@@ -30,6 +30,11 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/AxiosNet/AxiosNet.csproj" />
+    <!-- 源生成器（与 NuGet 包自动分发的分析器同一份）：模型式 / 接口式两种形态与发布包一样走编译期烘焙，
+         不会因为这里少了分析器而退到反射路径、把「没烘焙」当成实现差异。 -->
+    <ProjectReference Include="../../src/AxiosNet.SourceGen/AxiosNet.SourceGen.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <!-- 基准基建链接源码而不是复制：

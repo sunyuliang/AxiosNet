@@ -23,6 +23,8 @@ internal sealed class RestSharpTarget : ITarget
 
     public string Name => "RestSharp";
 
+    public ApiStyle? Style => ApiStyle.Typed;
+
     /// <summary>为一个 worker 开一条会话；<see cref="RestClient"/> 由全部 worker 共享。</summary>
     public ITargetSession OpenSession() => new Session(_client);
 
