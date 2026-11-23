@@ -133,7 +133,7 @@ internal static class ContentTypeHeader
                 break;
             }
 
-            if (!IsTokenChar(c))
+            if (!HttpTokens.IsChar(c))
             {
                 return false;
             }
@@ -173,7 +173,7 @@ internal static class ContentTypeHeader
             SkipWhitespace(raw, ref i);
 
             var nameStart = i;
-            while (i < raw.Length && IsTokenChar(raw[i]))
+            while (i < raw.Length && HttpTokens.IsChar(raw[i]))
             {
                 i++;
             }
@@ -195,7 +195,7 @@ internal static class ContentTypeHeader
             SkipWhitespace(raw, ref i);
 
             var valueStart = i;
-            while (i < raw.Length && IsTokenChar(raw[i]))
+            while (i < raw.Length && HttpTokens.IsChar(raw[i]))
             {
                 i++;
             }
@@ -239,39 +239,5 @@ internal static class ContentTypeHeader
         {
             index++;
         }
-    }
-
-    /// <summary>单个 token 字符（RFC 7230 <c>tchar</c>）；非 ASCII 一律不算。查表代替 16 个比较的短路链。</summary>
-    private static bool IsTokenChar(char c) => c < 128 && TokenChars[c];
-
-    /// <summary>ASCII 里哪些字符算 token：建一次，之后每个字符一次数组访问（快路径按字符扫描，这条链在热路径上）。</summary>
-    private static readonly bool[] TokenChars = CreateTokenTable();
-
-    /// <summary>按 RFC 7230 <c>tchar = ALPHA / DIGIT / "!#$%&amp;'*+-.^_`|~"</c> 造表。</summary>
-    private static bool[] CreateTokenTable()
-    {
-        var table = new bool[128];
-
-        for (var c = 'a'; c <= 'z'; c++)
-        {
-            table[c] = true;
-        }
-
-        for (var c = 'A'; c <= 'Z'; c++)
-        {
-            table[c] = true;
-        }
-
-        for (var c = '0'; c <= '9'; c++)
-        {
-            table[c] = true;
-        }
-
-        foreach (var c in "!#$%&'*+-.^_`|~")
-        {
-            table[c] = true;
-        }
-
-        return table;
     }
 }

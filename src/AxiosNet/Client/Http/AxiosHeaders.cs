@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Runtime.InteropServices;
+using AxiosNet.Internal.Headers;
 
 namespace AxiosNet;
 
@@ -561,7 +562,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         var trimmed = name.Trim();
         foreach (var c in trimmed)
         {
-            if (!IsTokenChar(c))
+            if (!HttpTokens.IsChar(c))
             {
                 throw new ArgumentException($"非法 HTTP 请求头名称 '{name}'：只允许 RFC 7230 token 字符（字母/数字与 !#$%&'*+-.^_`|~），" + "不允许空格、冒号或控制字符。", nameof(name));
             }
@@ -610,11 +611,4 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     /// <summary>头名校验的共用入口：RFC 7230 token，返回去首尾空白后的名称。</summary>
     /// <exception cref="ArgumentException">名称为空、含控制字符或非 token 字符。</exception>
     internal static string ValidateHeaderName(string name) => ValidateName(name);
-
-    /// <summary>RFC 7230 token 字符（头名的字符集）。</summary>
-    private static bool IsTokenChar(char c)
-        => (c >= 'a' && c <= 'z')
-            || (c >= 'A' && c <= 'Z')
-            || (c >= '0' && c <= '9')
-            || c is '!' or '#' or '$' or '%' or '&' or '\'' or '*' or '+' or '-' or '.' or '^' or '_' or '`' or '|' or '~';
 }
