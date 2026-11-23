@@ -216,13 +216,16 @@ public sealed partial class AxiosClient
                 // 就会「进记在新实现、出记在旧实现」，新实现的在途数永久多一条。
                 telemetryEntered = telemetry.TryEnterRequest();
 
+                // 收尾快照先落定（只带 sink 与「已进」）：ExitRequest 只与「进」配对，
+                // 后面任何一步抛异常都不能漏掉这次「出」，否则在途计数永远回不到 0。
+                telemetryScope = new TelemetryScope(telemetry, telemetryEntered);
+
                 if (telemetryEntered)
                 {
                     telemetryTrace = telemetry.StartRequest(config, plan.Uri);
+                    telemetryScope = telemetryScope.WithTrace(telemetryTrace);
                 }
             }
-
-            telemetryScope = new TelemetryScope(telemetry, telemetryEntered, telemetryTrace);
 
             var template = CreateRequestMessage(config, plan, telemetryTrace);
 
@@ -597,16 +600,27 @@ public sealed partial class AxiosClient
         private readonly bool _entered;
         private readonly AxiosRequestTrace _trace;
 
-        /// <summary>记录本次请求的观测句柄；未进入观测时 <paramref name="entered"/> 为 <c>false</c>。</summary>
+        /// <summary>只记录「认下哪个实现、是否已进入」；span 句柄随后由 <see cref="WithTrace"/> 补上。</summary>
         /// <param name="sink">本次请求认下的观测实现。</param>
         /// <param name="entered">是否成功进入观测（<c>ExitRequest</c> 只与它配对）。</param>
-        /// <param name="trace">请求 span 句柄；未开 span 时为默认值。</param>
-        public TelemetryScope(GuardedTelemetrySink? sink, bool entered, AxiosRequestTrace trace)
+        public TelemetryScope(GuardedTelemetrySink? sink, bool entered)
+        {
+            _sink = sink;
+            _entered = entered;
+            _trace = default;
+        }
+
+        private TelemetryScope(GuardedTelemetrySink? sink, bool entered, AxiosRequestTrace trace)
         {
             _sink = sink;
             _entered = entered;
             _trace = trace;
         }
+
+        /// <summary>补上本次请求的 span 句柄（未开 span 时为默认值）。</summary>
+        /// <param name="trace">请求 span 句柄。</param>
+        /// <returns>带上句柄的副本。</returns>
+        public TelemetryScope WithTrace(AxiosRequestTrace trace) => new(_sink, _entered, trace);
 
         /// <summary>先退出观测、再收 span；span 收尾的异常被吞掉，退出观测的异常照常上抛。</summary>
         public void Dispose()
