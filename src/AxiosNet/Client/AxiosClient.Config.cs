@@ -48,6 +48,19 @@ public sealed partial class AxiosClient
         // BaseAddress 与连接级选项沿用本实例的值。
         var instanceSourced = perCall.InstanceOptionsInherited || perCall.EffectiveMerged;
 
+        MergeScalarSettings(merged, perCall, instanceSourced);
+        MergeGroupSettings(merged, perCall, instanceSourced);
+        MergeTransformChains(merged, perCall);
+
+        return merged;
+    }
+
+    /// <summary>合并按请求的顶层项与表单字段：地址、正文、头、时限、正文类型、压缩、取消令牌、校验状态。</summary>
+    /// <param name="merged">已带上实例默认值的合并产物。</param>
+    /// <param name="perCall">调用方传入的按请求配置。</param>
+    /// <param name="instanceSourced">按请求配置是否由库产出（实例来源）。</param>
+    private static void MergeScalarSettings(AxiosConfig merged, AxiosConfig perCall, bool instanceSourced)
+    {
         // 门面提供方绑定的是按请求模型实例，随调用方配置搬运；库产出的配置不搬来源实例的提供方
         // （与 Transport.Auth 同一规则，避免回放把来源实例的凭据带进另一条客户端）。
         merged.InternalCredentialProvider = instanceSourced ? null : perCall.InternalCredentialProvider;
@@ -152,7 +165,14 @@ public sealed partial class AxiosClient
         {
             merged.ValidateStatus = perCall.ValidateStatus;
         }
+    }
 
+    /// <summary>合并按请求的分组配置：可观测性、弹性治理、序列化、限制与传输；未碰的组沿用实例默认。</summary>
+    /// <param name="merged">已带上实例默认值的合并产物。</param>
+    /// <param name="perCall">调用方传入的按请求配置。</param>
+    /// <param name="instanceSourced">按请求配置是否由库产出（实例来源）。</param>
+    private static void MergeGroupSettings(AxiosConfig merged, AxiosConfig perCall, bool instanceSourced)
+    {
         // 治理项（重试 / 熔断 / 对冲 / 备用端点 / 并发 / 幂等键）属按请求项：
         // 没碰这一组就沿用实例默认（懒创建），碰了就按 *Set 覆盖。
         if (perCall.ResilienceOrNull is { } incomingResilience)
@@ -212,7 +232,13 @@ public sealed partial class AxiosClient
         {
             merged.Transport.MergeFrom(perCallTransport);
         }
+    }
 
+    /// <summary>把按请求登记的 transform 追加到实例默认链之后，并记下产物里的继承段长度。</summary>
+    /// <param name="merged">已带上实例默认值的合并产物。</param>
+    /// <param name="perCall">调用方传入的按请求配置。</param>
+    private static void MergeTransformChains(AxiosConfig merged, AxiosConfig perCall)
+    {
         // transform 链按「实例默认 + 本次追加」组合，顺序稳定；去重只覆盖 perCall 登记的继承段。
         // 继承段长度必须在追加之前取。
         var inheritedRequestCount = merged.TransformRequestCount;
@@ -249,8 +275,6 @@ public sealed partial class AxiosClient
         // 产物标记 = 合并前 merged 的链长（即实例默认段）。
         merged.TransformInheritedRequest = inheritedRequestCount;
         merged.TransformInheritedResponse = inheritedResponseCount;
-
-        return merged;
     }
 
     /// <summary>解析凭据来源：静态槽位直接映射；槽位为空时调用门面挂进来的内部提供方（每请求一次）；结果只存在配置内部，发送前才写到请求头。</summary>
