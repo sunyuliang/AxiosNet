@@ -117,14 +117,9 @@ internal sealed class TimeoutStream : DelegatingStream
                 return pending;
             }
         }
-        catch (OperationCanceledException ex)
+        catch (Exception ex) when (ex is OperationCanceledException or IOException or HttpRequestException)
         {
-            ThrowIfTimedOutOrCanceled(callerToken, ex);
-            throw;
-        }
-        catch (Exception ex) when (ex is IOException or HttpRequestException)
-        {
-            throw AxiosException.Network(_config, _request, ex);
+            throw Translate(ex, callerToken);
         }
 
         return FinishReadAsync(pending, callerToken);
@@ -137,15 +132,10 @@ internal sealed class TimeoutStream : DelegatingStream
         {
             return await pending.ConfigureAwait(false);
         }
-        catch (OperationCanceledException ex)
-        {
-            ThrowIfTimedOutOrCanceled(callerToken, ex);
-            throw;
-        }
-        catch (Exception ex) when (ex is IOException or HttpRequestException)
+        catch (Exception ex) when (ex is OperationCanceledException or IOException or HttpRequestException)
         {
             // 正文读到一半连接断了：与非流式路径同一错误模型。
-            throw AxiosException.Network(_config, _request, ex);
+            throw Translate(ex, callerToken);
         }
     }
 
@@ -159,14 +149,9 @@ internal sealed class TimeoutStream : DelegatingStream
         {
             await Inner.WriteAsync(buffer, token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException ex)
+        catch (Exception ex) when (ex is OperationCanceledException or IOException or HttpRequestException)
         {
-            ThrowIfTimedOutOrCanceled(callerToken, ex);
-            throw;
-        }
-        catch (Exception ex) when (ex is IOException or HttpRequestException)
-        {
-            throw AxiosException.Network(_config, _request, ex);
+            throw Translate(ex, callerToken);
         }
     }
 
@@ -180,14 +165,9 @@ internal sealed class TimeoutStream : DelegatingStream
         {
             await Inner.FlushAsync(token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException ex)
+        catch (Exception ex) when (ex is OperationCanceledException or IOException or HttpRequestException)
         {
-            ThrowIfTimedOutOrCanceled(callerToken, ex);
-            throw;
-        }
-        catch (Exception ex) when (ex is IOException or HttpRequestException)
-        {
-            throw AxiosException.Network(_config, _request, ex);
+            throw Translate(ex, callerToken);
         }
     }
 
@@ -252,21 +232,21 @@ internal sealed class TimeoutStream : DelegatingStream
     }
 
     /// <summary>
-    /// 把取消统一翻译成库的错误码：超时 → <c>ECONNABORTED</c>，其余（外部取消 / 调用方自备令牌取消 /
-    /// 无已知令牌的内部 OCE）→ <c>ERR_CANCELED</c>，原始异常留在 <c>Cause</c>。
-    /// 流式读取不再原样抛出 <see cref="OperationCanceledException"/>，调用方只按 <c>Code</c> 判断取消。
+    /// 把内层流的失败翻译成库的错误码：超时 → <c>ECONNABORTED</c>，其余取消（外部取消 / 调用方自备令牌取消 /
+    /// 无已知令牌的内部 OCE）→ <c>ERR_CANCELED</c>，IO 与传输失败 → <c>ERR_NETWORK</c>，原始异常留在 <c>Cause</c>。
     /// </summary>
-    private void ThrowIfTimedOutOrCanceled(CancellationToken callerToken, Exception inner)
+    /// <param name="failure">内层流抛出的异常。</param>
+    /// <param name="callerToken">本次调用的调用方令牌，用于判定取消归属。</param>
+    private Exception Translate(Exception failure, CancellationToken callerToken)
     {
-        switch (CancellationClassifier.Classify(_externalToken, _timeoutCts?.Token, callerToken))
+        if (failure is not OperationCanceledException canceled)
         {
-            case CancellationKind.Timeout:
-                throw AxiosException.Timeout(_config, _request, inner, _effectiveTimeout);
-
-            default:
-                // Caller / Canceled / None：都归一为 ERR_CANCELED。
-                throw AxiosException.Canceled(_config, _request, inner);
+            return AxiosException.Network(_config, _request, failure);
         }
+
+        return CancellationClassifier.Classify(_externalToken, _timeoutCts?.Token, callerToken) == CancellationKind.Timeout
+            ? AxiosException.Timeout(_config, _request, canceled, _effectiveTimeout)
+            : AxiosException.Canceled(_config, _request, canceled);
     }
 
     /// <summary>
