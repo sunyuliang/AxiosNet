@@ -142,8 +142,8 @@ internal static class ConnectionPoolOptionsValidator
             throw AxiosException.InvalidOption("EvictionInterval 不能为负（0 表示不启用后台驱逐定时器；要永不驱逐请设为 0 并手动调用 EvictIdleEndpoints）。", config);
         }
 
-        // Timer 的 dueTime / period 上限是 uint.MaxValue-1 毫秒（约 49.7 天）。
-        if (options.EvictionInterval > TimeSpan.FromMilliseconds(uint.MaxValue - 1))
+        // 与 CancelAfter 同一口径的计时器上限（约 49.7 天）。
+        if (options.EvictionInterval > Timeouts.Max)
         {
             throw AxiosException.InvalidOption($"EvictionInterval（{options.EvictionInterval}）超出后台计时器上限（约 49.7 天）：请调小，或设为 0 改用手动驱逐。", config);
         }

@@ -1,4 +1,3 @@
-
 namespace AxiosNet.Internal.Headers;
 
 /// <summary>RFC 7230 <c>tchar</c> 字符判定：头名与媒体类型 token 共用一份定义。</summary>

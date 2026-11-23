@@ -1,4 +1,3 @@
-
 using AxiosNet.Metadata;
 
 namespace AxiosNet.WebAPI.Internal.Binding;
