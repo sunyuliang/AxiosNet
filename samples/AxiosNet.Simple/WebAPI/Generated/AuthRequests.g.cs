@@ -19,8 +19,13 @@ namespace AxiosNet.Simple.WebAPI.Generated;
 [AllowAnonymous]
 public sealed class LoginRequest : ApiRequest<TokenResult>
 {
-    [RootBody]
-    public LoginPayload Body { get; set; } = default!;
+    /// <summary>登录用户名</summary>
+    [Body("username")]
+    public string Username { get; set; } = default!;
+
+    /// <summary>明文密码（仅示例用）</summary>
+    [Body("password")]
+    public string Password { get; set; } = default!;
 }
 
 /// <summary>POST /api/auth/login/form — 表单登录（application/x-www-form-urlencoded）</summary>
@@ -28,8 +33,13 @@ public sealed class LoginRequest : ApiRequest<TokenResult>
 [AllowAnonymous]
 public sealed class LoginFormRequest : ApiRequest<LoginFormResult>
 {
-    [RootBody]
-    public LoginPayload Body { get; set; } = default!;
+    /// <summary>登录用户名</summary>
+    [Body("username")]
+    public string Username { get; set; } = default!;
+
+    /// <summary>明文密码（仅示例用）</summary>
+    [Body("password")]
+    public string Password { get; set; } = default!;
 
     protected override void Configure(AxiosConfig config)
     {

@@ -53,25 +53,20 @@ public sealed class InterfaceTests
     }
 
     [Fact]
-    public async Task Post_RootBodyAndBody_MergeIntoOneLayer()
+    public async Task Post_WholeBodyWithKeyParam_IsRejected()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = CreateClient(server);
 
-        await client.Create<IMultipleBodyApi>().PostAsync(new Person("n", 1), new Person("m", 2));
+        var ex = await Assert.ThrowsAsync<AxiosException>(
+            () => client.Create<IInvalidBodyApi>().PostAsync(new Person("n", 1), new Person("m", 2)));
 
-        var received = Assert.Single(server.Received);
-
-        // [Body] 参数按键写入，[RootBody] 参数展开属性，两者在同一个对象里。
-        var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
-        Assert.Equal("n", json.GetProperty("name").GetString());
-        Assert.Equal(1, json.GetProperty("age").GetInt32());
-        Assert.Equal("m", json.GetProperty("second").GetProperty("name").GetString());
-        Assert.Equal(2, json.GetProperty("second").GetProperty("age").GetInt32());
+        Assert.Contains("整份正文必须独占", ex.Message);
+        Assert.Empty(server.Received);
     }
 
     [Fact]
-    public async Task Post_BodyWithExplicitName_UsesThatKey()
+    public async Task Post_BodyKeysWithExplicitName_UseThoseKeys()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = CreateClient(server);
@@ -82,27 +77,23 @@ public sealed class InterfaceTests
 
         // 接口参数没有 [JsonPropertyName]：键名只取 [Body("名")]，否则参数名。
         var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
-        Assert.Equal("n", json.GetProperty("name").GetString());
+        Assert.Equal("n", json.GetProperty("first").GetProperty("name").GetString());
         Assert.Equal("t", json.GetProperty("tag_name").GetString());
         Assert.False(json.TryGetProperty("tag", out _));
     }
 
     [Fact]
-    public async Task Post_RootBodyWithUnannotatedParam_MergesIntoBody()
+    public async Task Post_WholeBodyWithUnannotatedParam_IsRejected()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = CreateClient(server);
 
-        await client.Create<IMultipleBodyApi>().PostUnannotatedAsync(new Person("n", 1), "t");
+        // POST 上未标注参数会改道进正文，与整份正文冲突。
+        var ex = await Assert.ThrowsAsync<AxiosException>(
+            () => client.Create<IInvalidBodyApi>().PostUnannotatedAsync(new Person("n", 1), "t"));
 
-        var received = Assert.Single(server.Received);
-
-        // 默认通道只看方法：POST 上未标注参数进正文，与 [RootBody] 展开的属性合并。
-        var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
-        Assert.Equal("n", json.GetProperty("name").GetString());
-        Assert.Equal(1, json.GetProperty("age").GetInt32());
-        Assert.Equal("t", json.GetProperty("tag").GetString());
-        Assert.Null(received.Query);
+        Assert.Contains("整份正文必须独占", ex.Message);
+        Assert.Empty(server.Received);
     }
 
     [Fact]
@@ -250,12 +241,17 @@ public sealed class InterfaceTests
             typeof(IInvalidStreamFormatApi));
 
         Assert.Contains(errors, error => error.Contains("缺少路由特性"));
-        Assert.Contains(errors, error => error.Contains("[RootBody]"));
+        Assert.Contains(errors, error => error.Contains("[Body]"));
         Assert.Contains(errors, error => error.Contains("Task<AxiosResponse<T>>"));
         Assert.Contains(errors, error => error.Contains("[Part]") && error.Contains("[Multipart]"));
         Assert.Contains(errors, error => error.Contains("互斥"));
         Assert.Contains(errors, error => error.Contains("[Stream]"));
         Assert.Contains(errors, error => error.Contains("99"));
+
+        // 整份正文与正文键 / 改道进正文的未标注参数共存：声明期就要报出来。
+        var multipleBodyErrors = ApiClient.ValidateInterfaces(typeof(IInvalidBodyApi));
+        Assert.Contains(multipleBodyErrors, error => error.Contains("整份正文必须独占"));
+
         Assert.Empty(ApiClient.ValidateInterfaces(
             typeof(IUserApi),
             typeof(IUploadApi),

@@ -951,11 +951,20 @@ internal sealed class ApiReader
         {
             case MediaKind.Multipart:
                 result.MediaType = "multipart/form-data";
-                if (!Mapper.TryDescribeObject(schema, $"{location} multipart", out var properties))
+                if (!Mapper.TryDescribeObject(schema, $"{location} multipart", out var properties, out var hasAdditional))
                 {
                     _warnings.Add("MULTIPART_UNSUPPORTED", location, "multipart 请求体不是对象 schema，无法展开为部件。");
                     unsupported = true;
                     return null;
+                }
+
+                // 部件必须逐个声明：additionalProperties 里的未知字段无法枚举，静默丢弃会让调用方以为已覆盖。
+                if (hasAdditional)
+                {
+                    _warnings.Add(
+                        "MULTIPART_ADDITIONAL_PROPERTIES",
+                        location,
+                        "multipart 请求体声明了 additionalProperties，未知字段无法展开为部件，已忽略。");
                 }
 
                 result.IsMultipart = true;
@@ -996,6 +1005,11 @@ internal sealed class ApiReader
 
             case MediaKind.Form:
                 result.MediaType = "application/x-www-form-urlencoded";
+                if (TryFlattenInlineBody(schema, model, usedNames, location, result))
+                {
+                    return result;
+                }
+
                 result.Type = Mapper.Map(schema, model.Name + "Form", $"{location} request");
                 result.BodyName = Naming.Unique("body", usedNames);
                 return result;
@@ -1015,6 +1029,11 @@ internal sealed class ApiReader
             case MediaKind.Json:
                 // 保留文档声明的媒体类型（如 application/vnd.api+json）：运行时未登记该类型时仍回落到 JSON 序列化，
                 // 但 Content-Type 必须按声明发送，不能一律写成 application/json。
+                if (TryFlattenInlineBody(schema, model, usedNames, location, result))
+                {
+                    return result;
+                }
+
                 result.Type = schema is null
                     ? TypeRef.JsonElement
                     : Mapper.Map(schema, BodyTypeName(model), $"{location} request");
@@ -1022,12 +1041,71 @@ internal sealed class ApiReader
                 return result;
 
             default:
+                // 其它媒体类型（XML / 自定义）只认整份正文：聚合正文没有对应的编码通路。
                 result.Type = schema is null
                     ? TypeRef.JsonElement
                     : Mapper.Map(schema, BodyTypeName(model), $"{location} request");
                 result.BodyName = Naming.Unique("body", usedNames);
                 return result;
         }
+    }
+
+    /// <summary>必填的内联对象正文直接展开成请求模型上的正文键，省掉只包一层的 <c>Body</c> 类型。</summary>
+    /// <param name="schema">正文 schema。</param>
+    /// <param name="model">所属操作，用于给嵌套类型起名。</param>
+    /// <param name="usedNames">本操作已占用的成员名（去重后写回）。</param>
+    /// <param name="location">警告定位。</param>
+    /// <param name="result">待填充的正文声明。</param>
+    /// <returns>展开成功返回 true；不可展开时返回 false 且不改动 <paramref name="result"/>。</returns>
+    /// <remarks>
+    /// 保留单个正文成员的四种情况：<c>$ref</c> 指向共享组件（展开会给每个端点各抄一份）、
+    /// 声明了 <c>additionalProperties</c>（未知字段无法用固定成员表达）、
+    /// 可选正文（成员全为 null 时仍会发出带 null 键的对象，与「不发正文」不等价）、
+    /// 键名折叠大小写后重名（聚合正文按线上形态判重，展开会生成首次调用就报错的代码）。
+    /// </remarks>
+    private bool TryFlattenInlineBody(
+        SpecNode? schema,
+        ApiOperation model,
+        HashSet<string> usedNames,
+        string location,
+        ApiRequestBody result)
+    {
+        if (schema is null || schema["$ref"] is not null || !result.Required)
+        {
+            return false;
+        }
+
+        if (!Mapper.TryDescribeObject(schema, $"{location} request", out var properties, out var hasAdditional)
+            || hasAdditional)
+        {
+            return false;
+        }
+
+        var distinctNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var property in properties)
+        {
+            if (!distinctNames.Add(property.WireName))
+            {
+                return false;
+            }
+        }
+
+        foreach (var property in properties)
+        {
+            result.Properties.Add(new ApiProperty
+            {
+                Name = Naming.Unique(Naming.Camel(property.WireName), usedNames),
+                WireName = property.WireName,
+                Type = Mapper.Map(
+                    property.Schema,
+                    BodyTypeName(model) + Naming.Pascal(property.WireName),
+                    $"{location} body {property.WireName}"),
+                Required = property.Required,
+                Description = property.Description
+            });
+        }
+
+        return result.Properties.Count > 0;
     }
 
     /// <summary>内联请求体类型的建议名：模型式下与请求类名（<c>XxxRequest</c>）错开，避免命名后缀。</summary>
@@ -1475,10 +1553,10 @@ internal sealed class ApiReader
     /// <summary>请求体的媒体类型大类，决定生成哪种绑定形态。</summary>
     private enum MediaKind
     {
-        /// <summary>JSON 请求体（<c>[RootBody]</c>）。</summary>
+        /// <summary>JSON 请求体（无参 <c>[Body]</c>）。</summary>
         Json,
 
-        /// <summary>application/x-www-form-urlencoded 表单（仍按 <c>[RootBody]</c>）。</summary>
+        /// <summary>application/x-www-form-urlencoded 表单（同样用无参 <c>[Body]</c>）。</summary>
         Form,
 
         /// <summary>multipart/form-data，展开成多个 <c>[Part]</c>。</summary>

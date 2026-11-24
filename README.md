@@ -3,9 +3,9 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2895%20passed-success)](#构建与测试)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2750%20passed-success)](#构建与测试)
-[![coverage](https://img.shields.io/badge/coverage-92.1%25_(branch_87.7%25)-success)](#构建与测试)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2898%20passed-success)](#构建与测试)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2748%20passed-success)](#构建与测试)
+[![coverage](https://img.shields.io/badge/coverage-92.2%25_(branch_87.4%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -628,7 +628,7 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 
 `Message` 里的 URL 只保留 `scheme` + host + port + path：query / fragment / userinfo 一律剥掉，**路径段本身不脱敏**——把凭据写进 path 的接口（如 `/api/token/{secret}`）会原样出现在消息里，这类接口的日志需要自己再脱敏。
 
-> **声明期错误与运行期错误分开归口**。声明**本身**非法——缺少路由特性（如 `[Get]`）、路径占位符 `{id}` 找不到对应的 `[Path]`（占位符未绑定）、正文声明冲突（`[RootBody]` 与 `[Multipart]` 同用、合并后键名重复）等——无论写在模型上还是接口上，都抛 `AxiosException`（`ERR_BAD_OPTION_VALUE`），原始异常在 `Cause`；源生成器已对其中两类提前到编译期（`AXA016` / `AXA017`）。声明合法、只是**运行时取值 / 格式化失败**（路径值为 `null`、格式化函数抛错等）按 `ERR_BAD_REQUEST` 抛 `AxiosException`。`catch (AxiosException)` 一处即可覆盖，唯一的另一条出口是 AOT 元数据缺失（`AxiosAotMetadataException`）。
+> **声明期错误与运行期错误分开归口**。声明**本身**非法——缺少路由特性（如 `[Get]`）、路径占位符 `{id}` 找不到对应的 `[Path]`（占位符未绑定）、正文声明冲突（无参 `[Body]` 与正文键 / `[Multipart]` 同用、聚合后键名重复）等——无论写在模型上还是接口上，都抛 `AxiosException`（`ERR_BAD_OPTION_VALUE`），原始异常在 `Cause`；源生成器已对其中两类提前到编译期（`AXA016` / `AXA017`）。声明合法、只是**运行时取值 / 格式化失败**（路径值为 `null`、格式化函数抛错等）按 `ERR_BAD_REQUEST` 抛 `AxiosException`。`catch (AxiosException)` 一处即可覆盖，唯一的另一条出口是 AOT 元数据缺失（`AxiosAotMetadataException`）。
 
 | Code | 触发场景 |
 | --- | --- |
@@ -1656,7 +1656,7 @@ var response = await client.GetAsync<User>("users/1",
 
 | 写法 | 长什么样 | 适合 | 代价 |
 | --- | --- | --- | --- |
-| 请求模型（默认推荐） | `class GetUserRequest : IApiRequest<User>`，属性上标 `[Path]` / `[Query]` / `[Body]` / `[RootBody]` | 端点相对独立，请求要当对象传递或复用 | 每个端点一个类型 |
+| 请求模型（默认推荐） | `class GetUserRequest : IApiRequest<User>`，属性上标 `[Path]` / `[Query]` / `[Body]` 等 | 端点相对独立，请求要当对象传递或复用 | 每个端点一个类型 |
 | 接口声明 | `interface IUserApi`，路由与绑定写在方法 / 参数上 | 端点成组，调用像本地方法 | 源生成器烘焙真实代理（JIT / Native AOT 同一路径）；未生成时回退 `DispatchProxy`（仅 JIT） |
 
 两种写法共用同一套内核：路径模板校验、重名检测、默认通道（按 HTTP 方法聚合 Body / Query）、静态头、授权语义全部一致。模型式是默认推荐，先看它。
@@ -1712,20 +1712,21 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });                     /
 | 请求头 | `[Header]` / `[HeaderCollection]` | `null` 跳过 |
 | 静态头 | `[Headers]`（类 / 接口 / 接口方法） | `"Name: Value"`；只写名字表示删除该头（同名 `[Header]` 属性 / 参数仍会把它写回来）；方法级覆盖接口级同名项 |
 | 表单 | `[Multipart]` + `[Part]` | 模型自身即表单；`[Part]` 覆盖字段名 / 文件名 / 部件类型 |
-| 请求体（顶层） | `[RootBody]` | 并入正文；独占时即整个正文；与 `[Body]` / 未标注成员一起时合并到同一层；单个值 `null` 不发请求体 |
-| 请求体（键） | `[Body]` / `[Body("名")]` | 作为聚合正文的一个键，可多个；显式名字压过 `[JsonPropertyName]`；与 `[Query]` / `[Header]` / `[Path]` 同用 |
+| 请求体（整份） | `[Body]`（无参） | 该值就是整份正文，原样发送、不加键壳；独占正文，与其它正文来源共存报错 |
+| 请求体（键） | `[Body("名")]` / 未标注成员 | 聚合正文里的一个键，可多个；键名 `[Body("名")]` > `[JsonPropertyName]` > 成员名；与 `[Query]` / `[Header]` / `[Path]` 同用 |
 | 值格式化 | `[Format]`（属性 / 参数） | 格式串或静态函数；集合逐元素、字典逐值（见[值格式化](#值格式化)） |
 | 编码 | `[BodyContentType]` / `[QueryCollectionFormat]` / `[Stream]`（类 / 属性） | 属性级覆盖类级；两处都显式声明且值不同报 `ERR_BAD_OPTION_VALUE`；`[Multipart]` 与 `[BodyContentType]` 互斥 |
 | 排除 | `[ApiIgnore]` | 完全不绑定 |
 
 - 默认通道只看 HTTP 方法，不看类型：POST / PUT / PATCH 上的全部未标注成员按键名聚合成**一个对象**作为请求体（1 个成员也加壳，`{ "page": 2 }`）；GET / HEAD / OPTIONS / DELETE 及其它方法上的未标注成员绑 Query。
 - 聚合 Body 的键名：`[Body("名")]` 优先，其次 `[JsonPropertyName]`，否则属性名（接口式为参数名）；只有最后一种才套 `PropertyNamingPolicy`（默认 Web 的 camelCase），显式名字原样使用。多个成员键名重复在构建期报错。
-- 正文合并只看来源：`[Body]` 与未标注成员按键写入同一层，`[RootBody]` 结构化值展开属性、标量按键写入。只有一个正文来源（单个 `[RootBody]`）时原样发送、不加壳；出现第二个正文来源就统一合并，合并后重复键报错、键顺序＝声明顺序。`[RootBody]` 与 `[Multipart]` 在构建期报错；合并后的正文也装不下文件部件（`Stream` / `FormFile` / `HttpContent` 成员）——这种写法同样在构建期报错，请改用 `[Multipart]`，或让它作为唯一的 `[RootBody]` 原样发送。
-- 模型式请求不需要为正文再造一个 `Payload` 子类：正文成员直接写在请求类上即可（POST / PUT / PATCH 默认进正文，无需 `[Body]`）；接口式方法则必然有一个强类型参数。
-- 显式 `[Body]` 把成员强制并入聚合正文（任何 HTTP 方法都生效），可多个；可写成 `[Body("user_name")]` 指定键名，重复键在构建期报错。同一成员可同时标 `[Query]` / `[Header]` / `[Path]`，值会分别进入对应通道。
+- 正文形态只看**值自身**，不看正文来源的个数：无参 `[Body]` 是整份正文（原样发送、不加键壳），必须独占——出现任何第二个正文来源就在构建期报错；其余来源（`[Body("名")]` 与 POST / PUT / PATCH 上的未标注成员）一律按键写进**同一层**聚合正文，键顺序＝声明顺序，重复键报错。聚合正文装不下文件部件（`Stream` / `FormFile` / `HttpContent` 成员）：这种写法同样在构建期报错，请改用 `[Multipart]`，或让该对象作为唯一的无参 `[Body]` 原样发送。
+- 模型式请求不需要为正文再造一个 `Payload` 子类：正文成员直接写在请求类上即可（POST / PUT / PATCH 默认进正文，无需 `[Body]`）；整份正文本身是数组 / 标量 / 流时同样不必为它造子类再提升，直接标无参 `[Body]`。接口式方法则必然有一个强类型参数。
+- `[Body("user_name")]` 把成员作为聚合正文的一个键（任何 HTTP 方法都生效），可多个，重复键在构建期报错；名字留空（`[Body("")]`）回退 `[JsonPropertyName]` 与成员名。同一成员可同时标 `[Query]` / `[Header]` / `[Path]`，值会分别进入对应通道。
+- 无参 `[Body]` 把该成员的值整份发出：对象不展开属性、数组与标量不加壳、流直接下发。它不能与 `[Body("名")]`、body 方法上的未标注成员、另一个无参 `[Body]` 或 `[Multipart]` 共存，构建期报「整份正文必须独占」并给出两条出路：给别的成员换通道，或把自己改成 `[Body("名")]`。
 - 想排除默认 Body：用 `[Query]` 把成员拉回查询串，`[Header]` / `[HeaderCollection]` / `[Path]` 换通道，`[ApiIgnore]` 完全不发。
-- 默认 Body 支持 JSON 与 `application/x-www-form-urlencoded`；multipart 请标注 `[Multipart]`，其它序列化器（XML / 自定义）请显式标 `[RootBody]`，否则构建期给出明确错误。
-- 没有正文成员（也未标 `[RootBody]`）时不发请求体；有正文成员时即使值全为 `null` 也发送对象（键保留、值为 `null`）。
+- 默认 Body 支持 JSON 与 `application/x-www-form-urlencoded`；multipart 请标注 `[Multipart]`，其它序列化器（XML / 自定义）请把该成员标成无参 `[Body]`，否则构建期给出明确错误。
+- 没有正文成员（也未标无参 `[Body]`）时不发请求体；有正文成员时即使值全为 `null` 也发送对象（键保留、值为 `null`）。
 - 一个属性可同时标多个绑定特性（`[Path]` + `[Header]`）：值只读一次、分别应用。
 - 值格式化：成员上的 `[Format]` 优先，其余走实例默认值 `AxiosConfig.Serialization.ValueText`；声明式必须在实例默认值上设置，在按请求 `configure` 里改会抛 `ERR_BAD_OPTION_VALUE`（见[值格式化](#值格式化)）。
 
@@ -1735,7 +1736,7 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });                     /
 | --- | --- |
 | `[Header]` / `[Headers]` / `[HeaderCollection]` | 属性 → 一个请求头；类 / 接口 / 接口方法上的静态头串 `"Name: Value"`；字典属性 → 一批请求头 |
 | `[Query]` / `[QueryCollectionFormat]` | 绑查询参数；集合怎么展开（`Brackets` / `Multi` / `Csv` / `Ssv` / `Tsv` / `Pipes`） |
-| `[Body]` / `[RootBody]` / `[BodyContentType]` | 键并入聚合正文 / 正文来源（独占且无其它正文成员时即整个正文，否则合并到同一层）；这份正文按什么编码发（JSON / 表单 / 原样） |
+| `[Body]` / `[BodyContentType]` | 无参 = 整份正文（原样、独占），带名 = 聚合正文里的一个键；`[BodyContentType]` 管这份正文按什么编码发（JSON / 表单 / 原样） |
 | `[Authorize]` / `[AllowAnonymous]` | 与 `Microsoft.AspNetCore.Authorization` 的同名特性**不同**：这里的只声明「这个端点要凭据」，鉴权仍由 `CredentialProvider` 完成，不参与 ASP.NET Core 的授权管线 |
 
 在 Web 项目里 `using AxiosNet.WebAPI.Attributes;` 会与 ASP.NET Core 的 `AuthorizeAttribute` 撞名，起个别名即可：
@@ -1753,7 +1754,7 @@ using AxiosAuthorize = AxiosNet.WebAPI.Attributes.AuthorizeAttribute;
 [BodyContentType("application/x-www-form-urlencoded")]   // 类级：该模型默认按表单编码
 public sealed class LoginRequest : IApiRequest<Token>
 {
-    [RootBody] public LoginForm Form { get; set; } = null!;
+    [Body] public LoginForm Form { get; set; } = null!;
 }
 
 [Get("users")]
@@ -1811,7 +1812,7 @@ public interface IUserApi
         CancellationToken cancellationToken = default);
 
     [Post("users")]
-    Task<AxiosResponse<User>> CreateAsync([RootBody] UserPayload payload, CancellationToken cancellationToken = default);
+    Task<AxiosResponse<User>> CreateAsync([Body] UserPayload payload, CancellationToken cancellationToken = default);
 }
 
 var api = client.Create<IUserApi>();
@@ -1828,7 +1829,7 @@ var user = await api.GetAsync(5);                          // User
 **绑定**
 
 - `CancellationToken` 参数按类型识别（最多一个），不参与绑定。
-- 其余参数按 `[Path]` / `[Query]` / `[Header]` / `[HeaderCollection]` / `[Part]` / `[Body]` / `[RootBody]` / `[ApiIgnore]` 或「未标注」规则处理：未标注参数在 POST / PUT / PATCH 上按键名（参数名）聚合为对象 Body，其余方法进 Query，与模型式完全一致。
+- 其余参数按 `[Path]` / `[Query]` / `[Header]` / `[HeaderCollection]` / `[Part]` / `[Body]` / `[ApiIgnore]` 或「未标注」规则处理：未标注参数在 POST / PUT / PATCH 上按键名（参数名）聚合为对象 Body，其余方法进 Query，与模型式完全一致；无参 `[Body]` 是整份正文（独占），`[Body("名")]` 是正文里的一个键。
 - `[Multipart]` 标在方法上：参数即表单部件，`[Part]` 覆盖字段名 / 文件名 / 部件类型。
 - `[Format]` 可标在参数上；其余走实例默认值 `AxiosConfig.Serialization.ValueText`（见[值格式化](#值格式化)）。
 
@@ -1854,7 +1855,7 @@ Task<AxiosResponse<IAsyncEnumerable<Chunk>>> EventsAsync(CancellationToken cance
 ```csharp
 [Post("login")]
 [BodyContentType("application/x-www-form-urlencoded")]   // 对象按表单展平（只写 Content-Type 头不会改变编码）
-Task<AxiosResponse<Token>> LoginAsync([RootBody] LoginForm form, CancellationToken cancellationToken = default);
+Task<AxiosResponse<Token>> LoginAsync([Body] LoginForm form, CancellationToken cancellationToken = default);
 
 [Get("users")]
 [QueryCollectionFormat(AxiosCollectionFormat.Multi)]    // ids=1&ids=2（默认 Brackets：ids[]=1&ids[]=2）
@@ -1869,7 +1870,7 @@ Task<AxiosResponse<User[]>> ListAsync([Query] int[] ids, CancellationToken cance
 
 **校验与报错**
 
-- 接口写在非法（缺路由、`[Part]` 未配 `[Multipart]`、`[Multipart]` 与 `[Body]` / `[RootBody]` / `[BodyContentType]` 同用、`[Stream]` 用在非流式方法、参数重名…）时，`Create<T>()` 抛 `AxiosException`（`ERR_BAD_OPTION_VALUE`，原始异常在 `Cause`），与模型式同一出口。
+- 接口写在非法（缺路由、`[Part]` 未配 `[Multipart]`、`[Multipart]` 与 `[Body]` / `[BodyContentType]` 同用、`[Stream]` 用在非流式方法、参数重名…）时，`Create<T>()` 抛 `AxiosException`（`ERR_BAD_OPTION_VALUE`，原始异常在 `Cause`），与模型式同一出口。
 - 启动期体检用 `ApiClient.ValidateInterfaces(typeof(IA), ...)` 或 `ValidateInterfaces(assembly)`：返回全部错误消息、不抛，同一接口的多个方法错误会聚合而不是只报第一条。
   - 按类型重载在 Native AOT 下同样可用。
   - `ValidateInterfaces(assembly)` 在 AOT 下抛 `PlatformNotSupportedException`，改调生成的 `ValidateAll()`。
@@ -1938,7 +1939,7 @@ var client = new ApiClient(url, c =>
   - 查询里的嵌套对象 / 字典 / `JsonElement` 树按叶子应用：成员声明优先，其次实例钩子。
 - **集合与字典**：标在集合上逐元素应用，标在字典上逐值应用（键不动）。字典上的声明不做构建期类型校验——值类型运行期才知道。
 - **格式串**要求值实现 `IFormattable`，区域固定为不变文化（不跟随 `CurrentCulture`）；需要区域相关的形态就写格式化函数。
-- **结构化正文内部不归它管**：`[Body]` / `[RootBody]` + 结构化类型上标 `[Format]` 在构建期报错（文档内部由序列化器负责）。要让 JSON 里的成员也按 `[Format]` 输出，挂可选桥：
+- **结构化正文内部不归它管**：`[Body]` + 结构化类型上标 `[Format]` 在构建期报错（文档内部由序列化器负责）。要让 JSON 里的成员也按 `[Format]` 输出，挂可选桥：
 
 ```csharp
 using AxiosNet.WebAPI.Serialization;
@@ -1949,13 +1950,13 @@ config.Serialization.JsonOptions =
 ```
 
 - **构建期报错**，不留到运行期静默回落（模型属性与接口参数走同一套校验）：
-  - `[Format]` 与结构化 `[Body]` / `[RootBody]` / `[HeaderCollection]` / 文件部件（`Stream` / `byte[]` / `Memory<byte>` / `ReadOnlyMemory<byte>` / `ArraySegment<byte>` / `FormFile` / `HttpContent`，集合元素 / 字典值同此判定）同用；
+  - `[Format]` 与结构化 `[Body]` / `[HeaderCollection]` / 文件部件（`Stream` / `byte[]` / `Memory<byte>` / `ReadOnlyMemory<byte>` / `ArraySegment<byte>` / `FormFile` / `HttpContent`，集合元素 / 字典值同此判定）同用；
   - 格式串用在非 `IFormattable` 的标量（如 `bool`）或二进制形态（`byte[]` / `Memory<byte>` / `ReadOnlyMemory<byte>` / `ArraySegment<byte>`）上；
   - 标在非标量（POCO）的查询参数上。
 - **写错怎么发现**，三种都不必等到发请求：
   - 方法名写成 `nameof(...)` 时拼错是普通编译错误（`CS0117`）；
   - 签名不对（非 `public static` / 泛型 / 参数列表不是 `(object?, ValueTextChannel)` / 返回不是 `string`）由源生成器在编译期报 `AXA015`，消息里直接给出正确签名；
-  - 值形态与通道不匹配（格式串用在 `bool` / 二进制形态上、`[Format]` 标在结构化 `[Body]` / `[RootBody]` 或文件部件上）在构建绑定计划时抛 `AxiosException`（`ERR_BAD_OPTION_VALUE`）。
+  - 值形态与通道不匹配（格式串用在 `bool` / 二进制形态上、`[Format]` 标在结构化 `[Body]` 或文件部件上）在构建绑定计划时抛 `AxiosException`（`ERR_BAD_OPTION_VALUE`）。
 - 没启用源生成器时 `AXA015` 不生效，改用 `ApiClient.ValidateModels(...)` / `ValidateInterfaces(...)` 在启动期扫出来。
 - **Native AOT**：源生成器把格式化委托直接烘焙进元数据（签名不合法报 `AXA015`），运行期不需要反射。手动 `RegisterShape<T>()` 的形状没有烘焙，AOT 下用 `[Format(typeof(...), nameof(...))]` 会显式报错并指向「启用源生成器或改用格式串」，不会静默丢格式化。
 
@@ -2020,7 +2021,8 @@ public sealed class ListUsersRequest : ApiRequest<User[]>
   - `--single-file` 全部写进一个文件；`--single-interface`（配合 `--interface-name`，默认 `IApiClient`）只在接口式下可用。
 - **参数与正文**：`path` / `query` / `header` 对应 `[Path]` / `[Query]` / `[Header]`（模型式落在属性上，接口式落在参数上）。
   - 请求体按媒体类型选一份，优先级 JSON > `+json` > `*/*` > 表单 > multipart > 文本 > 二进制 > 第一份。
-  - JSON 生成强类型 `[RootBody]`；`application/x-www-form-urlencoded` 模型式写进 `Configure` 的 `config.ContentType`、接口式生成 `[BodyContentType(...)]`；`multipart/form-data` 的对象属性展开成 `[Part("wire")]`（`format: binary` → `byte[]`）；文本正文 → `string`；二进制 → `byte[]`。
+  - 内联对象正文（必填、JSON 或表单媒体类型）直接展开成请求类上的正文键 `[Body("wire")]`（接口式是参数），不再为只包一层的数据造一个类。以下情况仍生成单个 `[Body]` 成员：`$ref` 指向共享组件（展开会给每个端点各抄一份）、声明了 `additionalProperties`（未知字段无法用固定成员表达）、正文未声明 `required`（成员全为 null 时仍会发出带 null 键的对象，与不发正文不等价）、键名折叠大小写后重名（聚合正文按线上形态判重）、以及 XML / 自定义媒体类型（只有整份正文有编码通路）。
+  - 单个正文成员的形态：JSON 生成强类型 `[Body]`（无参，整份正文）；`application/x-www-form-urlencoded` 模型式写进 `Configure` 的 `config.ContentType`、接口式生成 `[BodyContentType(...)]`；`multipart/form-data` 的对象属性展开成 `[Part("wire")]`（`format: binary` → `byte[]`）；文本正文 → `string`；二进制 → `byte[]`。
   - 多份候选记 `MULTIPLE_REQUEST_CONTENT`。
 - **查询数组**：`style: form` + `explode: true` → `Multi`（`ids=1&ids=2`）；`explode: false` → `Csv`；`spaceDelimited` / `pipeDelimited` → `Ssv` / `Pipes`；Swagger 2 的 `collectionFormat` 同样映射。模型式写进 `Configure`，接口式生成 `[QueryCollectionFormat(...)]`。
 - **响应**：在 2xx 中按状态码升序取第一个（其次 `2XX`、`default`）。
@@ -2050,7 +2052,7 @@ public sealed class ListUsersRequest : ApiRequest<User[]>
 
 完整走通这一流程的是示例 [`OpenApiGeneratedExample`](samples/AxiosNet.Simple/WebAPI/Examples/OpenApiGeneratedExample.cs)：它把 [`samples/AxiosNet.Simple/WebAPI/demo.openapi.json`](samples/AxiosNet.Simple/WebAPI/demo.openapi.json) 以默认模型式生成到 [`WebAPI/Generated/`](samples/AxiosNet.Simple/WebAPI/Generated)，再用 `RequestAsync` / `RequestStreamAsync` 调用 `DemoApiServer` 的真实路由。
 
-生成的覆盖面包括 tag 分组的 `*Requests.g.cs`、根级授权、表单登录、multipart、SSE 与 JSON 数组流式。仓库内重新生成这批产物：
+生成的覆盖面包括 tag 分组的 `*Requests.g.cs`、内联对象正文展开、根级授权、表单登录、multipart、SSE 与 JSON 数组流式。仓库内重新生成这批产物：
 
 ```bash
 dotnet run --project src/AxiosNet.Cli -f net8.0 -- \
@@ -2487,7 +2489,7 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 | `AXA014` | Error | 接口方法的编码声明无效：`[BodyContentType]` 为空白 / 含控制字符、`[QueryCollectionFormat]` 值未定义，或与 `[Multipart]` 同用 |
 | `AXA015` | Error | `[Format]` 声明无效：格式化字符串为空白，或格式化函数不存在 / 不是 `public static`、参数列表不是 `(object?, ValueTextChannel)`、返回值不是 `string` |
 | `AXA016` | Error | 路由模板里的 `{name}` 没有任何成员用 `[Path]` 绑定（名字比对大小写不敏感；占位符文法与运行期一致，只认 `[A-Za-z_][A-Za-z0-9_]*` —— `{{` 是字面量，`{id:int}` 这类约束式花括号不产出本诊断，留给运行期报「无法识别的花括号」） |
-| `AXA017` | Error | 请求体声明冲突：`[RootBody]` 与 `[Multipart]` 同用 |
+| `AXA017` | Error | 请求体声明冲突：无参 `[Body]`（整份正文）与正文键、另一个无参 `[Body]` 或 `[Multipart]` 同用 |
 
 `System.Text.Json` 的序列化元数据仍需要按需注册（源生成 `JsonSerializerContext`）：
 
@@ -2725,15 +2727,15 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 2694 / 2681 | `net8.0` / `net6.0` | 5375 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2692 / 2679 | `net8.0` / `net6.0` | 5371 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
-| `AxiosNet.Cli.Tests`（OpenAPI 生成） | 75 | `net8.0` | 75 |
+| `AxiosNet.Cli.Tests`（OpenAPI 生成） | 80 | `net8.0` | 80 |
 | `AxiosNet.Compat.Tests`（netstandard2.0 兼容资产） | 57 / 52 | `net8.0` / `net472` | 109 |
-| **合计** | **2895 / 2802** | | **5697** |
+| **合计** | **2898 / 2800** | | **5698** |
 
 表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。
 
-行覆盖率 **92.1%**、分支覆盖率 **87.7%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例）：
+行覆盖率 **92.2%**、分支覆盖率 **87.4%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例）：
 
 ```bash
 dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat Code Coverage" \

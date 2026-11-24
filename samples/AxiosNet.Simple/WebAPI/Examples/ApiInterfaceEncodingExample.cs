@@ -62,7 +62,7 @@ public interface IEncodingApi
     [Post("api/auth/login/form")]
     [BodyContentType("application/x-www-form-urlencoded")]
     Task<AxiosResponse<TokenResult>> LoginFormAsync(
-        [RootBody] LoginPayload credentials,
+        [Body] LoginPayload credentials,
         CancellationToken cancellationToken = default);
 
     [Get("api/users")]

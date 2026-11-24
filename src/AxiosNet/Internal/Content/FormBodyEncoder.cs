@@ -54,7 +54,7 @@ internal static class FormBodyEncoder
             {
                 if (member.Spread)
                 {
-                    // 多个 [RootBody] / 单个结构化正文：字段直接铺到根级。
+                    // 单个结构化正文：字段直接铺到根级。
                     var start = pairs.Count;
                     CollectFormPairs(null, member.Value, pairs, options, ref path, member.Format);
                     if (topNames is not null)

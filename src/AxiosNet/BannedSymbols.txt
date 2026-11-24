@@ -32,7 +32,6 @@ T:AxiosNet.WebAPI.Attributes.PostAttribute;WebAPI 可整体删除：内核目录
 T:AxiosNet.WebAPI.Attributes.PutAttribute;WebAPI 可整体删除：内核目录不得引用（见 eng/build-without-webapi.ps1）
 T:AxiosNet.WebAPI.Attributes.QueryAttribute;WebAPI 可整体删除：内核目录不得引用（见 eng/build-without-webapi.ps1）
 T:AxiosNet.WebAPI.Attributes.QueryCollectionFormatAttribute;WebAPI 可整体删除：内核目录不得引用（见 eng/build-without-webapi.ps1）
-T:AxiosNet.WebAPI.Attributes.RootBodyAttribute;WebAPI 可整体删除：内核目录不得引用（见 eng/build-without-webapi.ps1）
 T:AxiosNet.WebAPI.Attributes.StreamAttribute;WebAPI 可整体删除：内核目录不得引用（见 eng/build-without-webapi.ps1）
 T:AxiosNet.WebAPI.AxiosClientDeclarativeExtensions;WebAPI 可整体删除：内核目录不得引用（见 eng/build-without-webapi.ps1）
 T:AxiosNet.WebAPI.CredentialProviders;WebAPI 可整体删除：内核目录不得引用（见 eng/build-without-webapi.ps1）

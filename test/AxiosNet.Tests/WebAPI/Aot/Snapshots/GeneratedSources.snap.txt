@@ -12,6 +12,8 @@ namespace AxiosNet.Generated
             global::AxiosNet.WebAPI.Metadata.AxiosApiMetadata.GetInterfaceMethod(typeof(global::AxiosNet.SnapshotProbe.ISnapshotApi), 0, "GetAsync");
         private static readonly global::AxiosNet.WebAPI.Metadata.InterfaceMethodRuntime __method1 =
             global::AxiosNet.WebAPI.Metadata.AxiosApiMetadata.GetInterfaceMethod(typeof(global::AxiosNet.SnapshotProbe.ISnapshotApi), 1, "CreateAsync");
+        private static readonly global::AxiosNet.WebAPI.Metadata.InterfaceMethodRuntime __method2 =
+            global::AxiosNet.WebAPI.Metadata.AxiosApiMetadata.GetInterfaceMethod(typeof(global::AxiosNet.SnapshotProbe.ISnapshotApi), 2, "ReplaceAsync");
 
         private readonly global::AxiosNet.WebAPI.ApiClient _client;
 
@@ -25,6 +27,9 @@ namespace AxiosNet.Generated
 
         global::System.Threading.Tasks.Task<global::AxiosNet.SnapshotProbe.SnapshotItem> global::AxiosNet.SnapshotProbe.ISnapshotApi.CreateAsync(global::AxiosNet.SnapshotProbe.SnapshotItem p0, string p1, global::System.Threading.CancellationToken p2)
             => __method1.SendDataAsync<global::AxiosNet.SnapshotProbe.SnapshotItem>(_client, new object[] { p0, p1, p2 }, p2);
+
+        global::System.Threading.Tasks.Task<global::AxiosNet.SnapshotProbe.SnapshotItem> global::AxiosNet.SnapshotProbe.ISnapshotApi.ReplaceAsync(global::AxiosNet.SnapshotProbe.SnapshotItem p0, global::System.Threading.CancellationToken p1)
+            => __method2.SendDataAsync<global::AxiosNet.SnapshotProbe.SnapshotItem>(_client, new object[] { p0, p1 }, p1);
     }
 
     [global::System.CodeDom.Compiler.GeneratedCodeAttribute("AxiosNet.SourceGen", "<version>")]
@@ -46,10 +51,16 @@ namespace AxiosNet.Generated
                         .ReturnsResponse(typeof(global::AxiosNet.SnapshotProbe.SnapshotItem));
                     b.Method("CreateAsync", "POST", "items")
                         .Parameter(0, "item", typeof(global::AxiosNet.SnapshotProbe.SnapshotItem))
-                        .RootBody()
+                        .Body("item")
                         .Parameter(1, "tag", typeof(string))
                         .Body("tag_name")
                         .Parameter(2, "cancellationToken", typeof(global::System.Threading.CancellationToken))
+                        .Unannotated()
+                        .ReturnsData(typeof(global::AxiosNet.SnapshotProbe.SnapshotItem));
+                    b.Method("ReplaceAsync", "PUT", "items")
+                        .Parameter(0, "item", typeof(global::AxiosNet.SnapshotProbe.SnapshotItem))
+                        .Body()
+                        .Parameter(1, "cancellationToken", typeof(global::System.Threading.CancellationToken))
                         .Unannotated()
                         .ReturnsData(typeof(global::AxiosNet.SnapshotProbe.SnapshotItem));
                 });

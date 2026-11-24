@@ -21,10 +21,10 @@ internal sealed class BindingAccumulator
     // 未标注成员：默认通道由 Build 按 HTTP 方法决定；Order 即声明顺序。
     private readonly List<(int Order, IValueSource Source, string FieldName, bool NameFromAttribute)> _unannotated = [];
     private readonly List<(string Name, string? Value)> _staticHeaders = [];
-    // 显式 [Body]：作为请求体对象的键，可多个；键名重复在构建期报错。
+    // 显式 [Body("名")] 与 body 方法上改道的未标注成员：作为请求体对象的键，可多个；键名重复在构建期报错。
     private readonly List<(int Order, string Name, bool NameFromAttribute, IValueSource Source)> _bodyMembers = [];
-    // 显式 [RootBody]：整个请求体；多个时把各自的值合并成一层（结构化对象展开属性）。
-    private readonly List<(int Order, string Name, bool NameFromAttribute, IValueSource Source)> _rootBodies = [];
+    // 无参 [Body]：整份正文，原样发送；与其它正文来源互斥，构建期报错。
+    private (int Order, IValueSource Source)? _rootBody;
     // 正文来源的声明序号：三类来源共用一个自增计数，合并后据此还原声明顺序。
     private int _bodyOrder;
 
@@ -40,16 +40,13 @@ internal sealed class BindingAccumulator
         _memberKind = memberKind;
     }
 
-    /// <summary>是否已绑定请求正文（显式 [RootBody] 或至少一个 [Body] 成员）。</summary>
-    public bool HasBody => _rootBodies.Count > 0 || _bodyMembers.Count > 0;
+    /// <summary>是否已绑定请求正文（无参 [Body] 或至少一个正文键）。</summary>
+    public bool HasBody => _rootBody is not null || _bodyMembers.Count > 0;
 
     /// <summary>正文的定位名（错误消息用）。</summary>
-    public string? BodyName => _rootBodies.Count > 0
-        ? _rootBodies[0].Source.Name
+    public string? BodyName => _rootBody is { } root
+        ? root.Source.Name
         : (_bodyMembers.Count > 0 ? _bodyMembers[0].Source.Name : null);
-
-    /// <summary>正文形态的特性名（错误消息用）：<c>[RootBody]</c> 或 <c>[Body]</c>。</summary>
-    public string BodyKind => _rootBodies.Count > 0 ? "[RootBody]" : "[Body]";
 
     /// <summary>路径绑定：占位符名称大小写不敏感去重，值必须是标量（<see cref="Build"/> 时校验）。</summary>
     public void AddPath(IValueSource source, string explicitName)
@@ -105,7 +102,7 @@ internal sealed class BindingAccumulator
         _headerCollections.Add(source);
     }
 
-    /// <summary><see cref="BodyAttribute"/>：登记为请求体对象的一个键；键名重复在 <see cref="Build"/> 报错。</summary>
+    /// <summary><see cref="BodyAttribute"/>：无参（<paramref name="explicitName"/> 为 null）登记整份正文，否则登记为聚合正文的一个键；键名重复在 <see cref="Build"/> 报错。</summary>
     public void AddBody(IValueSource source, string fieldName, string? explicitName, bool nameFromAttribute)
     {
         if (source.Format is not null)
@@ -121,29 +118,23 @@ internal sealed class BindingAccumulator
             EnsureFormat(source, "Body");
         }
 
-        _bodyMembers.Add((_bodyOrder++, ResolveName(explicitName ?? string.Empty, string.IsNullOrWhiteSpace(fieldName) ? source.Name : fieldName), nameFromAttribute, source));
-    }
-
-    /// <summary><see cref="RootBodyAttribute"/>：整个请求体的一个来源；多个时合并到同一层。</summary>
-    public void AddRootBody(IValueSource source, string fieldName, bool nameFromAttribute)
-    {
-        if (source.Format is not null)
+        if (explicitName is null)
         {
-            if (!ScalarTypes.IsScalarBodyType(source.ValueType))
+            if (_rootBody is { } existing)
             {
                 throw new InvalidOperationException(
-                    $"{_owner} 的{_memberKind} {source.Name} 同时标注了 [Format] 与 [RootBody]，但类型 {source.ValueType.Name} 是结构化对象："
-                    + "结构化正文内部的格式化归序列化器（JsonConverter / XmlElement 等），库不进入文档内部改写。"
-                    + "要让 JSON 文档内部也按 [Format] 输出，请额外用 AxiosJsonFormat.ApplyTo 包装 JsonSerializerOptions。");
+                    $"{_owner} 的{_memberKind} {existing.Source.Name} 与 {source.Name} 都用无参 [Body] 声明了整份正文：只能有一个。"
+                    + "要合并进同一层，请改用 [Body(\"名\")] 把其中一个作为键。");
             }
 
-            EnsureFormat(source, "RootBody");
+            _rootBody = (_bodyOrder++, source);
+            return;
         }
 
-        _rootBodies.Add((_bodyOrder++, string.IsNullOrWhiteSpace(fieldName) ? source.Name : fieldName, nameFromAttribute, source));
+        _bodyMembers.Add((_bodyOrder++, ResolveName(explicitName, string.IsNullOrWhiteSpace(fieldName) ? source.Name : fieldName), nameFromAttribute, source));
     }
 
-    /// <summary>未标注任何参数特性的成员：先按 Query 登记；Build 时 body 方法（且无 [RootBody]）会整体改道成聚合正文。</summary>
+    /// <summary>未标注任何参数特性的成员：先按 Query 登记；Build 时 body 方法会整体改道成聚合正文（与无参 [Body] 共存即构建期报错）。</summary>
     public void AddUnannotated(IValueSource source, string fieldName, bool nameFromAttribute)
     {
         EnsureFormat(source, "Query");
@@ -216,21 +207,21 @@ internal sealed class BindingAccumulator
     /// <summary>完成校验并生成计划：正文来源互斥 → 正文归并 → 平铺映射去重 → 路径模板核对 → 标量护栏。</summary>
     public BindingPlan Build(HttpMethod method, string pathTemplate, bool allowDefaultBody, string? contentType)
     {
-        ValidateBodySources();
+        ValidateBodySources(method, allowDefaultBody);
 
-        // 显式 [Body] 在任何方法上都进正文；body 方法上的未标注成员按方法并入正文，默认通道只由 HTTP 方法决定。
-        var entries = new List<BodyEntry>(_bodyMembers.Count + _unannotated.Count + _rootBodies.Count);
+        // 显式 [Body("名")] 在任何方法上都进正文；body 方法上的未标注成员按方法并入正文，默认通道只由 HTTP 方法决定。
+        var entries = new List<BodyEntry>(_bodyMembers.Count + _unannotated.Count + (_rootBody is null ? 0 : 1));
 
         foreach (var member in _bodyMembers)
         {
-            entries.Add(new BodyEntry(member.Order, member.Name, member.NameFromAttribute, member.Source, isRootBody: false, spread: false));
+            entries.Add(new BodyEntry(member.Order, member.Name, member.NameFromAttribute, member.Source, isRootBody: false));
         }
 
         if (allowDefaultBody && _unannotated.Count > 0 && IsBodyMethod(method))
         {
             foreach (var member in _unannotated)
             {
-                entries.Add(new BodyEntry(member.Order, member.FieldName, member.NameFromAttribute, member.Source, isRootBody: false, spread: false));
+                entries.Add(new BodyEntry(member.Order, member.FieldName, member.NameFromAttribute, member.Source, isRootBody: false));
             }
 
             // 改道去正文的成员不再出现在查询串里。
@@ -238,18 +229,13 @@ internal sealed class BindingAccumulator
             _queryMaps.RemoveAll(m => _unannotated.Any(u => ReferenceEquals(u.Source, m.Source)));
         }
 
-        foreach (var member in _rootBodies)
+        // 无参 [Body]：整份正文，独占（ValidateBodySources 已保证此时没有其它正文来源）。
+        if (_rootBody is { } root)
         {
-            entries.Add(new BodyEntry(
-                member.Order,
-                member.Name,
-                member.NameFromAttribute,
-                member.Source,
-                isRootBody: true,
-                spread: !ScalarTypes.IsScalarBodyType(member.Source.ValueType)));
+            entries.Add(new BodyEntry(root.Order, root.Source.Name, nameFromAttribute: false, root.Source, isRootBody: true));
         }
 
-        // 声明顺序即输出顺序：三类来源按声明序号合并（[Body] 与 [RootBody] 混排也保持原顺序）。
+        // 声明顺序即输出顺序：正文键按声明序号排列。
         entries.Sort(static (left, right) => left.Order.CompareTo(right.Order));
         ValidateBodyEntries(entries, guardCaseInsensitive: MediaTypes.IsJson(contentType));
 
@@ -273,41 +259,50 @@ internal sealed class BindingAccumulator
             [.. entries]);
     }
 
-    /// <summary>同一个值不能既作为正文的一个键、又作为整份正文：两条通路会各自写一次。</summary>
-    private void ValidateBodySources()
+    /// <summary>无参 <c>[Body]</c> 是整份正文：不能与其它正文来源共存。</summary>
+    private void ValidateBodySources(HttpMethod method, bool allowDefaultBody)
     {
-        foreach (var member in _bodyMembers)
+        if (_rootBody is not { } root)
         {
-            foreach (var root in _rootBodies)
-            {
-                if (ReferenceEquals(root.Source, member.Source))
-                {
-                    throw new InvalidOperationException(
-                        $"{_owner} 的{_memberKind} {member.Source.Name} 同时标注了 [Body] 与 [RootBody]："
-                        + "同一个值要么作为正文的一个键，要么作为整份正文，不能两者都是。");
-                }
-            }
+            return;
+        }
+
+        if (_bodyMembers.Count > 0)
+        {
+            throw RootBodyConflict(root.Source.Name, _bodyMembers[0].Source.Name);
+        }
+
+        // body 方法上未标注成员会改道进正文；非 body 方法上它们走查询串，不冲突。
+        if (allowDefaultBody && IsBodyMethod(method) && _unannotated.Count > 0)
+        {
+            throw RootBodyConflict(root.Source.Name, _unannotated[0].Source.Name);
         }
     }
+
+    /// <summary>整份正文与另一个正文来源共存的错误：给出换通道与改成键两条出路。</summary>
+    private InvalidOperationException RootBodyConflict(string rootName, string otherName)
+        => new($"{_owner} 的{_memberKind} {rootName} 用无参 [Body] 声明为整份正文，但{_memberKind} {otherName} 也要进正文：整份正文必须独占。"
+            + $"请给 {otherName} 标 [Query] / [Header] 换通道或 [ApiIgnore] 排除，"
+            + $"或把 {rootName} 改成 [Body(\"名\")] 作为正文里的一个键。");
 
     /// <summary>正文合并的构建期校验：同层键名唯一、聚合正文装不下文件部件。</summary>
     private void ValidateBodyEntries(List<BodyEntry> entries, bool guardCaseInsensitive)
     {
-        // 结构化 [RootBody] 的属性名要等序列化才知道，这里只查能确定的键（[Body] / 未标注 / 标量 [RootBody]）。
+        // 整份正文独占时不按键聚合，键名唯一性与文件部件都由序列化器直接处理。
+        if (_rootBody is not null)
+        {
+            return;
+        }
+
         var names = new HashSet<string>(StringComparer.Ordinal);
         var caseInsensitiveNames = guardCaseInsensitive ? new HashSet<string>(StringComparer.OrdinalIgnoreCase) : null;
         foreach (var entry in entries)
         {
-            if (entry.IsRootBody && entry.Spread)
-            {
-                continue;
-            }
-
             if (!names.Add(entry.Name))
             {
                 throw new InvalidOperationException(
-                    $"{_owner} 有多个{_memberKind}的正文键名都是 \"{entry.Name}\"：合并到同一层后不能有重复键。"
-                    + "请改名，或把 [RootBody] 换成 [Body] 包成独立键。");
+                    $"{_owner} 有多个{_memberKind}的正文键名都是 \"{entry.Name}\"：聚合到同一层后不能有重复键。"
+                    + "请改名，或用无参 [Body] 把其中一个作为整份正文单独发送。");
             }
 
             if (caseInsensitiveNames is not null && !caseInsensitiveNames.Add(entry.Name))
@@ -318,21 +313,15 @@ internal sealed class BindingAccumulator
             }
         }
 
-        // 只有一个 [RootBody] 时原样发送（流 / HttpContent 都是合法正文）；一旦合并成对象，文件部件就没有线上形态。
-        var aggregate = entries.Count > 1 || (entries.Count == 1 && !entries[0].IsRootBody);
-        if (!aggregate)
-        {
-            return;
-        }
-
+        // 按键聚合的正文装不下文件部件：它们没有按键名写入的线上形态。
         foreach (var entry in entries)
         {
             if (IsFileBodyType(entry.Source.ValueType))
             {
                 throw new InvalidOperationException(
                     $"{_owner} 的{_memberKind} {entry.Source.Name} 是 {entry.Source.ValueType.Name}："
-                    + "合并正文（按键名聚合）装不下文件部件，请改用 [Multipart] 由库组装表单，"
-                    + "或把它作为唯一的 [RootBody] 原样发送。");
+                    + "按键聚合的正文装不下文件部件，请改用 [Multipart] 由库组装表单，"
+                    + "或用无参 [Body] 把它作为整份正文单独发送。");
             }
         }
     }

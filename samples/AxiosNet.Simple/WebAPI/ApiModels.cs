@@ -5,7 +5,7 @@ namespace AxiosNet.Simple.WebAPI;
 
 // =====================================================================
 // 请求模型：路由写在类上（[Get] / [Post] / ...），参数绑定写在属性上
-// （[Path] / [Query] / [Header] / [Body] / [RootBody]），IApiRequest<TResponse> 的泛型即返回类型。
+// （[Path] / [Query] / [Header] / [Body]），IApiRequest<TResponse> 的泛型即返回类型。
 // =====================================================================
 
 /// <summary>GET /api/users/{id}：路径段绑定。</summary>
@@ -105,8 +105,8 @@ public sealed class GetMissingUserRequest : IApiRequest<UserProfile>
 [Post("api/signed/echo")]
 public sealed class SignedEchoRequest : IApiRequest<SignedEchoResult>
 {
-    /// <summary>请求正文：签名序列化器不支持默认聚合正文，整个对象标 <c>[RootBody]</c> 原样交给它。</summary>
-    [RootBody]
+    /// <summary>请求正文：签名序列化器不支持默认聚合正文，整个对象标 <c>[Body]</c> 原样交给它。</summary>
+    [Body]
     public UserPayload Payload { get; set; } = null!;
 }
 

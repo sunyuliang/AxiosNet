@@ -79,7 +79,7 @@ internal sealed partial class InterfaceMethodMetadata
                 if (parameter.HasAnyBinding)
                 {
                     throw new InvalidOperationException(
-                        $"参数 {interfaceType.Name}.{methodName}.{parameter.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / HeaderCollection / Part / Body / RootBody）："
+                        $"参数 {interfaceType.Name}.{methodName}.{parameter.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / HeaderCollection / Part / Body）："
                         + "[ApiIgnore] 的语义是「完全不绑定」，两者同用是二义性。");
                 }
 
@@ -134,16 +134,14 @@ internal sealed partial class InterfaceMethodMetadata
                     DeclarationNormalization.OptionalPartValue(parameter.PartContentType, display, nameof(PartAttribute.ContentType))));
             }
 
-            if (parameter.RootBody)
-            {
-                accumulator.AddRootBody(source, parameter.Name, nameFromAttribute: false);
-            }
-
             if (parameter.Body)
             {
-                // 接口参数没有 [JsonPropertyName]：键名只取 [Body("名")] 或参数名。
-                var explicitBodyName = string.IsNullOrWhiteSpace(parameter.BodyName) ? null : parameter.BodyName!.Trim();
-                accumulator.AddBody(source, parameter.Name, explicitBodyName, nameFromAttribute: explicitBodyName is not null);
+                // 接口参数没有 [JsonPropertyName]：键名只取 [Body("名")] 或参数名；无参 [Body] 的 BodyName 为 null，表示整份正文。
+                accumulator.AddBody(
+                    source,
+                    parameter.Name,
+                    parameter.BodyName,
+                    nameFromAttribute: !string.IsNullOrWhiteSpace(parameter.BodyName));
             }
 
             if (!parameter.HasAnyBinding)
@@ -171,7 +169,7 @@ internal sealed partial class InterfaceMethodMetadata
         if (isMultipart && accumulator.HasBody)
         {
             throw new InvalidOperationException(
-                $"接口 {interfaceType.Name} 的 {methodName} 同时声明了 [Multipart] 与 {accumulator.BodyKind}（{accumulator.BodyName}）："
+                $"接口 {interfaceType.Name} 的 {methodName} 同时声明了 [Multipart] 与 [Body]（{accumulator.BodyName}）："
                 + "multipart 方法的请求体由全部参数装配，两者互斥。");
         }
 

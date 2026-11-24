@@ -544,7 +544,7 @@ namespace AxiosNet.SourceGen
                             {
                                 diagnostics.Add(new DiagnosticInfo(
                                     Diagnostics.InterfaceShapeUnsupported,
-                                    ToEquatable([symbol.Name, methodDisplay, $"参数 {parameter.Name} 是 CancellationToken，不能同时标注 Path / Query / Header / HeaderCollection / Part / Body / RootBody"]),
+                                    ToEquatable([symbol.Name, methodDisplay, $"参数 {parameter.Name} 是 CancellationToken，不能同时标注 Path / Query / Header / HeaderCollection / Part / Body"]),
                                     methodLocation));
                                 parameterBlocked = true;
                                 continue;
@@ -567,7 +567,7 @@ namespace AxiosNet.SourceGen
                                 TypeFormats.Display(parameter.Type),
                                 $"{symbol.Name}.{method.Name}.{ParameterName(parameter)}",
                                 null,
-                                false, false, null, false, null, false, null, false, false, null, false, false, null, null, null));
+                                false, false, null, false, null, false, null, false, false, null, false, null, null, null));
                             continue;
                         }
 
@@ -643,7 +643,6 @@ namespace AxiosNet.SourceGen
             var header = FindAttribute(attributes, wellKnown.Header);
             var part = FindAttribute(attributes, wellKnown.Part);
             var body = FindAttribute(attributes, wellKnown.Body);
-            var rootBody = FindAttribute(attributes, wellKnown.RootBody);
             var ignore = FindAttribute(attributes, wellKnown.ApiIgnore) is not null;
 
             string? partFileName = null;
@@ -687,7 +686,6 @@ namespace AxiosNet.SourceGen
                 FindAttribute(attributes, wellKnown.HeaderCollection) is not null,
                 body is not null,
                 body is null ? null : GetStringArgument(body, 0),
-                rootBody is not null,
                 part is not null,
                 part is null ? null : GetStringArgument(part, 0),
                 partFileName,
@@ -703,8 +701,7 @@ namespace AxiosNet.SourceGen
                 || FindAttribute(attributes, wellKnown.Header) is not null
                 || FindAttribute(attributes, wellKnown.HeaderCollection) is not null
                 || FindAttribute(attributes, wellKnown.Part) is not null
-                || FindAttribute(attributes, wellKnown.Body) is not null
-                || FindAttribute(attributes, wellKnown.RootBody) is not null;
+                || FindAttribute(attributes, wellKnown.Body) is not null;
         }
 
         // 取参数名；匿名位置参数没有名字时用 arg + 序号，保证生成代码合法。

@@ -18,7 +18,7 @@ internal static class Naming
         "GetAttribute", "PostAttribute", "PutAttribute", "PatchAttribute", "DeleteAttribute",
         "HeadAttribute", "OptionsAttribute", "HttpApiAttribute", "AuthorizeAttribute",
         "AllowAnonymousAttribute", "BodyContentTypeAttribute", "MultipartAttribute", "StreamAttribute",
-        "QueryCollectionFormatAttribute", "BodyAttribute", "RootBodyAttribute", "PartAttribute", "PathAttribute",
+        "QueryCollectionFormatAttribute", "BodyAttribute", "PartAttribute", "PathAttribute",
         "QueryAttribute", "HeaderAttribute", "JsonConverterAttribute", "ObsoleteAttribute"
     };
 

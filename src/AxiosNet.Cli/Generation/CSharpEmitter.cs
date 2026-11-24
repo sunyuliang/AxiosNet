@@ -343,11 +343,25 @@ internal sealed class CSharpEmitter
                     !part.Required || part.Type.Nullable));
             }
         }
+        else if (operation.RequestBody is { Properties.Count: > 0 } inline)
+        {
+            // 内联对象正文：一个属性一个正文键，不额外生成只包一层的 Body 类型。
+            foreach (var property in inline.Properties)
+            {
+                var name = Naming.Unique(Naming.Pascal(property.WireName), usedNames);
+                members.Add(RequestProperty(
+                    property.Description,
+                    BodyKeyAttribute(property.WireName),
+                    property.Type,
+                    name,
+                    !property.Required || property.Type.Nullable));
+            }
+        }
         else if (operation.RequestBody is { } body)
         {
             members.Add(RequestProperty(
                 body.Description,
-                "[RootBody]",
+                "[Body]",
                 body.Type,
                 Naming.Unique(Naming.Pascal(body.BodyName), usedNames),
                 !body.Required || body.Type.Nullable));
@@ -523,9 +537,21 @@ internal sealed class CSharpEmitter
                              + part.Name;
             }
         }
+        else if (operation.RequestBody is { Properties.Count: > 0 } inline)
+        {
+            // 内联对象正文：一个属性一个参数，与模型式的正文键一一对应。
+            foreach (var property in inline.Properties)
+            {
+                yield return BodyKeyAttribute(property.WireName)
+                             + " "
+                             + FormatType(property.Type, !property.Required || property.Type.Nullable)
+                             + " "
+                             + property.Name;
+            }
+        }
         else if (operation.RequestBody is { } body)
         {
-            yield return "[RootBody] "
+            yield return "[Body] "
                          + FormatType(body.Type, !body.Required || body.Type.Nullable)
                          + " "
                          + body.BodyName;
@@ -609,6 +635,10 @@ internal sealed class CSharpEmitter
         => MatchesWire(part.WireName, memberName, StringComparison.Ordinal)
             ? "[Part]"
             : $"[Part(\"{EscapeString(part.WireName)}\")]";
+
+    /// <summary>按线上键名生成正文键特性；始终显式写出键名，无参 <c>[Body]</c> 表示整份正文。</summary>
+    private static string BodyKeyAttribute(string wireName)
+        => $"[Body(\"{EscapeString(wireName)}\")]";
 
     /// <summary>判断成员名（去掉关键字转义前缀 <c>@</c> 后）是否与线上键名一致，一致即可省略特性参数。</summary>
     private static bool MatchesWire(string wireName, string parameterName, StringComparison comparison)

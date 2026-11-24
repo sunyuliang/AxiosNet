@@ -4,7 +4,7 @@ namespace AxiosNet.WebAPI.Attributes;
 
 /// <summary>声明请求体是 <c>multipart/form-data</c>：请求模型标在类上、接口级声明标在方法上。</summary>
 /// <remarks>
-/// 模型自身即表单：未标注参数特性的属性 / 参数默认按部件绑定，字段名取 <see cref="JsonPropertyNameAttribute"/> 或属性名 / 参数名。与 <c>[Body]</c> / <c>[RootBody]</c> 互斥。
+/// 模型自身即表单：未标注参数特性的属性 / 参数默认按部件绑定，字段名取 <see cref="JsonPropertyNameAttribute"/> 或属性名 / 参数名。与 <c>[Body]</c> 互斥。
 /// </remarks>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, Inherited = true, AllowMultiple = false)]
 public sealed class MultipartAttribute : Attribute

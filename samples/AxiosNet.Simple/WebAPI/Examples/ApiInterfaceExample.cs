@@ -4,7 +4,7 @@ using AxiosNet.WebAPI.Attributes;
 namespace AxiosNet.Simple.WebAPI.Examples;
 
 /// <summary>
-/// 11. 接口级声明：路由写在方法上，[Path] / [Query] / [Header] / [RootBody] 写在参数上，
+/// 11. 接口级声明：路由写在方法上，[Path] / [Query] / [Header] / [Body] 写在参数上，
 /// <c>Create&lt;T&gt;()</c> 直接得到可用代理。
 /// </summary>
 public sealed class ApiInterfaceExample : IExample
@@ -35,7 +35,7 @@ public sealed class ApiInterfaceExample : IExample
         var page = await api.ListAsync([1, 2], role: "admin");
         Console.WriteLine($"  GET  /api/users?ids[]=1&ids[]=2&role=admin -> {page.Length} 人 {ExampleConsole.Pretty(page)}");
 
-        // 3) [RootBody] 把参数直接当整个正文：{ "name": "carol", "age": 25 }（不加壳）
+        // 3) [Body] 把参数直接当整个正文：{ "name": "carol", "age": 25 }（不加壳）
         var created = await api.CreateAsync(new UserPayload("carol", 25), trace: "iface-create");
         Console.WriteLine($"  POST /api/users -> {created.Status} {ExampleConsole.Pretty(created.Data)}");
         Console.WriteLine($"    服务器回显 X-Trace = {created.Data!.Trace}");
@@ -67,7 +67,7 @@ public interface IUsersApi
 
     [Post("api/users")]
     Task<AxiosResponse<CreatedUser>> CreateAsync(
-        [RootBody] UserPayload payload,
+        [Body] UserPayload payload,
         [Header("X-Trace")] string? trace = null,
         CancellationToken cancellationToken = default);
 }

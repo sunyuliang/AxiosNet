@@ -98,16 +98,6 @@ public sealed class ModelValidationTests
     }
 
     [Fact]
-    public void DuplicateRootBodyScalarKeys_AreRejected()
-    {
-        var ex = Assert.Throws<AxiosException>(
-            () => CreateClient_ApiClientModelValidation().GetUri(new DuplicateRootBodyKeysRequest()));
-
-        Assert.Contains("[RootBody]", ex.Message);
-        Assert.Contains("重复键", ex.Message);
-    }
-
-    [Fact]
     public void DuplicateBodyKeys_AreRejected()
     {
         var ex = Assert.Throws<AxiosException>(
@@ -266,23 +256,13 @@ public sealed class ModelValidationTests
         public int Id { get; set; }
     }
 
-    [Post("items")]
-    public sealed class DuplicateRootBodyKeysRequest : IApiRequest<object>
-    {
-        [RootBody, JsonPropertyName("value")]
-        public int First { get; set; }
-
-        [RootBody, JsonPropertyName("value")]
-        public int Second { get; set; }
-    }
-
     [Post("probe")]
     public sealed class DuplicateBodyKeysRequest : IApiRequest<object>
     {
-        [Body, JsonPropertyName("value")]
+        [Body("value")]
         public object? First { get; set; }
 
-        [Body, JsonPropertyName("value")]
+        [Body("value")]
         public object? Second { get; set; }
     }
 

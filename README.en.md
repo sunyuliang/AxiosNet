@@ -3,9 +3,9 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2895%20passed-success)](#build-and-test)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2750%20passed-success)](#build-and-test)
-[![coverage](https://img.shields.io/badge/coverage-92.1%25_(branch_87.7%25)-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2898%20passed-success)](#build-and-test)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2748%20passed-success)](#build-and-test)
+[![coverage](https://img.shields.io/badge/coverage-92.2%25_(branch_87.4%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -626,7 +626,7 @@ When a status is rejected (4xx / 5xx) or the body fails to parse, `Message` appe
 
 The URL inside `Message` keeps only `scheme` + host + port + path: query / fragment / userinfo are always stripped, while **path segments themselves are not redacted** — an endpoint that carries a credential in the path (for example `/api/token/{secret}`) shows up verbatim, so logs for those endpoints need their own redaction.
 
-> **Declaration-time and run-time errors are reported separately.** When the **declaration itself** is ill-formed — a route attribute is missing (e.g. `[Get]`), a `{id}` path placeholder has no matching `[Path]` (placeholder unbound), a body declaration conflict (for example `[RootBody]` combined with `[Multipart]`, or duplicate merged keys), and so on — on a model or on an interface alike, it throws `AxiosException` (`ERR_BAD_OPTION_VALUE`) with the original exception in `Cause`; the source generator already lifts two of those to compile time (`AXA016` / `AXA017`). A well-formed declaration that merely fails to **read or format a value at runtime** (a `null` path value, a throwing formatter, …) throws `AxiosException` with `ERR_BAD_REQUEST`. A single `catch (AxiosException)` covers both; the only other exit is missing AOT metadata (`AxiosAotMetadataException`).
+> **Declaration-time and run-time errors are reported separately.** When the **declaration itself** is ill-formed — a route attribute is missing (e.g. `[Get]`), a `{id}` path placeholder has no matching `[Path]` (placeholder unbound), a body declaration conflict (for example a bare `[Body]` combined with body keys or `[Multipart]`, or duplicate aggregated keys), and so on — on a model or on an interface alike, it throws `AxiosException` (`ERR_BAD_OPTION_VALUE`) with the original exception in `Cause`; the source generator already lifts two of those to compile time (`AXA016` / `AXA017`). A well-formed declaration that merely fails to **read or format a value at runtime** (a `null` path value, a throwing formatter, …) throws `AxiosException` with `ERR_BAD_REQUEST`. A single `catch (AxiosException)` covers both; the only other exit is missing AOT metadata (`AxiosAotMetadataException`).
 
 | Code | Triggered by |
 | --- | --- |
@@ -1652,7 +1652,7 @@ Once endpoints multiply, URLs, parameters and headers scattered across call site
 
 | Style | What it looks like | Use for | Cost |
 | --- | --- | --- | --- |
-| Request model (default recommendation) | `class GetUserRequest : IApiRequest<User>` with `[Path]` / `[Query]` / `[Body]` / `[RootBody]` on properties | Endpoints fairly independent; requests passed around or reused as objects | One type per endpoint |
+| Request model (default recommendation) | `class GetUserRequest : IApiRequest<User>` with `[Path]` / `[Query]` / `[Body]` etc. on properties | Endpoints fairly independent; requests passed around or reused as objects | One type per endpoint |
 | Interface | `interface IUserApi` with routes and bindings on methods / parameters | Endpoints in groups; calls feel like local methods | Source generator emits real proxies (same path for JIT / Native AOT); falls back to `DispatchProxy` (JIT only) when not generated |
 
 Both forms share one kernel: path-template validation, duplicate detection, default channel selection (aggregated body vs. query by HTTP method), static headers and authorization semantics are identical. Model-based is the default recommendation — start there.
@@ -1708,20 +1708,21 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });                     /
 | Header | `[Header]` / `[HeaderCollection]` | `null` is skipped |
 | Static headers | `[Headers]` (class / interface / interface method) | `"Name: Value"`; name only means remove that header (a same-name `[Header]` property / parameter still writes it back); method level overrides interface level |
 | Form | `[Multipart]` + `[Part]` | The model itself is the form; `[Part]` overrides field name / filename / part type |
-| Body (top level) | `[RootBody]` | Contributes to the body; the whole body when it is the only source; merges into one layer with `[Body]` / undecorated members; a single `null` sends no body |
-| Body (key) | `[Body]` / `[Body("name")]` | One key in the aggregated body; repeatable; an explicit name wins over `[JsonPropertyName]`; combines with `[Query]` / `[Header]` / `[Path]` |
+| Body (whole) | `[Body]` (no argument) | That value is the entire body, sent as-is without a key shell; it must be the only body source — any second source fails at build time |
+| Body (key) | `[Body("name")]` / undecorated | One key in the aggregated body; repeatable; key name `[Body("name")]` > `[JsonPropertyName]` > member name; combines with `[Query]` / `[Header]` / `[Path]` |
 | Value formatting | `[Format]` (property / parameter) | Format string or static method; per element for collections, per value for dictionaries (see [Value formatting](#value-formatting)) |
 | Encoding | `[BodyContentType]` / `[QueryCollectionFormat]` / `[Stream]` (class / property) | Property level overrides class level; two explicit declarations with different values throw `ERR_BAD_OPTION_VALUE`; `[Multipart]` and `[BodyContentType]` are mutually exclusive |
 | Skip | `[ApiIgnore]` | Not bound at all |
 
 - **Default channel depends only on the HTTP method, never on the member type**: every undecorated member on POST / PUT / PATCH is aggregated into **one object** body keyed by member name (even a single member is wrapped, `{ "page": 2 }`); undecorated members on GET / HEAD / OPTIONS / DELETE and custom methods go to the query.
 - Aggregated body keys: `[Body("name")]` first, then `[JsonPropertyName]`, otherwise the property name (the parameter name for interfaces); only the last one goes through `PropertyNamingPolicy` (camelCase by default), explicit names are used verbatim. Duplicate keys fail at build time.
-- Body merging depends only on the sources: `[Body]` and undecorated members are written under their keys in the same layer, while `[RootBody]` spreads structured values and writes scalar values under their key. A single body source (one `[RootBody]`) is sent as-is, unwrapped; as soon as a second source appears everything merges into one layer, where duplicate keys fail and key order follows declaration order. `[RootBody]` + `[Multipart]` fails at build time, and so does a merged body that would have to carry a file part (a `Stream` / `FormFile` / `HttpContent` member) — use `[Multipart]` instead, or keep it as the single `[RootBody]` and send it as-is.
-- Model-style requests do not need a separate `Payload` class just for the body: put the body members directly on the request class (POST / PUT / PATCH are body by default, so no `[Body]` is needed); interface-style methods necessarily take one strongly typed parameter.
-- An explicit `[Body]` forces the member into the aggregated body on any HTTP method; repeatable, and `[Body("user_name")]` sets the key name directly; duplicate keys fail at build time. The same member may also carry `[Query]` / `[Header]` / `[Path]`, and its value is applied to each channel.
+- The body shape depends only on the **value itself**, never on how many sources there are: a bare `[Body]` is the whole body (sent as-is, no key shell) and must be exclusive — any second body source fails at build time; every other source (`[Body("name")]` and undecorated members on POST / PUT / PATCH) is written as a key into the **same layer** of the aggregated body, where key order follows declaration order and duplicate keys fail. An aggregated body cannot carry file parts (a `Stream` / `FormFile` / `HttpContent` member) — that also fails at build time; use `[Multipart]` instead, or make that object the only bare `[Body]` and send it as-is.
+- Model-style requests do not need a separate `Payload` class just for the body: put the body members directly on the request class (POST / PUT / PATCH are body by default, so no `[Body]` is needed); when the whole body is itself an array / scalar / stream, no subclass is needed to lift it either — just mark it with a bare `[Body]`. Interface-style methods necessarily take one strongly typed parameter.
+- `[Body("user_name")]` makes the member one key of the aggregated body on any HTTP method; repeatable, duplicate keys fail at build time; an empty name (`[Body("")]`) falls back to `[JsonPropertyName]` and then the member name. The same member may also carry `[Query]` / `[Header]` / `[Path]`, and its value is applied to each channel.
+- A bare `[Body]` sends the member's value as the whole body: objects are not spread, arrays and scalars get no key shell, streams go out directly. It cannot coexist with `[Body("name")]`, with undecorated members on a body method, with another bare `[Body]` or with `[Multipart]`; the build fails because the whole body must be exclusive, and the message offers two ways out — move the other member to another channel, or turn this one into `[Body("name")]`.
 - To opt out of the aggregated body: `[Query]` pulls a member back to the query, `[Header]` / `[HeaderCollection]` / `[Path]` change the channel, `[ApiIgnore]` sends nothing.
-- The aggregated body supports JSON and `application/x-www-form-urlencoded`; use `[Multipart]` for multipart and mark members with `[RootBody]` for XML / custom serializers (otherwise a clear build-time error is raised).
-- With zero undecorated members no body is sent; with at least one, an object is sent even when every value is `null` (keys are kept).
+- The aggregated body supports JSON and `application/x-www-form-urlencoded`; use `[Multipart]` for multipart and mark the member with a bare `[Body]` for XML / custom serializers (otherwise a clear build-time error is raised).
+- With no body members (and no bare `[Body]`) no body is sent; with at least one, an object is sent even when every value is `null` (keys are kept).
 - One property may carry several binding attributes (`[Path]` + `[Header]`): the value is read once and applied to each.
 - Value formatting: `[Format]` on the member wins; everything else uses the instance default `AxiosConfig.Serialization.ValueText`. For declarative requests it must be set on the instance defaults — changing it in the per-request `configure` throws `ERR_BAD_OPTION_VALUE` (see [Value formatting](#value-formatting)).
 
@@ -1731,7 +1732,7 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });                     /
 | --- | --- |
 | `[Header]` / `[Headers]` / `[HeaderCollection]` | property → one request header; static header strings `"Name: Value"` on a class / interface / interface method; dictionary property → a batch of headers |
 | `[Query]` / `[QueryCollectionFormat]` | bind a query parameter; how a collection is expanded (`Brackets` / `Multi` / `Csv` / `Ssv` / `Tsv` / `Pipes`) |
-| `[Body]` / `[RootBody]` / `[BodyContentType]` | key in the aggregated body / body source (the whole body when it is the only source, otherwise merged into one layer); how that body is encoded (JSON / form / as-is) |
+| `[Body]` / `[BodyContentType]` | no argument = the whole body (as-is, exclusive), with a name = one key in the aggregated body; `[BodyContentType]` sets how that body is encoded (JSON / form / as-is) |
 | `[Authorize]` / `[AllowAnonymous]` | **not** the `Microsoft.AspNetCore.Authorization` ones: these only declare that an endpoint needs credentials, and authentication is still done by `CredentialProvider`; they do not hook into the ASP.NET Core authorization pipeline |
 
 In a web project `using AxiosNet.WebAPI.Attributes;` collides with ASP.NET Core's `AuthorizeAttribute`; alias it:
@@ -1749,7 +1750,7 @@ Encoding and frame format can be configured per request, or declared directly on
 [BodyContentType("application/x-www-form-urlencoded")]   // class level: this model is form-encoded by default
 public sealed class LoginRequest : IApiRequest<Token>
 {
-    [RootBody] public LoginForm Form { get; set; } = null!;
+    [Body] public LoginForm Form { get; set; } = null!;
 }
 
 [Get("users")]
@@ -1807,7 +1808,7 @@ public interface IUserApi
         CancellationToken cancellationToken = default);
 
     [Post("users")]
-    Task<AxiosResponse<User>> CreateAsync([RootBody] UserPayload payload, CancellationToken cancellationToken = default);
+    Task<AxiosResponse<User>> CreateAsync([Body] UserPayload payload, CancellationToken cancellationToken = default);
 }
 
 var api = client.Create<IUserApi>();
@@ -1824,7 +1825,7 @@ var user = await api.GetAsync(5);                          // User
 **Binding**
 
 - `CancellationToken` parameters are recognized by type (at most one) and never bound.
-- Every other parameter follows the `[Path]` / `[Query]` / `[Header]` / `[HeaderCollection]` / `[Part]` / `[Body]` / `[RootBody]` / `[ApiIgnore]` or "undecorated" rules: undecorated parameters on POST / PUT / PATCH become one object body keyed by parameter name, and go to the query on other methods — exactly like request models.
+- Every other parameter follows the `[Path]` / `[Query]` / `[Header]` / `[HeaderCollection]` / `[Part]` / `[Body]` / `[ApiIgnore]` or "undecorated" rules: undecorated parameters on POST / PUT / PATCH become one object body keyed by parameter name, and go to the query on other methods — exactly like request models; a bare `[Body]` is the whole body (exclusive), `[Body("name")]` is one key in it.
 - `[Multipart]` sits on the method: parameters are the form parts, and `[Part]` overrides the field name / file name / part type.
 - `[Format]` may sit on parameters; the rest follows the instance default `AxiosConfig.Serialization.ValueText` (see [Value formatting](#value-formatting)).
 
@@ -1850,7 +1851,7 @@ Encoding declarations are method-level too — the media type decides how the bo
 ```csharp
 [Post("login")]
 [BodyContentType("application/x-www-form-urlencoded")]   // object flattened as a form (setting only the Content-Type header does not change encoding)
-Task<AxiosResponse<Token>> LoginAsync([RootBody] LoginForm form, CancellationToken cancellationToken = default);
+Task<AxiosResponse<Token>> LoginAsync([Body] LoginForm form, CancellationToken cancellationToken = default);
 
 [Get("users")]
 [QueryCollectionFormat(AxiosCollectionFormat.Multi)]    // ids=1&ids=2 (default Brackets: ids[]=1&ids[]=2)
@@ -1865,7 +1866,7 @@ Task<AxiosResponse<User[]>> ListAsync([Query] int[] ids, CancellationToken cance
 
 **Validation and errors**
 
-- Invalid declarations (missing route, `[Part]` without `[Multipart]`, `[Multipart]` combined with `[Body]` / `[RootBody]` / `[BodyContentType]`, `[Stream]` on a non-streaming method, duplicate parameter names…) throw `AxiosException` (`ERR_BAD_OPTION_VALUE`, original exception in `Cause`) from `Create<T>()` — the same exit as model-based requests.
+- Invalid declarations (missing route, `[Part]` without `[Multipart]`, `[Multipart]` combined with `[Body]` / `[BodyContentType]`, `[Stream]` on a non-streaming method, duplicate parameter names…) throw `AxiosException` (`ERR_BAD_OPTION_VALUE`, original exception in `Cause`) from `Create<T>()` — the same exit as model-based requests.
 - Validate at startup with `ApiClient.ValidateInterfaces(typeof(IA), ...)` or `ValidateInterfaces(assembly)`: returns all messages, never throws, and aggregates every failing method of the same interface rather than only the first.
   - The type-based overloads work under Native AOT.
   - `ValidateInterfaces(assembly)` throws `PlatformNotSupportedException` under AOT — call the generated `ValidateAll()` instead.
@@ -1934,7 +1935,7 @@ var client = new ApiClient(url, c =>
   - Nested objects, dictionaries and `JsonElement` trees inside the query apply it per leaf: member declaration first, then the instance hook.
 - **Collections and dictionaries**: on a collection it applies per element, on a dictionary per value (keys untouched). Declarations on dictionaries skip the build-time type check — the value type is only known at runtime.
 - **Format strings** require `IFormattable` and always use the invariant culture (never `CurrentCulture`); use a formatter method when you need culture-aware output.
-- **Structured bodies are out of scope**: `[Format]` on a structured `[Body]` / `[RootBody]` is a build-time error (the serializer owns the document). To apply `[Format]` inside JSON as well, opt into the bridge:
+- **Structured bodies are out of scope**: `[Format]` on a structured `[Body]` is a build-time error (the serializer owns the document). To apply `[Format]` inside JSON as well, opt into the bridge:
 
 ```csharp
 using AxiosNet.WebAPI.Serialization;
@@ -1945,13 +1946,13 @@ config.Serialization.JsonOptions =
 ```
 
 - **Build-time errors**, never a silent runtime fallback (model properties and interface parameters share the same validation):
-  - `[Format]` combined with a structured `[Body]` / `[RootBody]` / `[HeaderCollection]` / file part (`Stream` / `byte[]` / `Memory<byte>` / `ReadOnlyMemory<byte>` / `ArraySegment<byte>` / `FormFile` / `HttpContent`, with collection elements and dictionary values judged the same way);
+  - `[Format]` combined with a structured `[Body]` / `[HeaderCollection]` / file part (`Stream` / `byte[]` / `Memory<byte>` / `ReadOnlyMemory<byte>` / `ArraySegment<byte>` / `FormFile` / `HttpContent`, with collection elements and dictionary values judged the same way);
   - a format string on a non-`IFormattable` scalar (e.g. `bool`) or on a binary form (`byte[]` / `Memory<byte>` / `ReadOnlyMemory<byte>` / `ArraySegment<byte>`);
   - `[Format]` on a non-scalar (POCO) query parameter.
 - **Catching mistakes**, none of the three waits for a request:
   - with `nameof(...)` a typo is an ordinary compile error (`CS0117`);
   - a wrong signature (not `public static` / generic / parameters are not `(object?, ValueTextChannel)` / return is not `string`) is reported at compile time as `AXA015`, with the correct signature spelled out in the message;
-  - a value shape that does not fit the channel (a format string on `bool` / a binary form, `[Format]` on a structured `[Body]` / `[RootBody]` or a file part) throws `AxiosException` (`ERR_BAD_OPTION_VALUE`) while the binding plan is built.
+  - a value shape that does not fit the channel (a format string on `bool` / a binary form, `[Format]` on a structured `[Body]` or a file part) throws `AxiosException` (`ERR_BAD_OPTION_VALUE`) while the binding plan is built.
 - Without the source generator `AXA015` does not run — use `ApiClient.ValidateModels(...)` / `ValidateInterfaces(...)` to surface these at startup instead.
 - **Native AOT**: the source generator bakes the formatter delegate into the metadata (an invalid signature reports `AXA015`), so nothing reflects at runtime. Shapes registered by hand via `RegisterShape<T>()` are not baked: `[Format(typeof(...), nameof(...))]` on them fails explicitly under AOT with a pointer to "enable the source generator or use a format string" instead of silently dropping the format.
 
@@ -2016,7 +2017,8 @@ Streaming endpoints additionally get `public const AxiosStreamFormat StreamForma
   - `--single-file` puts everything into one file; `--single-interface` (with `--interface-name`, default `IApiClient`) is interface-style only.
 - **Parameters and bodies**: `path` / `query` / `header` map to `[Path]` / `[Query]` / `[Header]` (on properties in model style, on parameters in interface style).
   - One request media type is chosen, in order JSON > `+json` > `*/*` > form > multipart > text > binary > first.
-  - JSON produces a strongly typed `[RootBody]`; `application/x-www-form-urlencoded` sets `config.ContentType` in the generated `Configure` (model style) or produces `[BodyContentType(...)]` (interface style); `multipart/form-data` expands object properties into `[Part("wire")]` members (`format: binary` → `byte[]`); text bodies become `string`; binary bodies become `byte[]`.
+  - A required inline object body over JSON or form media is expanded into body keys on the request class, one `[Body("wire")]` per property (parameters in interface style), so no class is generated just to wrap it. These keep a single `[Body]` member instead: a `$ref` body pointing at a shared component (expanding would copy it into every endpoint), a body that declares `additionalProperties` (unknown fields cannot be enumerated), a body that is not `required` (an object with null keys is not the same as sending no body), wire names that collide case-insensitively (the aggregated body compares the wire form), and XML / custom media types (only a whole body has an encoding path).
+  - The single-body-member shapes: JSON produces a strongly typed `[Body]` (bare, the whole body); `application/x-www-form-urlencoded` sets `config.ContentType` in the generated `Configure` (model style) or produces `[BodyContentType(...)]` (interface style); `multipart/form-data` expands object properties into `[Part("wire")]` members (`format: binary` → `byte[]`); text bodies become `string`; binary bodies become `byte[]`.
   - Multiple candidates report `MULTIPLE_REQUEST_CONTENT`.
 - **Query arrays**: `style: form` + `explode: true` → `Multi` (`ids=1&ids=2`); `explode: false` → `Csv`; `spaceDelimited` / `pipeDelimited` → `Ssv` / `Pipes`; Swagger 2 `collectionFormat` maps the same way. Model style writes it in `Configure`; interface style emits `[QueryCollectionFormat(...)]`.
 - **Responses**: the lowest 2xx status wins (then `2XX`, then `default`).
@@ -2046,7 +2048,7 @@ Streaming endpoints additionally get `public const AxiosStreamFormat StreamForma
 
 The full flow is demonstrated by [`OpenApiGeneratedExample`](samples/AxiosNet.Simple/WebAPI/Examples/OpenApiGeneratedExample.cs): it generates [`WebAPI/Generated/`](samples/AxiosNet.Simple/WebAPI/Generated) from [`samples/AxiosNet.Simple/WebAPI/demo.openapi.json`](samples/AxiosNet.Simple/WebAPI/demo.openapi.json) in the default model style and calls the real routes of `DemoApiServer` with `RequestAsync` / `RequestStreamAsync`.
 
-Coverage includes tag-grouped `*Requests.g.cs`, root authorization, form login, multipart, and SSE / JSON-array streaming. Regenerating that output inside the repository:
+Coverage includes tag-grouped `*Requests.g.cs`, inline body expansion, root authorization, form login, multipart, and SSE / JSON-array streaming. Regenerating that output inside the repository:
 
 ```bash
 dotnet run --project src/AxiosNet.Cli -f net8.0 -- \
@@ -2486,7 +2488,7 @@ The package ships a C# source generator (packed under `analyzers/dotnet/cs`, act
 | `AXA014` | Error | Invalid encoding declaration on an interface method: blank / control-character `[BodyContentType]`, undefined `[QueryCollectionFormat]` value, or combined with `[Multipart]` |
 | `AXA015` | Error | Invalid `[Format]` declaration: blank format string, or a formatter that does not exist / is not `public static` / does not take `(object?, ValueTextChannel)` / does not return `string` |
 | `AXA016` | Error | A `{name}` in the route template has no member bound to it with `[Path]` (names compare case-insensitively; the placeholder grammar matches the runtime - `[A-Za-z_][A-Za-z0-9_]*` only, so `{{` is a literal and constraint forms such as `{id:int}` are left to the runtime 'unrecognised brace' error) |
-| `AXA017` | Error | Body declaration conflict: `[RootBody]` combined with `[Multipart]` |
+| `AXA017` | Error | Body declaration conflict: a bare `[Body]` (whole body) combined with body keys, another bare `[Body]` or `[Multipart]` |
 
 `System.Text.Json` metadata still has to be registered on demand (source-generated `JsonSerializerContext`):
 
@@ -2723,15 +2725,15 @@ Sources compile as **C# 12**: every project declares `<LangVersion>12.0</LangVer
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2694 / 2681 | `net8.0` / `net6.0` | 5375 |
+| `AxiosNet.Tests` (core + declarative) | 2692 / 2679 | `net8.0` / `net6.0` | 5371 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
-| `AxiosNet.Cli.Tests` (OpenAPI generation) | 75 | `net8.0` | 75 |
+| `AxiosNet.Cli.Tests` (OpenAPI generation) | 80 | `net8.0` | 80 |
 | `AxiosNet.Compat.Tests` (netstandard2.0 compat asset) | 57 / 52 | `net8.0` / `net472` | 109 |
-| **Total** | **2895 / 2802** | | **5697** |
+| **Total** | **2898 / 2800** | | **5698** |
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed".
 
-Line coverage **92.1%**, branch coverage **87.7%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites):
+Line coverage **92.2%**, branch coverage **87.4%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites):
 
 ```bash
 dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat Code Coverage" \

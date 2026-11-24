@@ -240,18 +240,11 @@ public sealed class InterfaceParameterBuilder
         return _owner;
     }
 
-    /// <summary><c>[Body]</c>：参数作为请求体对象的一个键（可多个）；省略名字时用参数名。</summary>
+    /// <summary><c>[Body]</c>：省略名字时参数的值就是整份正文（原样发送、独占）；给了名字时作为聚合正文的一个键。</summary>
     public InterfaceMethodBuilder Body(string? name = null)
     {
         _parameter.Body = true;
         _parameter.BodyName = name;
-        return _owner;
-    }
-
-    /// <summary><c>[RootBody]</c>：参数作为正文来源（独占时原样发送，否则与其它正文成员合并）。</summary>
-    public InterfaceMethodBuilder RootBody()
-    {
-        _parameter.RootBody = true;
         return _owner;
     }
 

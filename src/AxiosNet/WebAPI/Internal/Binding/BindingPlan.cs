@@ -50,7 +50,7 @@ internal sealed class BindingPlan
         _bodyEntries = bodyEntries;
     }
 
-    /// <summary>请求体原始值：只有一个 <see cref="RootBodyAttribute"/> 来源时不加壳，其余情况合并成一层。</summary>
+    /// <summary>请求体原始值：无参 <see cref="BodyAttribute"/> 时原样返回，否则把正文键聚合成一个对象。</summary>
     public object? ResolveBodyValue(object target, Func<object?, ValueTextChannel, string?>? formatter)
     {
         if (_bodyEntries.Length == 0)
@@ -58,10 +58,9 @@ internal sealed class BindingPlan
             return null;
         }
 
-        // 单个 [RootBody]：保持原样正文（任何序列化器、任何编码都能用）。
-        if (_bodyEntries.Length > 1 || !_bodyEntries[0].IsRootBody)
+        // 单条正文键也要加壳：{ "键": 值 }。
+        if (!_bodyEntries[0].IsRootBody)
         {
-            // 合并正文：[Body] / 未标注成员按键名写入，[RootBody] 结构化值展开、标量按键写入。
             var aggregate = new AggregateBodyMember[_bodyEntries.Length];
             for (var index = 0; index < _bodyEntries.Length; index++)
             {
@@ -71,8 +70,7 @@ internal sealed class BindingPlan
                     entry.Source.GetValue(target),
                     entry.Source.ValueType,
                     entry.NameFromAttribute,
-                    entry.Source.Format,
-                    entry.Spread);
+                    entry.Source.Format);
             }
 
             return new AggregateBody(aggregate);
@@ -416,21 +414,20 @@ internal sealed class BindingPlan
 }
 
 /// <summary>
-/// 正文的一个来源：显式 <c>[Body]</c> / body 方法上的未标注成员（按键写入），或 <c>[RootBody]</c>（结构化值展开属性）；顺序即输出顺序。
+/// 正文的一个来源：正文键（<c>[Body("名")]</c> / body 方法上的未标注成员，按键写入），或无参 <c>[Body]</c>（整份正文、原样发送）；顺序即输出顺序。
 /// </summary>
 internal readonly struct BodyEntry
 {
-    public BodyEntry(int order, string name, bool nameFromAttribute, IValueSource source, bool isRootBody, bool spread)
+    public BodyEntry(int order, string name, bool nameFromAttribute, IValueSource source, bool isRootBody)
     {
         Order = order;
         Name = name;
         NameFromAttribute = nameFromAttribute;
         Source = source;
         IsRootBody = isRootBody;
-        Spread = spread;
     }
 
-    /// <summary>声明序号（三类来源共用一个自增计数）。</summary>
+    /// <summary>声明序号（正文键与整份正文共用一个自增计数）。</summary>
     public int Order { get; }
 
     /// <summary>键名（<c>[Body("名")]</c> &gt; <c>[JsonPropertyName]</c> &gt; 成员名）。</summary>
@@ -442,9 +439,6 @@ internal readonly struct BodyEntry
     /// <summary>取值来源。</summary>
     public IValueSource Source { get; }
 
-    /// <summary>是否来自 <c>[RootBody]</c>：独占正文时原样发送，不加壳。</summary>
+    /// <summary>是否来自无参 <c>[Body]</c>：整份正文，原样发送、不加壳。</summary>
     public bool IsRootBody { get; }
-
-    /// <summary>是否把结构化值的属性展开到当前层（只有结构化 <c>[RootBody]</c> 成立）。</summary>
-    public bool Spread { get; }
 }

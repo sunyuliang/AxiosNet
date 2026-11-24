@@ -86,18 +86,12 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
         using (var writer = new Utf8JsonWriter(buffer, writerOptions))
         {
             writer.WriteStartObject();
-            // 多于 1 个键或存在展开时才需要去重集合（大小写不敏感）。
-            var names = body.Members.Length > 1 || (body.Members.Length == 1 && body.Members[0].Spread)
+            // 多于 1 个键才需要去重集合（大小写不敏感）。
+            var names = body.Members.Length > 1
                 ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                 : null;
             foreach (var member in body.Members)
             {
-                if (member.Spread)
-                {
-                    WriteSpread(writer, member, options, config, names);
-                    continue;
-                }
-
                 var name = ResolveAggregateName(member, options);
                 AggregateKeys.EnsureUnique(names, name, config, ignoreCase: true);
                 writer.WritePropertyName(name);
@@ -108,46 +102,6 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
         }
 
         return buffer.ToArray();
-    }
-
-    /// <summary>多个 [RootBody] 的展开：JSON 对象把属性铺到当前层，其它形态（标量 / 数组等）按键写入。</summary>
-    private static void WriteSpread(
-        Utf8JsonWriter writer,
-        AggregateBodyMember member,
-        JsonSerializerOptions options,
-        AxiosConfig config,
-        HashSet<string>? names)
-    {
-        if (member.Value is null)
-        {
-            return;
-        }
-
-        // 先按声明类型序列化一次，再判定根是对象还是其它形态。
-        using var buffer = new MemoryStream(128);
-        using (var inner = new Utf8JsonWriter(buffer))
-        {
-            SerializeAggregateMember(inner, member.Value, member.ValueType, options);
-        }
-
-        using var document = JsonDocument.Parse(buffer.ToArray());
-        var root = document.RootElement;
-
-        if (root.ValueKind != JsonValueKind.Object)
-        {
-            var name = ResolveAggregateName(member, options);
-            AggregateKeys.EnsureUnique(names, name, config, ignoreCase: true);
-            writer.WritePropertyName(name);
-            root.WriteTo(writer);
-            return;
-        }
-
-        foreach (var property in root.EnumerateObject())
-        {
-            AggregateKeys.EnsureUnique(names, property.Name, config, ignoreCase: true);
-            writer.WritePropertyName(property.Name);
-            property.Value.WriteTo(writer);
-        }
     }
 
     /// <summary>聚合正文的键名：显式名字（<c>[Body("名")]</c> / <c>[JsonPropertyName]</c>）原样；否则套生效的命名策略（默认 Web 的 camelCase）。</summary>

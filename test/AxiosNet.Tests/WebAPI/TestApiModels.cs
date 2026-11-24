@@ -31,7 +31,7 @@ public sealed class ListUsersRequest : IApiRequest<Person[]>
 [Post("users")]
 public sealed class CreateUserRequest : IApiRequest<Person>
 {
-    [RootBody]
+    [Body]
     public Person Person { get; set; } = null!;
 }
 
@@ -45,7 +45,7 @@ public sealed class CreateUserDefaultBodyRequest : IApiRequest<Person>
 [Post("users/empty")]
 public sealed class NullBodyRequest : IApiRequest<Person>
 {
-    [RootBody]
+    [Body]
     public Person? Person { get; set; }
 }
 
@@ -64,7 +64,7 @@ public sealed class PingRequest : IApiRequest<object>
 [Post("login")]
 public sealed class LoginRequest : IApiRequest<string>
 {
-    [RootBody]
+    [Body]
     public Person? Credentials { get; set; }
 }
 
@@ -114,7 +114,7 @@ public sealed class AbsoluteUrlRequest : IApiRequest<Person>
 [Post("orders")]
 public sealed class DefaultBodyRequest : IApiRequest<Person>
 {
-    /// <summary>未标注：POST 上默认进聚合正文，键为属性名（payload），无需 [Body]。</summary>
+    /// <summary>未标注：POST 上默认进聚合正文，键为属性名（payload），不需要任何特性。</summary>
     public Person Payload { get; set; } = null!;
 }
 
@@ -221,7 +221,7 @@ public sealed class PathBodyHeaderRequest : IApiRequest<Person>
     /// <summary>同一标量值：路径占位符 + 请求头 + 请求体三处并存（标量体按 AxiosNet 规则走原始文本）。</summary>
     [Path("orderId")]
     [Header("X-Order-Id")]
-    [RootBody]
+    [Body]
     public long OrderId { get; set; }
 }
 
@@ -230,7 +230,7 @@ public sealed class QueryBodyRequest : IApiRequest<Person>
 {
     /// <summary>复杂对象：进请求体（序列化器处理）+ 进查询串（嵌套规则）；不能进路径/头（标量护栏）。</summary>
     [Query("reportId")]
-    [RootBody]
+    [Body]
     public ReportPayload Report { get; set; } = null!;
 }
 
@@ -291,11 +291,11 @@ public sealed class ScalarArrayDefaultBodyRequest : IApiRequest<Person>
     public int[]? Tags { get; set; }
 }
 
-/// <summary>[RootBody] + Configure 改 ContentType：编码规则与核心包 data 一致（表单）。</summary>
+/// <summary>[Body] + Configure 改 ContentType：编码规则与核心包 data 一致（表单）。</summary>
 [Post("form")]
 public sealed class FormBodyRequest : ApiRequest<Person>
 {
-    [RootBody]
+    [Body]
     public UserPayload Payload { get; set; } = null!;
 
     protected override void Configure(AxiosConfig config)

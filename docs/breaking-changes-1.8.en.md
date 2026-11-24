@@ -2,7 +2,7 @@
 
 This is the **1.7 → 1.8** migration reference for callers upgrading from `AxiosNet` 1.7.x to 1.8.x; it matches the public surface shipped since 1.8.0.
 
-Both changes remove a layer rather than add one: declarative calls deliver the body by default, and a shortcut's second argument is now decided by the verb alone.
+All three changes remove a layer rather than add one: declarative calls deliver the body by default, a shortcut's second argument is decided by the verb alone, and a member's place in the body is spelled by the shape of `[Body]`.
 
 ## 1. Declarative calls return the body
 
@@ -35,6 +35,25 @@ Both changes remove a layer rather than add one: declarative calls deliver the b
 - An `AxiosConfig` / `CancellationToken` in the second position still throws `ERR_BAD_OPTION_VALUE` right away (the read-verb message now says "query parameter").
 - Named arguments must follow: `GetAsync(url, data: x)` → `GetAsync(url, query: x)`.
 
-## 3. Samples and docs
+## 3. Body binding: `[RootBody]` is gone, `[Body]` has two shapes
 
-Interface-style samples now mark their composite parameter with `[RootBody]`, so the body is no longer wrapped in the parameter name (`{ "payload": { … } }` → `{ … }`), matching the model style. This is a sample-level alignment only: the binding rule is unchanged — undecorated members on POST / PUT / PATCH still aggregate into one object body keyed by member name.
+A member's place in the body is no longer spelled by two attributes, nor inferred from how many body sources there are — the shape of `[Body]` is the answer:
+
+| Declaration | Meaning |
+| --- | --- |
+| `[Body]` | that value is the whole body: sent as-is, no key shell, and it must be the only body source |
+| `[Body("name")]` | one key of the aggregated body (`{ "name": value, … }`), repeatable |
+| `[Body("")]` / undecorated | the key falls back to `[JsonPropertyName]`, then to the property / parameter name |
+
+| 1.7 | 1.8 |
+| --- | --- |
+| `[RootBody] x` (1.7.2) / `[Body] x` (1.7.0–1.7.1): the whole body | `[Body] x` |
+| `[Body] x` (1.7.2): one key of the aggregated body | `[Body("name")] x`; write `[Body("")] x` to keep the previous key rule |
+| `RootBody()` builder | `Body()` (no argument = the whole body), `Body("name")` |
+| `BodyAttribute(string name = "")` with a non-null `Name` | `BodyAttribute()` / `BodyAttribute(string name)`, `Name` is `string?` (`null` = the whole body) |
+
+- Upgrading from 1.7.2, a bare `[Body]` needs a name (1.7.2 had already moved the whole-body meaning to `[RootBody]`); upgrading from 1.7.0 / 1.7.1, a bare `[Body]` stays as it is and `[RootBody]` becomes `[Body]`.
+- The rule "undecorated members on POST / PUT / PATCH join the body" is unchanged; what changed is that they only aggregate **by key** and no longer mix with a whole body.
+- Combining a bare `[Body]` with `[Body("name")]`, with undecorated members on a body method, with another bare `[Body]` or with `[Multipart]` is a build-time error: the source generator reports `AXA017`, and without the generator the binding builder throws `ERR_BAD_OPTION_VALUE` on first use; the message offers two ways out — move the other member to another channel, or turn the whole body into `[Body("name")]`.
+- When the whole body is an array / scalar / stream, no subclass is needed any more: put `[Body]` on that member.
+- The interface-style sample's composite parameter follows along from `[RootBody]` to `[Body]`, so the body is no longer wrapped in the parameter name (`{ "payload": { … } }` → `{ … }`), matching the model style.

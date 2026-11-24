@@ -47,22 +47,6 @@ public sealed class LoginFormResult
     public string User { get; set; } = default!;
 }
 
-public sealed class LoginPayload
-{
-    [JsonPropertyName("username")]
-    public string Username { get; set; } = default!;
-    [JsonPropertyName("password")]
-    public string Password { get; set; } = default!;
-}
-
-public sealed class NewUser
-{
-    [JsonPropertyName("name")]
-    public string Name { get; set; } = default!;
-    [JsonPropertyName("age")]
-    public int Age { get; set; }
-}
-
 public sealed class SecureProfile
 {
     [JsonPropertyName("user")]

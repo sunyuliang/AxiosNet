@@ -38,8 +38,13 @@ public sealed class ListUsersRequest : ApiRequest<User[]>
 [Authorize]
 public sealed class CreateUserRequest : ApiRequest<CreatedUser>
 {
-    [RootBody]
-    public NewUser Body { get; set; } = default!;
+    /// <summary>用户名</summary>
+    [Body("name")]
+    public string Name { get; set; } = default!;
+
+    /// <summary>年龄</summary>
+    [Body("age")]
+    public int Age { get; set; }
 }
 
 /// <summary>GET /api/users/{id} — 按 Id 查询用户</summary>

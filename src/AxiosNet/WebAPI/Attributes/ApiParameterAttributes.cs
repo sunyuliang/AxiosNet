@@ -1,6 +1,6 @@
 namespace AxiosNet.WebAPI.Attributes;
 
-/// <summary>把属性 / 参数从绑定中完全排除：不进路径、不进查询串、不进请求头、也不作为请求体。与 Path / Query / Header / HeaderCollection / Part / Body / RootBody 同用直接报错。</summary>
+/// <summary>把属性 / 参数从绑定中完全排除：不进路径、不进查询串、不进请求头、也不作为请求体。与 Path / Query / Header / HeaderCollection / Part / Body 同用直接报错。</summary>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter, Inherited = true, AllowMultiple = false)]
 public sealed class ApiIgnoreAttribute : Attribute
 {
@@ -52,27 +52,27 @@ public sealed class HeaderAttribute : Attribute
 }
 
 /// <summary>
-/// 把属性 / 参数值作为请求体对象的一个键发送：正文为 <c>{ "键": 值 }</c>，可与 <see cref="QueryAttribute"/> / <see cref="HeaderAttribute"/> / <see cref="PathAttribute"/> 同用；可标注多个，重复键在构建期报错。
+/// 声明请求正文：不带名字时该成员的值就是整份正文（原样发送、独占）；带名字时作为聚合正文里的一个键（可多个）。
 /// </summary>
-/// <remarks>键名优先级：<see cref="Name"/> &gt; <c>[JsonPropertyName]</c> &gt; 成员名；未显式命名时套生效的 JSON 命名策略。</remarks>
+/// <remarks>
+/// 无参形态下正文形态由值的类型决定：对象 / 数组 / 标量 / 流都直接下发，不拆不加壳；此时不能再有其它正文来源（其它 <see cref="BodyAttribute"/> 或 body 方法上改道进正文的未标注成员）。
+/// 带名形态下正文是 <c>{ "键": 值, … }</c>，可与 <see cref="QueryAttribute"/> / <see cref="HeaderAttribute"/> / <see cref="PathAttribute"/> 同用。
+/// </remarks>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter, Inherited = true, AllowMultiple = false)]
 public sealed class BodyAttribute : Attribute
 {
-    /// <summary>正文键名；空白或 <c>null</c> 表示回退 <c>[JsonPropertyName]</c> 或成员名。</summary>
-    public string Name { get; }
+    /// <summary>正文键名；<c>null</c> 表示整份正文（无参构造），空串表示回退 <c>[JsonPropertyName]</c> 或成员名。</summary>
+    public string? Name { get; }
 
-    /// <summary>绑定到正文的一个键；<paramref name="name"/> 省略、空白或 <c>null</c> 时取 <c>[JsonPropertyName]</c>，再回退属性名 / 参数名。</summary>
-    public BodyAttribute(string name = "")
+    /// <summary>整份正文：原样发送，不与其它正文来源共存。</summary>
+    public BodyAttribute()
+    {
+        Name = null;
+    }
+
+    /// <summary>聚合正文的一个键；<paramref name="name"/> 空白时回退 <c>[JsonPropertyName]</c>，再回退属性名 / 参数名。</summary>
+    public BodyAttribute(string name)
     {
         Name = name;
     }
-}
-
-/// <summary>
-/// 把属性 / 参数值并入请求体：单独占据正文时原样发送（不加壳），与 <see cref="BodyAttribute"/> / 未标注成员同时存在时合并到同一层（结构化值展开属性，其余按键写入）。
-/// 与 <see cref="MultipartAttribute"/> 互斥；含 <see cref="FormFile"/> 时 Content-Type 须为 <c>multipart/form-data</c>。
-/// </summary>
-[AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter, Inherited = true, AllowMultiple = false)]
-public sealed class RootBodyAttribute : Attribute
-{
 }

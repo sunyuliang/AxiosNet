@@ -67,6 +67,6 @@ internal readonly struct AggregateBodyMember
     /// <summary>成员级 <c>[Format]</c>；<c>null</c> 表示走通道默认。</summary>
     public ValueFormat? Format { get; }
 
-    /// <summary>是否把结构化值的属性展开到当前层（多个 <c>[RootBody]</c> 合并）；false 表示按 <see cref="Name"/> 作为键。</summary>
+    /// <summary>是否把结构化值的属性铺平到根级；只有「单个结构化正文按表单编码」这条内部路径为 <c>true</c>，声明的正文键一律为 <c>false</c>。</summary>
     public bool Spread { get; }
 }

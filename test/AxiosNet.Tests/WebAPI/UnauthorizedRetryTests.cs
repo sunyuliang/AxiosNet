@@ -672,13 +672,13 @@ public sealed class ExplicitAuthRequest : IApiRequest<Person>
 [Put("secure")]
 public sealed class HttpContentPutRequest : IApiRequest<Person>
 {
-    [RootBody] public HttpContent? Payload { get; set; }
+    [Body] public HttpContent? Payload { get; set; }
 }
 
 [Put("secure")]
 public sealed class StreamPutRequest : IApiRequest<Person>
 {
-    [RootBody] public Stream? Payload { get; set; }
+    [Body] public Stream? Payload { get; set; }
 }
 
 [Multipart]

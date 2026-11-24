@@ -229,7 +229,7 @@ public sealed class RequestModelGeneratorTests
     }
 
     /// <summary>
-    /// AXA016 / AXA017：两条「声明自相矛盾」的编译期检查 —— 占位符没人绑、<c>[RootBody]</c> 与 <c>[Multipart]</c> 同用。
+    /// AXA016 / AXA017：两条「声明自相矛盾」的编译期检查 —— 占位符没人绑、<c>[Body]</c> 与 <c>[Multipart]</c> 同用。
     /// </summary>
     /// <remarks>
     /// 这两条在运行期也会由元数据构建器报出，但那是「跑起来才知道」。声明式层的期望是写错就编译不过，所以钉住这个提前量。
@@ -260,7 +260,7 @@ public sealed class RequestModelGeneratorTests
             [Multipart]
             public sealed class TwoBodyModel : IApiRequest<Person>
             {
-                [RootBody] public string? First { get; set; }
+                [Body] public string? First { get; set; }
 
                 [Part] public string? Second { get; set; }
             }
@@ -317,6 +317,41 @@ public sealed class RequestModelGeneratorTests
         Assert.Contains("First", bodyConflict.GetMessage());
         Assert.Contains("[Multipart]", bodyConflict.GetMessage());
         Assert.Contains("互斥", bodyConflict.GetMessage());
+    }
+
+    /// <summary>AXA017：无参 <c>[Body]</c> 是整份正文，与正文键共存要在编译期就报。</summary>
+    [Fact]
+    public void Generator_ReportsWholeBodyWithKeyMemberConflict()
+    {
+        var ns = UniqueNamespace();
+        var source = """
+            using AxiosNet.WebAPI;
+            using AxiosNet.WebAPI.Attributes;
+
+            namespace __NS__;
+
+            public sealed class Person
+            {
+                public string? Name { get; set; }
+            }
+
+            [Post("probe")]
+            public sealed class MixedBodyModel : IApiRequest<Person>
+            {
+                [Body] public Person? Payload { get; set; }
+
+                [Body("page")] public int Page { get; set; }
+            }
+            """.Replace("__NS__", ns);
+
+        var (_, diagnostics, _) = RunGenerator(source);
+        DiagnosticCatalogTests.AssertNoUnrenderedPlaceholders(diagnostics);
+
+        var conflict = diagnostics.Single(static d => d.Id == "AXA017");
+        Assert.Equal(DiagnosticSeverity.Error, conflict.Severity);
+        Assert.Contains("MixedBodyModel", conflict.GetMessage());
+        Assert.Contains("整份正文", conflict.GetMessage());
+        Assert.Contains("[Body(\"名\")]", conflict.GetMessage());
     }
 
     [Fact]
@@ -953,7 +988,10 @@ public sealed class RequestModelGeneratorTests
                 Task<AxiosResponse<SnapshotItem>> GetAsync([Path] int id, CancellationToken cancellationToken);
 
                 [Post("items")]
-                Task<SnapshotItem?> CreateAsync([RootBody] SnapshotItem item, [Body("tag_name")] string? tag, CancellationToken cancellationToken);
+                Task<SnapshotItem?> CreateAsync([Body("item")] SnapshotItem item, [Body("tag_name")] string? tag, CancellationToken cancellationToken);
+
+                [Put("items")]
+                Task<SnapshotItem?> ReplaceAsync([Body] SnapshotItem item, CancellationToken cancellationToken);
             }
         }
         """;
@@ -1122,7 +1160,7 @@ public sealed class RequestModelGeneratorTests
         public class EncodingModel : IApiRequest<string>
         {
             // 两层同值：允许，属性级是实际读取到的来源。
-            [RootBody]
+            [Body]
             [BodyContentType("application/json")]
             public string? Payload { get; set; }
 
@@ -1148,7 +1186,7 @@ public sealed class RequestModelGeneratorTests
         [BodyContentType("application/json")]
         public class ConflictModel : IApiRequest<string>
         {
-            [RootBody]
+            [Body]
             [BodyContentType("text/plain")]
             public string? Payload { get; set; }
         }

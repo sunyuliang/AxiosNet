@@ -92,7 +92,22 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/NewUser"
+                "type": "object",
+                "required": [
+                  "name",
+                  "age"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "用户名"
+                  },
+                  "age": {
+                    "type": "integer",
+                    "format": "int32",
+                    "description": "年龄"
+                  }
+                }
               }
             }
           }
@@ -186,7 +201,21 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/LoginPayload"
+                "type": "object",
+                "required": [
+                  "username",
+                  "password"
+                ],
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "description": "登录用户名"
+                  },
+                  "password": {
+                    "type": "string",
+                    "description": "明文密码（仅示例用）"
+                  }
+                }
               }
             }
           }
@@ -218,7 +247,21 @@
           "content": {
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/LoginPayload"
+                "type": "object",
+                "required": [
+                  "username",
+                  "password"
+                ],
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "description": "登录用户名"
+                  },
+                  "password": {
+                    "type": "string",
+                    "description": "明文密码（仅示例用）"
+                  }
+                }
               }
             }
           }
@@ -399,22 +442,6 @@
           }
         }
       },
-      "NewUser": {
-        "type": "object",
-        "required": [
-          "name",
-          "age"
-        ],
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "age": {
-            "type": "integer",
-            "format": "int32"
-          }
-        }
-      },
       "CreatedUser": {
         "type": "object",
         "required": [
@@ -458,21 +485,6 @@
           },
           "deleted": {
             "type": "boolean"
-          }
-        }
-      },
-      "LoginPayload": {
-        "type": "object",
-        "required": [
-          "username",
-          "password"
-        ],
-        "properties": {
-          "username": {
-            "type": "string"
-          },
-          "password": {
-            "type": "string"
           }
         }
       },

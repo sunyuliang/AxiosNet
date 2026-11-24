@@ -17,9 +17,9 @@ internal static class AggregateKeys
         if (seen is not null && !seen.Add(name))
         {
             throw AxiosException.InvalidOption(
-                $"请求体合并后出现重复键 \"{name}\""
+                $"请求体聚合后出现重复键 \"{name}\""
                 + (ignoreCase ? "（仅大小写不同也算重复）" : string.Empty)
-                + "：请改名，或把 [RootBody] 换成 [Body] 包成独立键。", config);
+                + "：请改名。", config);
         }
     }
 }

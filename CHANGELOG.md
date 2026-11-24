@@ -16,10 +16,13 @@
 
 - 声明式默认只交付正文：`RequestAsync` 返回 `Task<TResponse>`（此前 `Task<AxiosResponse<TResponse>>`），正文为空时返回 `default(TResponse)`，与接口式 `Task<T>` 形态一致；读响应元数据改用 `RequestFullAsync`。`RequestStreamAsync` 不变。
 - 快捷方法第二个参数的语义只看动词：`GetAsync` / `DeleteAsync` / `HeadAsync` / `OptionsAsync` 的第二个参数改为查询参数（参数名 `data` → `query`，写入 `Params`），读动词要发正文改写 `c => c.Body = ...`；`Stream` / `HttpContent` 落在查询参数位置抛 `ERR_BAD_OPTION_VALUE`。
+- `RootBodyAttribute` 删除，`[Body]` 用两种构造形态区分正文位置：无参 `[Body]` 是整份正文（原样发送、独占），`[Body("名")]` 是聚合正文里的一个键。`BodyAttribute.Name` 改为 `string?`（`null` 表示整份正文）；`RequestModelMemberBuilder.RootBody()` / `InterfaceParameterBuilder.RootBody()` 删除，改用无参 `Body()`。迁移对照见 [`docs/breaking-changes-1.8.md`](docs/breaking-changes-1.8.md)。
+- 正文形态不再由「正文来源个数」决定：此前单个正文来源原样发送、出现第二个才合并（`[RootBody]` 还会展开结构化值的属性），现在只看值自身——无参 `[Body]` 永远原样发送，其它来源永远按键聚合。无参 `[Body]` 与任何其它正文来源写在一起改在构建期报错（`AXA017` 与运行期构建器同一口径），错误消息给出「换通道」与「改成键」两条出路。
 
 ### Changed
 
-- 接口式示例的复合参数统一标 `[RootBody]`，正文不再多包一层参数名，与模型式示例对齐；`DemoApiServer` 相应去掉 `payload` 解包。绑定规则本身未变。
+- OpenAPI 生成器把必填的内联对象请求体（JSON / 表单媒体类型）直接展开成请求类上的正文键 `[Body("wire")]`（接口式是参数），不再生成只包一层的 `Body` 类型；`$ref` 共享组件、`additionalProperties`、可选正文、键名仅大小写不同、XML / 自定义媒体类型仍保留单个 `[Body]` 成员。
+- 接口式示例的复合参数统一标 `[Body]`，正文不再多包一层参数名，与模型式示例对齐；`DemoApiServer` 相应去掉 `payload` 解包。绑定规则本身未变。
 
 ## [1.7.2] - 2026-11-21
 

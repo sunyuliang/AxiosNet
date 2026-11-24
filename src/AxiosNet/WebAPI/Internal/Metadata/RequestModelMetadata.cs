@@ -206,7 +206,7 @@ internal sealed class RequestModelMetadata
                 if (member.HasAnyBinding)
                 {
                     throw new InvalidOperationException(
-                        $"属性 {modelName}.{member.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / HeaderCollection / Part / Body / RootBody）："
+                        $"属性 {modelName}.{member.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / HeaderCollection / Part / Body）："
                         + "[ApiIgnore] 的语义是「完全不绑定」，两者同用是二义性。");
                 }
 
@@ -270,20 +270,14 @@ internal sealed class RequestModelMetadata
                     DeclarationNormalization.OptionalPartValue(member.PartContentType, display, nameof(PartAttribute.ContentType))));
             }
 
-            if (member.RootBody)
-            {
-                accumulator.AddRootBody(source, member.FieldName, member.NameFromAttribute);
-            }
-
             if (member.Body)
             {
-                // 键名优先级：[Body("名")] > [JsonPropertyName] > 属性名；显式名字不再套 JSON 命名策略。
-                var explicitBodyName = string.IsNullOrWhiteSpace(member.BodyName) ? null : member.BodyName!.Trim();
+                // 键名优先级：[Body("名")] > [JsonPropertyName] > 属性名；无参 [Body] 的 BodyName 为 null，表示整份正文。
                 accumulator.AddBody(
                     source,
                     member.FieldName,
-                    explicitBodyName,
-                    nameFromAttribute: explicitBodyName is not null || member.NameFromAttribute);
+                    member.BodyName,
+                    nameFromAttribute: !string.IsNullOrWhiteSpace(member.BodyName) || member.NameFromAttribute);
             }
 
             if (!member.HasAnyBinding)
@@ -314,7 +308,7 @@ internal sealed class RequestModelMetadata
         if (isMultipart && accumulator.HasBody)
         {
             throw new InvalidOperationException(
-                $"请求模型 {modelName} 同时声明了 [Multipart] 与 {accumulator.BodyKind}（{accumulator.BodyName}）："
+                $"请求模型 {modelName} 同时声明了 [Multipart] 与 [Body]（{accumulator.BodyName}）："
                 + "multipart 模型的请求体由全部属性装配，两者互斥。");
         }
 

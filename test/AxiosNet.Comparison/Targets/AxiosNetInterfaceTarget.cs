@@ -31,7 +31,7 @@ internal sealed class AxiosNetInterfaceTarget : IAxiosNetTarget
 
     private sealed class Session(ISaveUserApi api) : ITargetSession
     {
-        /// <summary>调代理方法发一次 POST；正文来自 <c>[RootBody]</c> 参数，读回 <c>User</c>。</summary>
+        /// <summary>调代理方法发一次 POST；正文来自 <c>[Body]</c> 参数，读回 <c>User</c>。</summary>
         public async Task SendAsync(CancellationToken cancellationToken)
         {
             var response = await api.SaveUserAsync(Payloads.Request, cancellationToken).ConfigureAwait(false);
@@ -51,7 +51,7 @@ internal sealed class AxiosNetInterfaceTarget : IAxiosNetTarget
 /// <summary>接口式入口的声明：路由与方法绑定写在方法 / 参数上，返回形状是 <c>Task&lt;AxiosResponse&lt;T&gt;&gt;</c>。</summary>
 internal interface ISaveUserApi
 {
-    /// <summary>POST 一个 <see cref="User"/> 负载并读回 <see cref="User"/>（<c>[RootBody]</c> 表示该参数独占正文）。</summary>
+    /// <summary>POST 一个 <see cref="User"/> 负载并读回 <see cref="User"/>（<c>[Body]</c> 表示该参数独占正文）。</summary>
     [Post("/" + Payloads.Route)]
-    Task<AxiosResponse<User>> SaveUserAsync([RootBody] User payload, CancellationToken cancellationToken = default);
+    Task<AxiosResponse<User>> SaveUserAsync([Body] User payload, CancellationToken cancellationToken = default);
 }

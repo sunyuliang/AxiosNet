@@ -30,7 +30,7 @@ internal sealed class AxiosNetModelTarget : IAxiosNetTarget
 
     private sealed class Session(AxiosClient client, SaveUserRequest request) : ITargetSession
     {
-        /// <summary>发一次 <c>RequestAsync(请求模型)</c>；正文由请求模型的 <c>[RootBody]</c> 成员提供，读回 <c>User</c>。</summary>
+        /// <summary>发一次 <c>RequestAsync(请求模型)</c>；正文由请求模型的 <c>[Body]</c> 成员提供，读回 <c>User</c>。</summary>
         public async Task SendAsync(CancellationToken cancellationToken)
         {
             var user = await client.RequestAsync(request, cancellationToken).ConfigureAwait(false);

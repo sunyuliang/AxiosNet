@@ -155,7 +155,7 @@ public sealed class ReviewProbeTests
     [Put("secure-body")]
     public sealed class ProbeSecureBodyRequest : IApiRequest<Person>
     {
-        [RootBody]
+        [Body]
         public Person Payload { get; set; } = null!;
     }
 

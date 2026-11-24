@@ -786,7 +786,7 @@ public sealed class FormatAttributeTests
         [Query]
         public DateTime When { get; set; }
 
-        [RootBody]
+        [Body]
         public int Count { get; set; }
 
         [Header("X-Probe")]
@@ -840,7 +840,7 @@ public sealed class FormatAttributeTests
     [Post("raw")]
     private sealed class FormattedScalarBodyRequest : IApiRequest<Person>
     {
-        [RootBody, Format("yyyy-MM-dd HH:mm")]
+        [Body, Format("yyyy-MM-dd HH:mm")]
         public DateTime At { get; set; }
     }
 
@@ -850,7 +850,7 @@ public sealed class FormatAttributeTests
         [Header("X-Trace")]
         public int Trace { get; set; }
 
-        [RootBody]
+        [Body]
         public DateTime At { get; set; }
     }
 
@@ -858,24 +858,24 @@ public sealed class FormatAttributeTests
     [Post("aggregate")]
     private sealed class HookedAggregateRequest : IApiRequest<Person>
     {
-        [Body]
+        [Body("")]
         public int Count { get; set; }
 
-        [Body]
+        [Body("")]
         public DateTime When { get; set; }
     }
 
     [Post("aggregate")]
     private sealed class FormattedAggregateRequest : IApiRequest<Person>
     {
-        [Body, Format("yyyy-MM-dd")]
+        [Body(""), Format("yyyy-MM-dd")]
         public DateTime When { get; set; }
     }
 
     [Post("aggregate")]
     private sealed class HookedCollectionAggregateRequest : IApiRequest<Person>
     {
-        [Body]
+        [Body("")]
         public int[] Codes { get; set; } = [];
     }
 
@@ -883,14 +883,14 @@ public sealed class FormatAttributeTests
     private sealed class FormattedBytesBodyRequest : IApiRequest<Person>
     {
         // byte[] 不是「标量」，但它是合法的裸标量正文形态（默认走 base64，可换成任意编码）。
-        [RootBody, Format(typeof(FormatHelpers), nameof(FormatHelpers.Hex))]
+        [Body, Format(typeof(FormatHelpers), nameof(FormatHelpers.Hex))]
         public byte[] Data { get; set; } = [];
     }
 
     [Post("body")]
     private sealed class FormatWithStructuredBodyRequest : IApiRequest<Person>
     {
-        [RootBody, Format("yyyy-MM-dd")]
+        [Body, Format("yyyy-MM-dd")]
         public Person Payload { get; set; } = new("x", 1);
     }
 
@@ -1039,7 +1039,7 @@ public sealed class FormatAttributeTests
     {
         [Post("form")]
         [BodyContentType(AxiosConfig.FormUrlEncodedContentType)]
-        Task<AxiosResponse<Person>> SubmitAsync([RootBody] FormPayload payload, CancellationToken cancellationToken = default);
+        Task<AxiosResponse<Person>> SubmitAsync([Body] FormPayload payload, CancellationToken cancellationToken = default);
     }
 
     public interface IFormatMultipartApi
@@ -1056,7 +1056,7 @@ public sealed class FormatAttributeTests
     {
         [Post("body")]
         Task<AxiosResponse<Person>> SubmitAsync(
-            [RootBody, Format("yyyy-MM-dd")] Person payload,
+            [Body, Format("yyyy-MM-dd")] Person payload,
             CancellationToken cancellationToken = default);
     }
 
@@ -1064,7 +1064,7 @@ public sealed class FormatAttributeTests
     {
         [Post("body")]
         Task<AxiosResponse<Person>> SubmitAsync(
-            [RootBody, Format(typeof(FormatHelpers), nameof(FormatHelpers.Throwing))] string payload,
+            [Body, Format(typeof(FormatHelpers), nameof(FormatHelpers.Throwing))] string payload,
             CancellationToken cancellationToken = default);
     }
 

@@ -293,12 +293,15 @@ namespace AxiosNet.SourceGen
 
                     if (parameter.Body)
                     {
-                        builder.Append("                        .Body(").Append(CodeLiteral.OrNull(parameter.BodyName)).AppendLine(")");
-                    }
-
-                    if (parameter.RootBody)
-                    {
-                        builder.AppendLine("                        .RootBody()");
+                        // 无参 [Body] 是整份正文；带名字（含空串）是聚合正文的一个键。
+                        if (parameter.BodyName is null)
+                        {
+                            builder.AppendLine("                        .Body()");
+                        }
+                        else
+                        {
+                            builder.Append("                        .Body(").Append(CodeLiteral.Of(parameter.BodyName)).AppendLine(")");
+                        }
                     }
 
                     if (parameter.Part)
@@ -325,7 +328,6 @@ namespace AxiosNet.SourceGen
                         && !parameter.Header
                         && !parameter.HeaderCollection
                         && !parameter.Body
-                        && !parameter.RootBody
                         && !parameter.Part)
                     {
                         builder.AppendLine("                        .Unannotated()");

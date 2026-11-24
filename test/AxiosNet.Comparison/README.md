@@ -22,8 +22,8 @@ AxiosNet 的三种入口都能表达「POST 一个 `User` 并读回 `User`」，
 | 形态 | AxiosNet 写法 | 同一形态的对照实现 |
 | --- | --- | --- |
 | 强类型（`typed`） | `client.PostAsync<User>(Payloads.Route, model)` | HttpClient / RestSharp / Flurl |
-| 模型式（`model`） | `client.RequestAsync(new SaveUserRequest { Body = model })`（`[Post]` + `[RootBody]`） | —（其余四家没有请求模型这一层） |
-| 接口式（`interface`） | `client.Create<ISaveUserApi>().SaveUserAsync(model)`（`[Post]` + `[RootBody]` 参数） | Refit |
+| 模型式（`model`） | `client.RequestAsync(new SaveUserRequest { Body = model })`（`[Post]` + `[Body]`） | —（其余四家没有请求模型这一层） |
+| 接口式（`interface`） | `client.Create<ISaveUserApi>().SaveUserAsync(model)`（`[Post]` + `[Body]` 参数） | Refit |
 
 其它实现只有一种入口：Refit 只有接口式，HttpClient / RestSharp / Flurl 只有强类型。所选形态它们不支持时**按自身支持的形态参与**，
 表里「模式」列标注每行实际使用的形态，报告口径行会列出哪些实现是「按自身形态参与」。
@@ -81,7 +81,7 @@ AxiosNet 的三种入口都能表达「POST 一个 `User` 并读回 `User`」，
 
 - `HttpClient` / `Refit` / `RestSharp` / `Flurl` 全部注入与 AxiosNet 默认连接池逐项对齐的
   `SocketsHttpHandler`（Cookies / Proxy / 连接数 / 超时 / 解压一致），避免把默认值差异当成实现差异。
-- 三种形态发送的请求正文逐字节相同：都把同一个 `Payloads.Request` 实例交给序列化器，模型式用 `[RootBody]`、接口式用 `[RootBody]` 参数。
+- 三种形态发送的请求正文逐字节相同：都把同一个 `Payloads.Request` 实例交给序列化器，模型式用 `[Body]` 成员、接口式用 `[Body]` 参数。
 - 返回模型显式标 `[JsonPropertyName]`，避免各库默认 `JsonSerializerOptions` 的大小写策略不同导致「某库解析失败」
   被当成性能差异。
 - Refit 只走 source-generated 的 `ForGenerated`；`RestService.For<T>` 的反射回退路径是另一档，不混谈。

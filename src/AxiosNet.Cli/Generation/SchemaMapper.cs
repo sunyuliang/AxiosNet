@@ -83,10 +83,19 @@ internal sealed class SchemaMapper
         }
     }
 
-    /// <summary>把对象 schema（含 allOf 展开）描述成属性列表，供 multipart 部件逐个展开。</summary>
-    public bool TryDescribeObject(SpecNode? schema, string location, out List<ApiObjectProperty> properties)
+    /// <summary>把对象 schema（含 allOf 展开）描述成属性列表，供 multipart 部件与内联正文逐个展开。</summary>
+    /// <param name="schema">对象 schema；顶层是 <c>$ref</c> 时先解引用。</param>
+    /// <param name="location">报告与警告里的定位。</param>
+    /// <param name="properties">展开后的属性；返回 false 时为空。</param>
+    /// <param name="hasAdditionalProperties">是否声明了 <c>additionalProperties</c>（未知字段无法枚举）。</param>
+    public bool TryDescribeObject(
+        SpecNode? schema,
+        string location,
+        out List<ApiObjectProperty> properties,
+        out bool hasAdditionalProperties)
     {
         properties = new List<ApiObjectProperty>();
+        hasAdditionalProperties = false;
 
         // 顶层是 $ref 时先解引用，再判断能否按类展开。
         var resolved = schema is null ? null : schema["$ref"] is null ? schema : _refs.Resolve(schema, location);
@@ -104,14 +113,7 @@ internal sealed class SchemaMapper
             resolved, order, schemas, required, ref hasExtension,
             new HashSet<string>(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal), location, 0);
 
-        // multipart 部件必须逐个声明：additionalProperties 里的未知字段无法展开，静默丢弃会让调用方以为已覆盖。
-        if (hasExtension)
-        {
-            _warnings.Add(
-                "MULTIPART_ADDITIONAL_PROPERTIES",
-                location,
-                "multipart 请求体声明了 additionalProperties，未知字段无法展开为部件，已忽略。");
-        }
+        hasAdditionalProperties = hasExtension;
 
         foreach (var wire in order)
         {

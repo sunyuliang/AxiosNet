@@ -65,6 +65,7 @@
   C:AxiosNet.WebAPI.Attributes.AllowAnonymousAttribute()
   C:AxiosNet.WebAPI.Attributes.ApiIgnoreAttribute()
   C:AxiosNet.WebAPI.Attributes.AuthorizeAttribute(System.String)
+  C:AxiosNet.WebAPI.Attributes.BodyAttribute()
   C:AxiosNet.WebAPI.Attributes.BodyAttribute(System.String)
   C:AxiosNet.WebAPI.Attributes.BodyContentTypeAttribute(System.String)
   C:AxiosNet.WebAPI.Attributes.DeleteAttribute(System.String)
@@ -87,7 +88,6 @@
   C:AxiosNet.WebAPI.Attributes.PutAttribute(System.String)
   C:AxiosNet.WebAPI.Attributes.QueryAttribute(System.String)
   C:AxiosNet.WebAPI.Attributes.QueryCollectionFormatAttribute(AxiosNet.AxiosCollectionFormat)
-  C:AxiosNet.WebAPI.Attributes.RootBodyAttribute()
   C:AxiosNet.WebAPI.Attributes.StreamAttribute()
   C:AxiosNet.WebAPI.Attributes.StreamAttribute(AxiosNet.AxiosStreamFormat)
   E:AxiosNet.Circuit.CircuitBreaker.StateChanged
@@ -652,7 +652,6 @@
   M:AxiosNet.WebAPI.Metadata.InterfaceParameterBuilder.Part(System.String, System.String, System.String)
   M:AxiosNet.WebAPI.Metadata.InterfaceParameterBuilder.Path(System.String)
   M:AxiosNet.WebAPI.Metadata.InterfaceParameterBuilder.Query(System.String)
-  M:AxiosNet.WebAPI.Metadata.InterfaceParameterBuilder.RootBody()
   M:AxiosNet.WebAPI.Metadata.InterfaceParameterBuilder.Unannotated()
   M:AxiosNet.WebAPI.Metadata.RequestModelBuilder.Anonymous()
   M:AxiosNet.WebAPI.Metadata.RequestModelBuilder.Authorize(System.String)
@@ -677,7 +676,6 @@
   M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.Path(System.String)
   M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.Query(System.String)
   M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.QueryCollectionFormat(AxiosNet.AxiosCollectionFormat)
-  M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.RootBody()
   M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.Stream(AxiosNet.AxiosStreamFormat)
   M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.Unannotated()
   P:AxiosNet.Axios.DefaultClient:get
@@ -1226,7 +1224,6 @@ T:AxiosNet.WebAPI.Attributes.PostAttribute [sealed class] : AxiosNet.WebAPI.Attr
 T:AxiosNet.WebAPI.Attributes.PutAttribute [sealed class] : AxiosNet.WebAPI.Attributes.HttpApiAttribute
 T:AxiosNet.WebAPI.Attributes.QueryAttribute [sealed class] : System.Attribute
 T:AxiosNet.WebAPI.Attributes.QueryCollectionFormatAttribute [sealed class] : System.Attribute
-T:AxiosNet.WebAPI.Attributes.RootBodyAttribute [sealed class] : System.Attribute
 T:AxiosNet.WebAPI.Attributes.StreamAttribute [sealed class] : System.Attribute
 T:AxiosNet.WebAPI.AxiosClientDeclarativeExtensions [static]
 T:AxiosNet.WebAPI.CredentialProviders [static]

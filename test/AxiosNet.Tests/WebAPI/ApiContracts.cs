@@ -24,7 +24,7 @@ public interface IUserApi
     Task<AxiosResponse<Person>> CreateAsync(Person payload, CancellationToken cancellationToken = default);
 
     [Post("users/empty")]
-    Task<AxiosResponse<Person>> CreateNullAsync([RootBody] Person? payload, CancellationToken cancellationToken = default);
+    Task<AxiosResponse<Person>> CreateNullAsync([Body] Person? payload, CancellationToken cancellationToken = default);
 
     [Get("users")]
     Task<AxiosResponse<Person[]>> ListAsync(
@@ -99,22 +99,26 @@ public interface IMissingRouteApi
 
 public interface IMultipleBodyApi
 {
-    /// <summary>合法：POST 上 [Body] 与 [RootBody] 合并到同一层，接口式与模型式同一原则。</summary>
-    [Post("x")]
-    Task<AxiosResponse<Person>> PostAsync([RootBody] Person first, [Body] Person second);
-
-    /// <summary>合法：未标注参数在 POST 上默认进正文，与 [RootBody] 展开的属性合并到同一层。</summary>
-    [Post("y")]
-    Task<AxiosResponse<Person>> PostUnannotatedAsync(
-        [RootBody] Person payload,
-        string? tag = null,
-        CancellationToken cancellationToken = default);
-
-    /// <summary>合法：[Body] 显式名字压过参数名。</summary>
+    /// <summary>合法：[Body("名")] 显式键名，两个键聚合成一个对象。</summary>
     [Post("z")]
     Task<AxiosResponse<Person>> PostNamedBodyAsync(
-        [RootBody] Person payload,
+        [Body("first")] Person payload,
         [Body("tag_name")] string? tag = null,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>整份正文（无参 [Body]）与其它正文来源共存：声明期报错。</summary>
+public interface IInvalidBodyApi
+{
+    /// <summary>非法：整份正文与正文键共存。</summary>
+    [Post("x")]
+    Task<AxiosResponse<Person>> PostAsync([Body] Person first, [Body("second")] Person second);
+
+    /// <summary>非法：整份正文与 POST 上改道进正文的未标注参数共存。</summary>
+    [Post("y")]
+    Task<AxiosResponse<Person>> PostUnannotatedAsync(
+        [Body] Person payload,
+        string? tag = null,
         CancellationToken cancellationToken = default);
 }
 
@@ -179,7 +183,7 @@ public interface IMultipartWithBodyApi
 {
     [Post("x")]
     [Multipart]
-    Task<AxiosResponse<Person>> PostAsync([RootBody] Person payload);
+    Task<AxiosResponse<Person>> PostAsync([Body] Person payload);
 }
 
 public interface IStreamOnPlainApi

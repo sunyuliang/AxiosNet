@@ -1541,7 +1541,7 @@ public interface IFormApi
 {
     [Post("form")]
     [BodyContentType("application/x-www-form-urlencoded")]
-    Task<AxiosResponse<Person>> SendAsync([RootBody] MxPayload body, CancellationToken cancellationToken = default);
+    Task<AxiosResponse<Person>> SendAsync([Body] MxPayload body, CancellationToken cancellationToken = default);
 }
 
 public interface IPartsApi
@@ -1594,7 +1594,7 @@ public static class MxFmts
 [Post("json")]
 public sealed class MxJsonBodyRequest : IApiRequest<Person>
 {
-    [RootBody] public MxJsonPayload Body { get; set; } = new();
+    [Body] public MxJsonPayload Body { get; set; } = new();
 }
 
 public sealed class MxJsonPayload
@@ -1636,7 +1636,7 @@ public sealed class IllegalFormatOnHeaderCollection : IApiRequest<Person>
 [Post("bad")]
 public sealed class IllegalFormatOnBodyPoco : IApiRequest<Person>
 {
-    [RootBody, Format("0.00")] public MxInner V { get; set; } = new();
+    [Body, Format("0.00")] public MxInner V { get; set; } = new();
 }
 
 [Post("bad")]

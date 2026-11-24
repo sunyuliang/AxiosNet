@@ -97,14 +97,11 @@ internal sealed class RequestModelMemberDeclaration
 
     public bool HeaderCollection { get; set; }
 
-    /// <summary><c>[Body]</c>：作为请求体对象的一个键（可多个）。</summary>
+    /// <summary>是否标注了 <c>[Body]</c>；键名与形态看 <see cref="BodyName"/>。</summary>
     public bool Body { get; set; }
 
-    /// <summary><c>[Body]</c> 显式声明的键名；null 表示未声明，按 <see cref="FieldName"/> 取名。</summary>
+    /// <summary><c>[Body]</c> 的键名；<c>null</c> 表示无参构造（整份正文），非 null（含空串）表示正文里的一个键。</summary>
     public string? BodyName { get; set; }
-
-    /// <summary><c>[RootBody]</c>：作为正文来源（独占时原样发送，否则与其它正文成员合并）。</summary>
-    public bool RootBody { get; set; }
 
     public bool Part { get; set; }
 
@@ -115,7 +112,7 @@ internal sealed class RequestModelMemberDeclaration
     public string? PartContentType { get; set; }
 
     /// <summary>是否至少命中一个绑定目标；一个都没有说明是误标，构建期报错。</summary>
-    public bool HasAnyBinding => Path || Query || Header || HeaderCollection || Body || RootBody || Part;
+    public bool HasAnyBinding => Path || Query || Header || HeaderCollection || Body || Part;
 }
 
 /// <summary>接口级声明的声明数据（全部方法的声明 + 接口级授权 / 静态头）。</summary>
@@ -212,14 +209,11 @@ internal sealed class InterfaceParameterDeclaration
 
     public bool HeaderCollection { get; set; }
 
-    /// <summary><c>[Body]</c>：作为请求体对象的一个键（可多个）。</summary>
+    /// <summary>是否标注了 <c>[Body]</c>；键名与形态看 <see cref="BodyName"/>。</summary>
     public bool Body { get; set; }
 
-    /// <summary><c>[Body]</c> 显式声明的键名；null 表示未声明，按参数名取名。</summary>
+    /// <summary><c>[Body]</c> 的键名；<c>null</c> 表示无参构造（整份正文），非 null（含空串）表示正文里的一个键。</summary>
     public string? BodyName { get; set; }
-
-    /// <summary><c>[RootBody]</c>：作为正文来源（独占时原样发送，否则与其它正文成员合并）。</summary>
-    public bool RootBody { get; set; }
 
     public bool Part { get; set; }
 
@@ -230,5 +224,5 @@ internal sealed class InterfaceParameterDeclaration
     public string? PartContentType { get; set; }
 
     /// <summary>是否至少命中一个绑定目标；一个都没有说明是误标，构建期报错。</summary>
-    public bool HasAnyBinding => Path || Query || Header || HeaderCollection || Body || RootBody || Part;
+    public bool HasAnyBinding => Path || Query || Header || HeaderCollection || Body || Part;
 }

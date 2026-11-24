@@ -244,17 +244,20 @@ internal sealed class ApiParameter
     public string? Description { get; set; }
 }
 
-/// <summary>请求体声明：媒体类型、绑定形态（单个 <c>[RootBody]</c> 或多个 <c>[Part]</c>）。</summary>
+/// <summary>请求体声明：媒体类型与绑定形态（内联对象展开的多个正文键、单个正文成员，或多个 <c>[Part]</c>）。</summary>
 internal sealed class ApiRequestBody
 {
     /// <summary>请求体的媒体类型（已去掉参数，如 <c>application/json</c>）。</summary>
     public string MediaType { get; set; } = "application/json";
 
-    /// <summary>单个正文的类型；multipart 展开时不用此字段。</summary>
+    /// <summary>单个正文的类型；内联对象展开或 multipart 展开时不用此字段。</summary>
     public TypeRef Type { get; set; }
 
-    /// <summary>生成的正文成员名（默认 <c>body</c>，冲突时自动加序号）。</summary>
+    /// <summary>生成的正文成员名（默认 <c>body</c>，冲突时自动加序号）；内联对象展开时不用。</summary>
     public string BodyName { get; set; } = "body";
+
+    /// <summary>内联对象正文展开后的成员（模型式生成属性、接口式生成参数）；非空时不再生成单个正文成员。</summary>
+    public List<ApiProperty> Properties { get; } = new();
 
     /// <summary>请求体是否必填；非必填时正文成员带可空标注。</summary>
     public bool Required { get; set; }

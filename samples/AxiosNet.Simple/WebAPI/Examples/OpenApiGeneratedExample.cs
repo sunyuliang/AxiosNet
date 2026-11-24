@@ -34,7 +34,8 @@ public sealed class OpenApiGeneratedExample : IExample
 
         var created = await client.RequestFullAsync(new Generated.CreateUserRequest
         {
-            Body = new Generated.NewUser { Name = "carol", Age = 22 }
+            Name = "carol",
+            Age = 22
         });
         Console.WriteLine($"  POST   /api/users -> {created.Status} {ExampleConsole.Pretty(created.Data)}");
 
@@ -44,14 +45,16 @@ public sealed class OpenApiGeneratedExample : IExample
         // 2) tag=auth → AuthRequests.g.cs：两个登录请求来自 security: []，类上生成 [AllowAnonymous]
         var login = await client.RequestFullAsync(new Generated.LoginRequest
         {
-            Body = new Generated.LoginPayload { Username = "alice", Password = "wonderland" }
+            Username = "alice",
+            Password = "wonderland"
         });
         Console.WriteLine($"  POST   /api/auth/login（JSON）-> {login.Status} token={login.Data!.Token}");
 
         // 表单正文没有方法级特性可写，生成器把编码方式写进 Configure（config.ContentType）。
         var form = await client.RequestFullAsync(new Generated.LoginFormRequest
         {
-            Body = new Generated.LoginPayload { Username = "alice", Password = "wonderland" }
+            Username = "alice",
+            Password = "wonderland"
         });
         Console.WriteLine($"  POST   /api/auth/login/form（Configure 决定编码）-> {form.Status} user={form.Data!.User}");
 

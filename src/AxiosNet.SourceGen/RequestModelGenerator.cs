@@ -308,7 +308,7 @@ namespace AxiosNet.SourceGen
         /// <remarks>
         /// 这些在运行期由绑定构建器也会报（<c>BindingAccumulator</c>），但那是<b>跑起来才知道</b>；
         /// 声明式层的用户期望是「写错就编译不过」，所以在这里提前。
-        /// 只查显式正文特性的冲突（<c>[RootBody]</c> 与 <c>[Multipart]</c> 同用；<c>[RootBody]</c> 与 <c>[Body]</c> / 未标注成员会合并，不算冲突），
+        /// 只查显式正文特性的冲突（无参 <c>[Body]</c> 与正文键 / 其它无参 <c>[Body]</c> / <c>[Multipart]</c> 互斥），
         /// 「未标注属性默认当正文」的规则更细，静态判断容易误报，留给运行期。
         /// </remarks>
         /// <param name="symbol">请求模型类型。</param>
@@ -336,24 +336,43 @@ namespace AxiosNet.SourceGen
                 }
             }
 
-            var rootBodies = new List<string>();
+            var roots = new List<string>();
+            var keys = new List<string>();
             foreach (var member in members)
             {
                 foreach (var binding in member.Bindings)
                 {
-                    if (binding.RootBody)
+                    if (!binding.Body)
                     {
-                        rootBodies.Add(member.Description);
+                        continue;
+                    }
+
+                    if (binding.BodyName is null)
+                    {
+                        roots.Add(member.Description);
+                    }
+                    else
+                    {
+                        keys.Add(member.Description);
                     }
                 }
             }
 
-            // [RootBody] 与 [Body] / 未标注成员可以合并到同一层，不再是冲突；
-            // 只有 multipart 的请求体由部件装配，不能同时声明 [RootBody]。
+            // 无参 [Body] 是整份正文，必须独占：与正文键、其它无参 [Body]、[Multipart] 都互斥。
+            // body 方法上未标注成员会改道进正文，静态判断容易误伤，留给运行期。
             string? conflict = null;
-            if (rootBodies.Count > 0 && multipart)
+            if (roots.Count > 1)
             {
-                conflict = $"[RootBody]（{string.Join(" / ", rootBodies)}）与 [Multipart] 互斥：multipart 的请求体由全部属性装配。";
+                conflict = $"无参 [Body]（{string.Join(" / ", roots)}）出现多次：整份正文只能有一个。";
+            }
+            else if (roots.Count == 1 && keys.Count > 0)
+            {
+                conflict = $"无参 [Body]（{roots[0]}）是整份正文，与正文键（{string.Join(" / ", keys)}）共存："
+                    + "请把正文键换成 [Query] / [Header] 通道，或把它标成 [Body(\"名\")]。";
+            }
+            else if (roots.Count == 1 && multipart)
+            {
+                conflict = $"无参 [Body]（{roots[0]}）与 [Multipart] 互斥：multipart 的请求体由全部属性装配。";
             }
 
             if (conflict is not null)
@@ -505,7 +524,7 @@ namespace AxiosNet.SourceGen
             if (ignored && ownBindingCount > 0)
             {
                 var message =
-                    $"属性 {model.Name}.{property.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / HeaderCollection / Part / Body / RootBody）："
+                    $"属性 {model.Name}.{property.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / HeaderCollection / Part / Body）："
                     + "[ApiIgnore] 的语义是「完全不绑定」，两者同用是二义性。";
 
                 diagnostics.Add(new DiagnosticInfo(
@@ -556,11 +575,10 @@ namespace AxiosNet.SourceGen
             var header = Find(property, wellKnown.Header, inherit);
             var headerCollection = Find(property, wellKnown.HeaderCollection, inherit);
             var body = Find(property, wellKnown.Body, inherit);
-            var rootBody = Find(property, wellKnown.RootBody, inherit);
             var part = Find(property, wellKnown.Part, inherit);
 
             if (path is null && query is null && header is null && headerCollection is null
-                && body is null && rootBody is null && part is null)
+                && body is null && part is null)
             {
                 return null;
             }
@@ -594,7 +612,6 @@ namespace AxiosNet.SourceGen
                 headerCollection is not null,
                 body is not null,
                 body is null ? null : GetStringArgument(body, 0),
-                rootBody is not null,
                 part is not null,
                 partName,
                 partFileName,
@@ -1145,8 +1162,7 @@ namespace AxiosNet.SourceGen
                     || SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, wellKnown.Header)
                     || SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, wellKnown.HeaderCollection)
                     || SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, wellKnown.Part)
-                    || SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, wellKnown.Body)
-                    || SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, wellKnown.RootBody))
+                    || SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, wellKnown.Body))
                 {
                     count++;
                 }
@@ -1243,7 +1259,6 @@ namespace AxiosNet.SourceGen
             Header = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.HeaderAttribute");
             HeaderCollection = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.HeaderCollectionAttribute");
             Body = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.BodyAttribute");
-            RootBody = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.RootBodyAttribute");
             Part = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.PartAttribute");
             ApiIgnore = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.ApiIgnoreAttribute");
             Format = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.FormatAttribute");
@@ -1294,11 +1309,8 @@ namespace AxiosNet.SourceGen
         /// <summary><c>[HeaderCollection]</c>：整个字典 / 集合进请求头。</summary>
         public INamedTypeSymbol? HeaderCollection { get; }
 
-        /// <summary><c>[Body]</c>：成员作为请求体对象的一个键。</summary>
+        /// <summary><c>[Body]</c>：无参时整份正文，带名字时正文里的一个键。</summary>
         public INamedTypeSymbol? Body { get; }
-
-        /// <summary><c>[RootBody]</c>：成员作为正文来源（独占时原样发送，否则与其它正文成员合并）。</summary>
-        public INamedTypeSymbol? RootBody { get; }
 
         /// <summary><c>[Part]</c>：成员作为一个 multipart 部件。</summary>
         public INamedTypeSymbol? Part { get; }

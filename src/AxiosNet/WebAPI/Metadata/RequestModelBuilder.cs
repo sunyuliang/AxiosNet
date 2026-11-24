@@ -224,18 +224,11 @@ public sealed class RequestModelMemberBuilder
         return _owner;
     }
 
-    /// <summary><c>[Body]</c>：成员作为请求体对象的一个键（可多个）；省略名字时用成员名。</summary>
+    /// <summary><c>[Body]</c>：省略名字时成员的值就是整份正文（原样发送、独占）；给了名字时作为聚合正文的一个键。</summary>
     public RequestModelBuilder Body(string? name = null)
     {
         _member.Body = true;
         _member.BodyName = name;
-        return _owner;
-    }
-
-    /// <summary><c>[RootBody]</c>：成员作为正文来源（独占时原样发送，否则与其它正文成员合并）。</summary>
-    public RequestModelBuilder RootBody()
-    {
-        _member.RootBody = true;
         return _owner;
     }
 

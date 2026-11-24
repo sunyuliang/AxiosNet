@@ -381,7 +381,7 @@ public sealed class DemoApiServer : IDisposable
     /// <summary>创建用户：解析请求体，并把 <c>X-Trace</c> 原样回显——证明请求模型 Configure 钩子写的头真的到了服务器。</summary>
     private static string CreateUserJson(IReadOnlyDictionary<string, string> headers, byte[] body)
     {
-        // 两种声明式写法都发裸对象：模型式成员直接聚合，接口式的复合参数标了 [RootBody]。
+        // 两种声明式写法都发裸对象：模型式成员直接聚合，接口式的复合参数标了 [Body]。
         using var document = JsonDocument.Parse(body);
         var root = document.RootElement;
         var payload = root.TryGetProperty("user_name", out var renamed)

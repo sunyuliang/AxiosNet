@@ -430,7 +430,7 @@ public sealed class MultipartBindingTests
             () => new ApiClient("http://127.0.0.1:1/").GetUri(new ConflictingBodyRequest()));
 
         Assert.Contains("[Multipart]", ex.Message);
-        Assert.Contains("[RootBody]", ex.Message);
+        Assert.Contains("[Body]", ex.Message);
     }
 
     [Fact]
@@ -675,7 +675,7 @@ public sealed class MultipartBindingTests
     [Multipart]
     private sealed class ConflictingBodyRequest : IApiRequest<object>
     {
-        [RootBody]
+        [Body]
         public Person? Payload { get; set; }
     }
 

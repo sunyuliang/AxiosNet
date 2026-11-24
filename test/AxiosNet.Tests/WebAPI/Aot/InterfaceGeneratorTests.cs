@@ -201,7 +201,7 @@ public sealed class InterfaceGeneratorTests
         {
             [Post("derived-form")]
             [BodyContentType("application/x-www-form-urlencoded")]
-            Task<AxiosResponse<EncPayload>> SubmitAsync([RootBody] EncPayload payload, CancellationToken cancellationToken = default);
+            Task<AxiosResponse<EncPayload>> SubmitAsync([Body] EncPayload payload, CancellationToken cancellationToken = default);
         }
         """;
 
@@ -949,7 +949,7 @@ public sealed class InterfaceGeneratorTests
 
             [Post("items")]
             [AllowAnonymous]
-            Task CreateAsync([RootBody] Patient patient, [Query] bool notify, CancellationToken cancellationToken);
+            Task CreateAsync([Body] Patient patient, [Query] bool notify, CancellationToken cancellationToken);
 
             [Post("upload/{id}")]
             [Multipart]
@@ -1002,7 +1002,7 @@ public sealed class InterfaceGeneratorTests
         {
             [Post("form")]
             [BodyContentType("application/x-www-form-urlencoded")]
-            Task<string> SubmitAsync([RootBody] Payload payload, CancellationToken cancellationToken);
+            Task<string> SubmitAsync([Body] Payload payload, CancellationToken cancellationToken);
 
             [Get("search")]
             [QueryCollectionFormat(AxiosCollectionFormat.Multi)]

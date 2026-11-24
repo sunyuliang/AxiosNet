@@ -69,7 +69,7 @@ public sealed class ModelBindingTests
         var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
         Assert.Equal("2026-10-22", json.GetProperty("when").GetString());
 #else
-        // net6.0 的 System.Text.Json 不支持 DateOnly：聚合正文按序列化器能力报错（显式 [RootBody] 同）。
+        // net6.0 的 System.Text.Json 不支持 DateOnly：聚合正文按序列化器能力报错（显式 [Body] 同）。
         var error = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(request));
         Assert.Contains("DateOnly", error.ToString());
         Assert.Empty(server.Received);
@@ -141,16 +141,16 @@ public sealed class ModelBindingTests
     }
 
     [Fact]
-    public async Task PostModel_SingleRootBody_IsRawAndUnwrapped()
+    public async Task PostModel_WholeBody_IsRawAndUnwrapped()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestFullAsync(new RawRootBodyRequest { Payload = new Person("n", 1) });
+        await client.RequestFullAsync(new RawBodyRequest { Payload = new Person("n", 1) });
 
         var received = Assert.Single(server.Received);
 
-        // 唯一的正文来源是 [RootBody]：原样发送，不加键壳。
+        // 无参 [Body] 是整份正文：原样发送，不加键壳。
         var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
         Assert.Equal("n", json.GetProperty("name").GetString());
         Assert.Equal(1, json.GetProperty("age").GetInt32());
@@ -159,12 +159,12 @@ public sealed class ModelBindingTests
     }
 
     [Fact]
-    public async Task PostModel_RootBodyWithUnannotatedMember_MergesIntoBody_ExplicitQueryStaysQuery()
+    public async Task PostModel_WholeBodyWithExplicitQuery_IsAccepted()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestFullAsync(new RootBodyWithQueryRequest
+        await client.RequestFullAsync(new BodyWithQueryRequest
         {
             Payload = new Person("n", 1),
             Tag = "x",
@@ -173,72 +173,61 @@ public sealed class ModelBindingTests
 
         var received = Assert.Single(server.Received);
 
-        // 默认通道只由方法决定：POST 上未标注成员仍进正文，与 [RootBody] 展开的属性合并到同一层。
+        // 整份正文原样发送；显式 [Query] 的成员照旧进查询串。
         var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
         Assert.Equal("n", json.GetProperty("name").GetString());
         Assert.Equal(1, json.GetProperty("age").GetInt32());
-        Assert.Equal(4, json.GetProperty("page").GetInt32());
-
-        // 显式 [Query] 不受影响。
         Assert.Contains("tag=x", received.Query);
-        Assert.DoesNotContain("Page=4", received.Query);
+        Assert.Contains("page=4", received.Query);
     }
 
     [Fact]
-    public async Task PostModel_BodyAndRootBody_MergeIntoOneLayer()
+    public async Task PostModel_WholeBodyWithUnannotatedMember_IsRejected()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestFullAsync(new BodyAndRootBodyRequest
-        {
-            Payload = new Person("n", 1),
-            Extra = new Person("m", 2)
-        });
+        // POST 上未标注成员会改道进正文，与整份正文冲突：必须显式换通道。
+        var ex = await Assert.ThrowsAsync<AxiosException>(
+            () => client.RequestFullAsync(new BodyWithUnannotatedRequest { Payload = new Person("n", 1) }));
 
-        var received = Assert.Single(server.Received);
-
-        // [Body] 按键写入，[RootBody] 展开属性，两者在同一个对象里。
-        var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
-        Assert.Equal("n", json.GetProperty("payload").GetProperty("name").GetString());
-        Assert.Equal(1, json.GetProperty("payload").GetProperty("age").GetInt32());
-        Assert.Equal("m", json.GetProperty("name").GetString());
-        Assert.Equal(2, json.GetProperty("age").GetInt32());
+        Assert.Contains("整份正文必须独占", ex.Message);
+        Assert.Contains("[Query]", ex.Message);
+        Assert.Empty(server.Received);
     }
 
     [Fact]
-    public async Task PostModel_MultipleRootBodies_AreMergedIntoOneLayer()
-    {
-        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
-        using var client = new ApiClient(server.Url);
-
-        await client.RequestFullAsync(new MergedRootBodyRequest());
-
-        var received = Assert.Single(server.Received);
-        var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
-
-        // 结构化值展开属性，标量按键写入，顺序保持声明顺序。
-        Assert.Equal(1, json.GetProperty("a").GetInt32());
-        Assert.Equal(1, json.GetProperty("u1").GetInt32());
-        Assert.Equal(2, json.GetProperty("u2").GetInt32());
-        Assert.Equal(2, json.GetProperty("c").GetInt32());
-    }
-
-    [Fact]
-    public async Task PostModel_MultipleRootBodies_DuplicateSpreadKey_IsRejected()
+    public async Task PostModel_WholeBodyWithKeyMember_IsRejected()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new ApiClient(server.Url);
 
         var ex = await Assert.ThrowsAsync<AxiosException>(
-            () => client.RequestFullAsync(new DuplicateMergedRootBodyRequest()));
+            () => client.RequestFullAsync(new WholeBodyAndKeyRequest
+            {
+                Payload = new Person("n", 1),
+                Extra = new Person("m", 2)
+            }));
 
-        Assert.Contains("[RootBody]", ex.Message);
-        Assert.Contains("重复键", ex.Message);
+        Assert.Contains("整份正文必须独占", ex.Message);
+        Assert.Empty(server.Received);
     }
 
     [Fact]
-    public async Task PostModel_MixedBodyAndRootBody_KeepsDeclarationOrder()
+    public async Task PostModel_MultipleWholeBodies_AreRejected()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
+        using var client = new ApiClient(server.Url);
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(
+            () => client.RequestFullAsync(new TwoWholeBodyRequest()));
+
+        Assert.Contains("只能有一个", ex.Message);
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
+    public async Task PostModel_BodyMembers_KeepDeclarationOrder()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new ApiClient(server.Url);
@@ -247,8 +236,8 @@ public sealed class ModelBindingTests
 
         var received = Assert.Single(server.Received);
 
-        // 三类来源按声明顺序输出（改名前 [Body] 会被整段提前，顺序就乱了）。
-        Assert.Equal("{\"a\":1,\"b\":2,\"c\":3,\"d\":4}", Encoding.UTF8.GetString(received.Body));
+        // 正文键按声明顺序输出（显式键名与未标注成员混排也不重排）。
+        Assert.Equal("{\"a\":1,\"b\":2,\"d\":4}", Encoding.UTF8.GetString(received.Body));
     }
 
     [Fact]
@@ -286,20 +275,6 @@ public sealed class ModelBindingTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new DuplicateBodyNameRequest()));
 
         Assert.Contains("重复键", ex.Message);
-        Assert.Empty(server.Received);
-    }
-
-    [Fact]
-    public async Task PostModel_BodyAndRootBody_OnSameMember_IsRejected()
-    {
-        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
-        using var client = new ApiClient(server.Url);
-
-        // 同一份值既展开又按键写一次，正文会翻倍且可能自相矛盾。
-        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new BodyAndRootBodySameMemberRequest()));
-
-        Assert.Contains("[Body]", ex.Message);
-        Assert.Contains("[RootBody]", ex.Message);
         Assert.Empty(server.Received);
     }
 
@@ -342,19 +317,6 @@ public sealed class ModelBindingTests
     }
 
     [Fact]
-    public async Task PostModel_SpreadRootBodies_NamesDifferingOnlyInCase_AreRejected()
-    {
-        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
-        using var client = new ApiClient(server.Url);
-
-        // 两个 [RootBody] 各自类型内部合法，展开到同一层后才撞：JSON 通道按大小写不敏感判重。
-        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new TwoSpreadCaseDifferingRequest()));
-
-        Assert.Contains("仅大小写不同也算重复", ex.Message);
-        Assert.Empty(server.Received);
-    }
-
-    [Fact]
     public async Task PostModel_EmptyJsonPropertyName_PartFallsBackToPropertyName()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
@@ -377,8 +339,8 @@ public sealed class ModelBindingTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new SingleExplicitBodyRequest()));
 
         // 显式 [Body("x")] 不是「未标注成员」，报错不能这么说。
-        Assert.Contains("合并正文", ex.Message);
-        Assert.Contains("[Body] 按键名写入", ex.Message);
+        Assert.Contains("按键聚合的正文", ex.Message);
+        Assert.Contains("[Body(\"名\")]", ex.Message);
         Assert.DoesNotContain("默认 Body（未标注成员按键名聚合）", ex.Message);
     }
 
@@ -415,20 +377,14 @@ public sealed class ModelBindingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new ApiClient(server.Url);
 
-        // ASCII 键名：具名成员与展开属性同名 → 构建/运行期都能判出来
-        var ascii = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(
-            new AsciiDuplicateKeyRequest(),
+        // 键名由表单命名钩子统一映射成同一个名字：构建期按成员名判不出，运行期按线上形态拦下。
+        client.Axios.Defaults.Serialization.FormFieldName = (_, _) => "same";
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(
+            new TwoKeyFormRequest(),
             config => config.ContentType = AxiosConfig.FormUrlEncodedContentType));
 
-        Assert.Contains("重复键", ascii.Message);
-        Assert.Empty(server.Received);
-
-        // 非 ASCII 键名：表单通道按线上（编码后）形态比较，同样必须拦下，不能把两个同名键发出去
-        var cjk = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(
-            new CjkDuplicateKeyRequest(),
-            config => config.ContentType = AxiosConfig.FormUrlEncodedContentType));
-
-        Assert.Contains("重复键", cjk.Message);
+        Assert.Contains("重复键", ex.Message);
         Assert.Empty(server.Received);
     }
 
@@ -457,7 +413,7 @@ public sealed class ModelBindingTests
         // 合并成对象后文件部件没有线上形态：构建期就拦下，不留到序列化时才炸。
         var stream = Assert.ThrowsAny<AxiosException>(() => client.GetUri(new BodyStreamRequest()));
         Assert.Contains("[Multipart]", stream.Message, StringComparison.Ordinal);
-        Assert.Contains("[RootBody]", stream.Message, StringComparison.Ordinal);
+        Assert.Contains("[Body]", stream.Message, StringComparison.Ordinal);
 
         var file = Assert.ThrowsAny<AxiosException>(() => client.GetUri(new BodyFormFileRequest()));
         Assert.Contains("[Multipart]", file.Message, StringComparison.Ordinal);
@@ -624,7 +580,7 @@ public sealed class ModelBindingTests
         await client.RequestFullAsync(new FormBodyRequest { Payload = new UserPayload("carol", 25) });
 
         var received = Assert.Single(server.Received);
-        // [RootBody] 的编码规则与核心包 data 一致：ContentType 改表单就走键值对编码
+        // [Body] 的编码规则与核心包 data 一致：ContentType 改表单就走键值对编码
         Assert.Equal("application/x-www-form-urlencoded", received.Headers["Content-Type"]);
         Assert.Contains("Name=carol", Encoding.UTF8.GetString(received.Body));
     }
@@ -1448,10 +1404,10 @@ public sealed class ModelBindingTests
     [Post("items")]
     private sealed class BodyKeyRequest : IApiRequest<Person>
     {
-        [Body]
+        [Body("")]
         public string Token { get; set; } = string.Empty;
 
-        [Body, Query("page")]
+        [Body(""), Query("page")]
         public int Page { get; set; }
 
         public string Name { get; set; } = string.Empty;
@@ -1460,62 +1416,62 @@ public sealed class ModelBindingTests
     [Get("items")]
     private sealed class GetWithBodyRequest : IApiRequest<Person>
     {
-        [Body]
+        [Body("")]
         public string Token { get; set; } = string.Empty;
 
         public int Page { get; set; }
     }
 
     [Post("items")]
-    private sealed class RootBodyWithQueryRequest : IApiRequest<Person>
+    private sealed class BodyWithQueryRequest : IApiRequest<Person>
     {
-        [RootBody]
+        [Body]
         public Person Payload { get; set; } = null!;
 
         [Query("tag")]
         public string? Tag { get; set; }
 
+        [Query("page")]
         public int Page { get; set; }
     }
 
     [Post("items")]
-    private sealed class RawRootBodyRequest : IApiRequest<Person>
-    {
-        [RootBody]
-        public Person Payload { get; set; } = null!;
-    }
-
-    [Post("items")]
-    private sealed class BodyAndRootBodyRequest : IApiRequest<Person>
+    private sealed class BodyWithUnannotatedRequest : IApiRequest<Person>
     {
         [Body]
         public Person Payload { get; set; } = null!;
 
-        [RootBody]
+        public int Page { get; set; }
+    }
+
+    [Post("items")]
+    private sealed class RawBodyRequest : IApiRequest<Person>
+    {
+        [Body]
+        public Person Payload { get; set; } = null!;
+    }
+
+    [Post("items")]
+    private sealed class WholeBodyAndKeyRequest : IApiRequest<Person>
+    {
+        [Body("payload")]
+        public Person Payload { get; set; } = null!;
+
+        [Body]
         public Person Extra { get; set; } = null!;
     }
 
     [Post("items")]
-    private sealed class MergedRootBodyRequest : IApiRequest<Person>
+    private sealed class TwoWholeBodyRequest : IApiRequest<Person>
     {
-        [RootBody]
+        [Body]
         public int A { get; set; } = 1;
 
-        [RootBody]
+        [Body]
         public MergeSlice Slice { get; set; } = new();
 
-        [RootBody]
+        [Body]
         public int C { get; set; } = 2;
-    }
-
-    [Post("items")]
-    private sealed class DuplicateMergedRootBodyRequest : IApiRequest<Person>
-    {
-        [RootBody]
-        public MergeSlice First { get; set; } = new();
-
-        [RootBody]
-        public MergeSlice Second { get; set; } = new();
     }
 
     private sealed class MergeSlice
@@ -1530,14 +1486,11 @@ public sealed class ModelBindingTests
     [Post("items")]
     private sealed class MixedOrderRequest : IApiRequest<Person>
     {
-        [RootBody, JsonPropertyName("a")]
+        [Body("a")]
         public int First { get; set; } = 1;
 
-        [Body, JsonPropertyName("b")]
+        [Body("b")]
         public int Second { get; set; } = 2;
-
-        [RootBody, JsonPropertyName("c")]
-        public int Third { get; set; } = 3;
 
         [JsonPropertyName("d")]
         public int Fourth { get; set; } = 4;
@@ -1572,14 +1525,6 @@ public sealed class ModelBindingTests
         public int Second { get; set; } = 2;
     }
 
-    [Post("items")]
-    private sealed class BodyAndRootBodySameMemberRequest : IApiRequest<Person>
-    {
-        [Body]
-        [RootBody]
-        public Person Payload { get; set; } = new("p", 1);
-    }
-
     [Post("form")]
     [BodyContentType("application/x-www-form-urlencoded")]
     private sealed class CaseDifferingFormBodyNameRequest : IApiRequest<Person>
@@ -1589,28 +1534,6 @@ public sealed class ModelBindingTests
 
         [Body("A")]
         public string Upper { get; set; } = "2";
-    }
-
-    private sealed class UpperTagPart
-    {
-        [JsonPropertyName("Tag")]
-        public string Value { get; set; } = "u";
-    }
-
-    private sealed class LowerTagPart
-    {
-        [JsonPropertyName("tag")]
-        public string Value { get; set; } = "l";
-    }
-
-    [Post("items")]
-    private sealed class TwoSpreadCaseDifferingRequest : IApiRequest<Person>
-    {
-        [RootBody]
-        public UpperTagPart First { get; set; } = new();
-
-        [RootBody]
-        public LowerTagPart Second { get; set; } = new();
     }
 
     [Multipart]
@@ -1652,7 +1575,7 @@ public sealed class ModelBindingTests
     [Post("items")]
     private sealed class BodySameNameJsonPropertyRequest : IApiRequest<Person>
     {
-        [Body]
+        [Body("")]
         [JsonPropertyName("Tag")]
         public string Tag { get; set; } = "t";
     }
@@ -1665,55 +1588,33 @@ public sealed class ModelBindingTests
     }
 
     [Post("items")]
-    private sealed class AsciiDuplicateKeyRequest : IApiRequest<Person>
+    private sealed class TwoKeyFormRequest : IApiRequest<Person>
     {
-        [Body, JsonPropertyName("value")]
-        public string Name { get; set; } = "body";
+        [Body("first")]
+        public int First { get; set; } = 1;
 
-        [RootBody]
-        public AsciiSlice Slice { get; set; } = new();
-    }
-
-    private sealed class AsciiSlice
-    {
-        [JsonPropertyName("value")]
-        public string Tag { get; set; } = "spread";
-    }
-
-    [Post("items")]
-    private sealed class CjkDuplicateKeyRequest : IApiRequest<Person>
-    {
-        [Body, JsonPropertyName("名称")]
-        public string Name { get; set; } = "body";
-
-        [RootBody]
-        public CjkSlice Slice { get; set; } = new();
-    }
-
-    private sealed class CjkSlice
-    {
-        [JsonPropertyName("名称")]
-        public string Tag { get; set; } = "spread";
+        [Body("second")]
+        public int Second { get; set; } = 2;
     }
 
     [Post("items")]
     private sealed class RuntimeStreamBodyRequest : IApiRequest<Person>
     {
-        [Body]
+        [Body("")]
         public object? Data { get; set; }
     }
 
     [Post("items")]
     private sealed class BodyStreamRequest : IApiRequest<Person>
     {
-        [Body]
+        [Body("")]
         public Stream? Data { get; set; }
     }
 
     [Post("items")]
     private sealed class BodyFormFileRequest : IApiRequest<Person>
     {
-        [Body]
+        [Body("")]
         public FormFile? File { get; set; }
     }
 

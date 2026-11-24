@@ -132,6 +132,295 @@ public sealed class GenerationTests
         Assert.Contains("public sealed class ListPetsRequest2", run.Read("Models.g.cs"));
     }
 
+    /// <summary>内联对象正文直接展开成请求类上的正文键；<c>$ref</c> 正文指向共享组件，仍保留单个正文成员。</summary>
+    [Fact]
+    public void Body_InlineObjectFlattens_RefKeepsWrapper()
+    {
+        const string spec = """
+            {
+              "openapi": "3.0.3",
+              "info": { "title": "T", "version": "1" },
+              "paths": {
+                "/login": {
+                  "post": {
+                    "operationId": "login",
+                    "requestBody": {
+                      "required": true,
+                      "content": {
+                        "application/json": {
+                          "schema": {
+                            "type": "object",
+                            "required": [ "username", "password" ],
+                            "properties": {
+                              "username": { "type": "string", "description": "登录用户名" },
+                              "password": { "type": "string" },
+                              "remember": { "type": "boolean" },
+                              "profile": {
+                                "type": "object",
+                                "properties": { "nickname": { "type": "string" } }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "responses": { "204": { "description": "ok" } }
+                  }
+                },
+                "/pets": {
+                  "post": {
+                    "operationId": "createPet",
+                    "requestBody": {
+                      "required": true,
+                      "content": {
+                        "application/json": { "schema": { "$ref": "#/components/schemas/NewPet" } }
+                      }
+                    },
+                    "responses": { "204": { "description": "ok" } }
+                  }
+                }
+              },
+              "components": {
+                "schemas": {
+                  "NewPet": {
+                    "type": "object",
+                    "required": [ "name" ],
+                    "properties": { "name": { "type": "string" } }
+                  }
+                }
+              }
+            }
+            """;
+
+        using var run = CliHarness.RunText(spec, ".json");
+
+        Assert.Equal(0, run.ExitCode);
+        var requests = run.Read("DefaultRequests.g.cs");
+
+        // 内联正文：一个属性一个 [Body("wire")]，属性说明一并带过来。
+        Assert.Contains("/// <summary>登录用户名</summary>", requests);
+        Assert.Contains("[Body(\"username\")]", requests);
+        Assert.Contains("public string Username { get; set; } = default!;", requests);
+        Assert.Contains("[Body(\"remember\")]", requests);
+        Assert.Contains("public bool? Remember { get; set; }", requests);
+        // 展开后的嵌套对象照样生成强类型（不再是只包一层的 LoginBody）。
+        Assert.Contains("public LoginAsyncBodyProfile? Profile { get; set; }", requests);
+
+        // $ref 正文指向共享组件：保留单个无参 [Body] 成员。
+        Assert.Contains("[Body]\n    public NewPet Body { get; set; } = default!;", requests);
+
+        var models = run.Read("Models.g.cs");
+        Assert.Contains("public sealed class LoginAsyncBodyProfile", models);
+        Assert.DoesNotContain("class LoginAsyncBody\n", models);
+    }
+
+    /// <summary>内联对象正文按表单媒体类型展开时，成员进正文、媒体类型仍写进 Configure。</summary>
+    [Fact]
+    public void Body_InlineFormObjectFlattens()
+    {
+        const string spec = """
+            {
+              "openapi": "3.0.3",
+              "info": { "title": "T", "version": "1" },
+              "paths": {
+                "/login": {
+                  "post": {
+                    "operationId": "login",
+                    "requestBody": {
+                      "required": true,
+                      "content": {
+                        "application/x-www-form-urlencoded": {
+                          "schema": {
+                            "type": "object",
+                            "required": [ "username" ],
+                            "properties": {
+                              "username": { "type": "string" },
+                              "password": { "type": "string" }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "responses": { "204": { "description": "ok" } }
+                  }
+                }
+              }
+            }
+            """;
+
+        using var run = CliHarness.RunText(spec, ".json");
+
+        Assert.Equal(0, run.ExitCode);
+        var requests = run.Read("DefaultRequests.g.cs");
+        Assert.Contains("[Body(\"username\")]", requests);
+        Assert.Contains("[Body(\"password\")]", requests);
+        Assert.Contains("config.ContentType = \"application/x-www-form-urlencoded\";", requests);
+    }
+
+    /// <summary>接口式的内联正文展开成带键名参数的正文键，不是整份正文。</summary>
+    [Fact]
+    public void Body_InlineObjectFlattensToInterfaceParameters()
+    {
+        const string spec = """
+            {
+              "openapi": "3.0.3",
+              "info": { "title": "T", "version": "1" },
+              "paths": {
+                "/login": {
+                  "post": {
+                    "operationId": "login",
+                    "requestBody": {
+                      "required": true,
+                      "content": {
+                        "application/json": {
+                          "schema": {
+                            "type": "object",
+                            "required": [ "username" ],
+                            "properties": {
+                              "username": { "type": "string" },
+                              "remember": { "type": "boolean" }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "responses": { "204": { "description": "ok" } }
+                  }
+                }
+              }
+            }
+            """;
+
+        using var run = CliHarness.RunText(spec, ".json", "--style", "interface");
+
+        Assert.Equal(0, run.ExitCode);
+        var api = run.Read("IDefaultApi.g.cs");
+        Assert.Contains("[Body(\"username\")] string username", api);
+        Assert.Contains("[Body(\"remember\")] bool? remember", api);
+        Assert.DoesNotContain("[Body] ", api);
+    }
+
+    /// <summary>带 additionalProperties 的内联正文无法用固定成员表达未知字段，退回单个正文成员。</summary>
+    [Fact]
+    public void Body_InlineObjectWithAdditionalProperties_KeepsWrapper()
+    {
+        const string spec = """
+            {
+              "openapi": "3.0.3",
+              "info": { "title": "T", "version": "1" },
+              "paths": {
+                "/login": {
+                  "post": {
+                    "operationId": "login",
+                    "requestBody": {
+                      "required": true,
+                      "content": {
+                        "application/json": {
+                          "schema": {
+                            "type": "object",
+                            "properties": { "username": { "type": "string" } },
+                            "additionalProperties": true
+                          }
+                        }
+                      }
+                    },
+                    "responses": { "204": { "description": "ok" } }
+                  }
+                }
+              }
+            }
+            """;
+
+        using var run = CliHarness.RunText(spec, ".json");
+
+        Assert.Equal(0, run.ExitCode);
+        var requests = run.Read("DefaultRequests.g.cs");
+        Assert.Contains("public LoginAsyncBody Body { get; set; } = default!;", requests);
+        Assert.DoesNotContain("[Body(\"username\")]", requests);
+        // 兜底属性把未知字段收进字典，信息不丢。
+        Assert.Contains("[JsonExtensionData]", run.Read("Models.g.cs"));
+    }
+
+    /// <summary>可选正文、非 JSON 媒体类型、键名折叠大小写重名这三种内联正文保留单个成员。</summary>
+    [Fact]
+    public void Body_UnflattenableInlineObjects_KeepWrapper()
+    {
+        const string spec = """
+            {
+              "openapi": "3.0.3",
+              "info": { "title": "T", "version": "1" },
+              "paths": {
+                "/optional": {
+                  "post": {
+                    "operationId": "saveOptional",
+                    "requestBody": {
+                      "content": {
+                        "application/json": {
+                          "schema": {
+                            "type": "object",
+                            "properties": { "username": { "type": "string" } }
+                          }
+                        }
+                      }
+                    },
+                    "responses": { "204": { "description": "ok" } }
+                  }
+                },
+                "/xml": {
+                  "post": {
+                    "operationId": "saveXml",
+                    "requestBody": {
+                      "required": true,
+                      "content": {
+                        "application/xml": {
+                          "schema": {
+                            "type": "object",
+                            "required": [ "username" ],
+                            "properties": { "username": { "type": "string" } }
+                          }
+                        }
+                      }
+                    },
+                    "responses": { "204": { "description": "ok" } }
+                  }
+                },
+                "/case": {
+                  "post": {
+                    "operationId": "saveCase",
+                    "requestBody": {
+                      "required": true,
+                      "content": {
+                        "application/json": {
+                          "schema": {
+                            "type": "object",
+                            "required": [ "name" ],
+                            "properties": {
+                              "name": { "type": "string" },
+                              "Name": { "type": "string" }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "responses": { "204": { "description": "ok" } }
+                  }
+                }
+              }
+            }
+            """;
+
+        using var run = CliHarness.RunText(spec, ".json");
+
+        Assert.Equal(0, run.ExitCode);
+        var requests = run.Read("DefaultRequests.g.cs");
+
+        // 三处都退回单个正文成员：展开会改变「不发正文」语义，或生成出首次调用才报重复键的代码。
+        Assert.Equal(3, requests.Split("[Body]\n").Length - 1);
+        Assert.DoesNotContain("[Body(\"", requests);
+        // 非 JSON 媒体类型照旧把媒体类型写进 Configure。
+        Assert.Contains("config.ContentType = \"application/xml\";", requests);
+    }
+
     /// <summary>--single-file 把请求类与模型合到一个文件，且不再产出多余的分组文件。</summary>
     [Fact]
     public void ModelStyle_SingleFileKeepsEverythingTogether()

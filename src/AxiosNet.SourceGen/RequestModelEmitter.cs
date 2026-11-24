@@ -165,12 +165,15 @@ namespace AxiosNet.SourceGen
 
                 if (binding.Body)
                 {
-                    EmitOptionalName(builder, "Body", binding.BodyName);
-                }
-
-                if (binding.RootBody)
-                {
-                    builder.AppendLine("                        m.RootBody();");
+                    // 无参 [Body] 是整份正文；带名字（含空串）是聚合正文的一个键。
+                    if (binding.BodyName is null)
+                    {
+                        builder.AppendLine("                        m.Body();");
+                    }
+                    else
+                    {
+                        builder.Append("                        m.Body(").Append(CodeLiteral.Of(binding.BodyName)).AppendLine(");");
+                    }
                 }
 
                 if (binding.Part)

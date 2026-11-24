@@ -544,7 +544,7 @@ public sealed class FormatRegressionTests
     [Post("probe/binary-body")]
     private sealed class BinaryBody : IApiRequest<Person>
     {
-        [RootBody]
+        [Body]
         public byte[] Payload { get; set; } = Array.Empty<byte>();
     }
 
@@ -596,14 +596,14 @@ public sealed class FormatRegressionTests
     [Get("probe/scalar-body")]
     private sealed class ScalarBodyRequest : IApiRequest<Person>
     {
-        [RootBody]
+        [Body]
         public DateTime Payload { get; set; }
     }
 
     [Post("probe/string-body")]
     private sealed class StringBodyRequest : IApiRequest<Person>
     {
-        [RootBody]
+        [Body]
         public string Text { get; set; } = string.Empty;
     }
 

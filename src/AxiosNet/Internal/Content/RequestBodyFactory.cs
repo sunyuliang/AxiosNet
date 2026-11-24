@@ -192,18 +192,18 @@ internal static class RequestBodyFactory
         if (MediaTypes.Is(mediaType, MultipartMediaType))
         {
             throw AxiosException.InvalidOption(
-                "合并正文（[Body] 按键名写入 / 未标注成员按键名聚合）不能按 multipart 发送："
-                + "请给请求模型标注 [Multipart] 由库组装表单，或把需要发送的成员改成 [RootBody]。", config);
+                "按键聚合的正文（[Body(\"名\")] / 未标注成员按键名聚合）不能按 multipart 发送："
+                + "请给请求模型标注 [Multipart] 由库组装表单，或改用无参 [Body]。", config);
         }
 
         var serializer = AxiosContent.Get(config, mediaType);
         if (!ReferenceEquals(serializer, SystemTextJsonSerializer.Instance))
         {
             throw AxiosException.InvalidOption(
-                "合并正文（[Body] 按键名写入 / 未标注成员按键名聚合）只支持 JSON 与 application/x-www-form-urlencoded："
+                "按键聚合的正文（[Body(\"名\")] / 未标注成员按键名聚合）只支持 JSON 与 application/x-www-form-urlencoded："
                 + $"当前生效的序列化器是 {serializer.GetType().Name}。"
-                + "[Body(\"名\")] 只改键名、不改变通道支持；"
-                + "请把需要发送的成员改成 [RootBody]（原样交给该序列化器，命名用 [XmlElement] 等该序列化器认可的写法），或改用 JSON。", config);
+                + "[Body(\"名\")] 只给正文键起名、不改变通道支持；"
+                + "要把整个对象原样交给该序列化器，请用无参 [Body]（整份正文，不与其它正文来源共存）。", config);
         }
 
         if (!config.ContentTypeSet && serializer.MediaType is { } declared && !string.IsNullOrWhiteSpace(declared))

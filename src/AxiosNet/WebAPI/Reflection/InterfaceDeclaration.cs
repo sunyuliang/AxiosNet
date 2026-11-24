@@ -287,15 +287,14 @@ internal static class InterfaceDeclaration
                 && parameter.GetCustomAttribute<HeaderAttribute>() is null
                 && parameter.GetCustomAttribute<HeaderCollectionAttribute>() is null
                 && parameter.GetCustomAttribute<PartAttribute>() is null
-                && parameter.GetCustomAttribute<BodyAttribute>() is null
-                && parameter.GetCustomAttribute<RootBodyAttribute>() is null);
+                && parameter.GetCustomAttribute<BodyAttribute>() is null);
 
             if (parameter.ParameterType == typeof(CancellationToken))
             {
                 cancellationTokenCount++;
                 if (hasBinding)
                 {
-                    errors.Add($"{parameterDisplay} 是 CancellationToken，不能同时标注 Path / Query / Header / HeaderCollection / Part / Body / RootBody。");
+                    errors.Add($"{parameterDisplay} 是 CancellationToken，不能同时标注 Path / Query / Header / HeaderCollection / Part / Body。");
                 }
 
                 continue;

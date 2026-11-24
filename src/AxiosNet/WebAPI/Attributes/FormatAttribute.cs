@@ -7,7 +7,7 @@ namespace AxiosNet.WebAPI.Attributes;
 /// </summary>
 /// <remarks>
 /// 两种形态互斥：格式串走 <see cref="IFormattable"/>（不变文化），格式化函数走静态方法 <c>public static string? M(object? value, ValueTextChannel channel)</c>（返回 <c>null</c> 回落默认）。
-/// 集合 / 字典上逐元素应用；元素非标量、与结构化 <c>[Body]</c> / <c>[RootBody]</c> 同用、用在文件部件上都在构建期报错。
+/// 集合 / 字典上逐元素应用；元素非标量、与结构化 <c>[Body]</c> 同用、用在文件部件上都在构建期报错。
 /// </remarks>
 /// <example>
 /// <code>

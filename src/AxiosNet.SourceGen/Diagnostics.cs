@@ -171,8 +171,7 @@ namespace AxiosNet.SourceGen
             helpLinkUri: HelpLink);
 
         /// <summary>
-        /// 请求体声明冲突：<c>[RootBody]</c> 与 <c>[Multipart]</c> 同用。
-        /// <c>[RootBody]</c> 与 <c>[Body]</c> / 未标注成员会合并到同一层，不算冲突。
+        /// 请求体声明冲突：无参 <c>[Body]</c>（整份正文）与正文键 / 其它无参 <c>[Body]</c> / <c>[Multipart]</c> 同用。
         /// </summary>
         public static readonly DiagnosticDescriptor MultipleBodyMembers = new DiagnosticDescriptor(
             "AXA017",
