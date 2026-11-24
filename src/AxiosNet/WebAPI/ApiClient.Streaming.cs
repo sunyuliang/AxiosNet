@@ -46,7 +46,7 @@ public sealed partial class ApiClient
         var metadata = AcquireMetadata(request.GetType());
         var config = BuildConfig(metadata, request, configure, cancellationToken);
 
-        return await SendStreamAsync<TItem>(request, metadata.Authorization, config, cancellationToken, format)
+        return await SendStreamAsync<TItem>(request, metadata.Authorization, config, cancellationToken, format, request.GetType().Name)
             .ConfigureAwait(false);
     }
 
@@ -56,7 +56,8 @@ public sealed partial class ApiClient
         ApiAuthorization authorization,
         AxiosConfig config,
         CancellationToken cancellationToken,
-        AxiosStreamFormat format)
+        AxiosStreamFormat format,
+        string targetName)
     {
         // 未显式设置时才自动切到 Stream；显式设成别的类型直接报配置错误。
         var declaredResponseType = config.ResponseTypeSet
@@ -83,7 +84,7 @@ public sealed partial class ApiClient
 
         var auth = ApplyAuthorization(authorization, request, config);
 
-        var raw = await SendAsync<Stream>(request, config, auth, cancellationToken).ConfigureAwait(false);
+        var raw = await SendAsync<Stream>(request, config, auth, cancellationToken, targetName).ConfigureAwait(false);
         var body = raw.Data ?? throw AxiosException.BadResponse(raw.Config ?? config, raw.Request, "Stream", new InvalidOperationException("流式响应没有拿到正文流：响应拦截器把 Data 换成了 null，流式请求不能被拦截器替换成非流对象。"));
 
         var info = raw.Config?.Response;

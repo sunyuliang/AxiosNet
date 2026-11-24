@@ -61,6 +61,8 @@ public sealed class InterfaceTests
         var ex = await Assert.ThrowsAsync<AxiosException>(
             () => client.Create<IInvalidBodyApi>().PostAsync(new Person("n", 1), new Person("m", 2)));
 
+        // 接口声明的冲突在 Create 时由绑定构建器报同一个码（AXA017 只覆盖请求模型）。
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         Assert.Contains("整份正文必须独占", ex.Message);
         Assert.Empty(server.Received);
     }

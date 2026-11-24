@@ -3,9 +3,9 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2898%20passed-success)](#build-and-test)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2748%20passed-success)](#build-and-test)
-[![coverage](https://img.shields.io/badge/coverage-92.2%25_(branch_87.4%25)-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2921%20passed-success)](#build-and-test)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2771%20passed-success)](#build-and-test)
+[![coverage](https://img.shields.io/badge/coverage-92.2%25_(branch_87.5%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -207,7 +207,7 @@ Constants: `AxiosContentType.Json` / `FormUrlEncoded` / `MultipartFormData` / `O
 | A request body | `PostAsync(url, data, c => …, ct)`; on read verbs write `c => c.Body = …` | either of the above |
 | Only a cancellation token | `GetAsync(url, ct)` | `AxiosResponse` / `AxiosResponse<T>` |
 
-- The trailing parameters (`query` / `data` / `configure` / `cancellationToken`) all have defaults, so `GetAsync(url)` is enough; `GetAsync(url, ct)` is the **explicit-token** shape, so a token is never mistaken for a body.
+- Arguments 2–4 all have defaults (`query` on read verbs, `data` on write verbs, plus `configure` and `cancellationToken`), so `GetAsync(url)` is enough; `GetAsync(url, ct)` is the **explicit-token** shape, so a token is never mistaken for a body.
 - To send one request with a **pre-built config**, use `RequestAsync(config)` (available on both the client and the static facade; the config carries its own url / method). On the instance, `GetAsync` / `DeleteAsync` / `HeadAsync` / `OptionsAsync` / `PostAsync` / `PutAsync` / `PatchAsync` additionally take `(url, config)`: the url / method arguments override the same fields in the config, and **your object is never mutated in place**. The form verbs (`PostFormAsync` etc.) have no such shape; they exist to set the form `ContentType`, so use `RequestAsync` when you have a config.
 - Putting an `AxiosConfig` / a `CancellationToken` into the second position, or a `Stream` / `HttpContent` into a read verb's query position, throws `ERR_BAD_OPTION_VALUE` right away and tells you where to go: `object?` accepts anything, so without the guard it would either **send your config / token as the body or query string** or degrade into a serialization message that has nothing to do with the real mistake.
 
@@ -2490,6 +2490,8 @@ The package ships a C# source generator (packed under `analyzers/dotnet/cs`, act
 | `AXA016` | Error | A `{name}` in the route template has no member bound to it with `[Path]` (names compare case-insensitively; the placeholder grammar matches the runtime - `[A-Za-z_][A-Za-z0-9_]*` only, so `{{` is a literal and constraint forms such as `{id:int}` are left to the runtime 'unrecognised brace' error) |
 | `AXA017` | Error | Body declaration conflict: a bare `[Body]` (whole body) combined with body keys, another bare `[Body]` or `[Multipart]` |
 
+`AXA016` / `AXA017` are reported for **request models** only: the same conflict in an interface declaration is raised by the binding builder at `Create<T>()` as `ERR_BAD_OPTION_VALUE` (same wording, just later).
+
 `System.Text.Json` metadata still has to be registered on demand (source-generated `JsonSerializerContext`):
 
 ```csharp
@@ -2725,15 +2727,15 @@ Sources compile as **C# 12**: every project declares `<LangVersion>12.0</LangVer
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2692 / 2679 | `net8.0` / `net6.0` | 5371 |
+| `AxiosNet.Tests` (core + declarative) | 2715 / 2702 | `net8.0` / `net6.0` | 5417 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests` (OpenAPI generation) | 80 | `net8.0` | 80 |
 | `AxiosNet.Compat.Tests` (netstandard2.0 compat asset) | 57 / 52 | `net8.0` / `net472` | 109 |
-| **Total** | **2898 / 2800** | | **5698** |
+| **Total** | **2921 / 2823** | | **5744** |
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed".
 
-Line coverage **92.2%**, branch coverage **87.4%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites):
+Line coverage **92.2%**, branch coverage **87.5%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites):
 
 ```bash
 dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat Code Coverage" \

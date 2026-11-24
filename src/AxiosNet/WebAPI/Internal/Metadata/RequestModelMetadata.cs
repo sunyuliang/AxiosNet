@@ -56,6 +56,9 @@ internal sealed class RequestModelMetadata
     /// <summary>授权策略（最近一层声明优先；都没标时为 <see cref="ApiAuthorizationMode.Inherit"/>）。</summary>
     internal ApiAuthorization Authorization { get; init; } = ApiAuthorization.Inherit;
 
+    /// <summary>把内核的「构造失败」改判为装配失败；声明构建成功时才有值，每条声明共用一份。</summary>
+    internal Func<AxiosException, AxiosException>? FailureMapper { get; init; }
+
     /// <summary>是否声明了 <see cref="MultipartAttribute"/>（请求体 = 模型自身装配的 multipart 表单）。</summary>
     internal bool IsMultipart { get; init; }
 
@@ -322,7 +325,8 @@ internal sealed class RequestModelMetadata
             ContentType = contentType,
             QueryCollectionFormat = queryCollectionFormat,
             HasStreamAttribute = hasStream,
-            StreamFormat = streamFormat
+            StreamFormat = streamFormat,
+            FailureMapper = error => RequestBindingErrors.Create(error.Config, request: null, modelName, error.Cause ?? error)
         };
     }
 

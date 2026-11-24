@@ -77,14 +77,25 @@ internal sealed class BindingPlan
         }
 
         var source = _bodyEntries[0].Source;
-        var value = source.GetValue(target);
+        return ResolveRootValue(source.GetValue(target), source.Format, formatter);
+    }
+
+    /// <summary>整份正文的取值规则（无参 <see cref="BodyAttribute"/> 与生成期字面量快路共用）：标量正文走格式化钩子，其余原样。</summary>
+    /// <param name="value">正文原始值。</param>
+    /// <param name="format">成员级 <c>[Format]</c>；生成期快路的参数绑定没有成员级格式化，传 <c>null</c>。</param>
+    /// <param name="formatter">实例级格式化钩子。</param>
+    public static object? ResolveRootValue(
+        object? value,
+        ValueFormat? format,
+        Func<object?, ValueTextChannel, string?>? formatter)
+    {
         if (value is null || !ScalarTypes.IsScalarBodyType(value.GetType()))
         {
             return value;
         }
 
         // 只有真的产出文本时才改成文本正文：二进制正文的默认形态是原始字节。
-        if (ValueText.TryCustomFormat(value, ValueTextChannel.ScalarBody, source.Format, formatter) is { } text)
+        if (ValueText.TryCustomFormat(value, ValueTextChannel.ScalarBody, format, formatter) is { } text)
         {
             return new PreformattedValue(text);
         }

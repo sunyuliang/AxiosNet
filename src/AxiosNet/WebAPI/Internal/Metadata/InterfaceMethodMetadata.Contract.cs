@@ -60,8 +60,17 @@ internal sealed partial class InterfaceMethodMetadata
         var seenPartNames = new HashSet<string>(StringComparer.Ordinal);
         var cancellationTokenIndex = declaration.CancellationTokenIndex;
 
+        // 生成期字面量快路的判据，分两层：
+        // ① 实参形状：只有整份正文（加取消令牌、被忽略的参数）时，生成代理才能只传一个正文值；
+        // ② 声明级附加项：静态头 / 媒体类型 / 集合格式 / 流式返回还要额外装配，快路一律让给通用路径。
+        var argsRebuildable = !isMultipart && path.IndexOf('{') < 0;
+        var rootBodyIndex = -1;
+        var parameterCount = 0;
+
         foreach (var parameter in declaration.Parameters)
         {
+            parameterCount = Math.Max(parameterCount, parameter.Index + 1);
+
             if (parameter.ValueType == typeof(CancellationToken))
             {
                 // 声明可以统一列出全部参数，取消令牌按类型跳过，位置由 CancellationToken(index) 标注。
@@ -83,6 +92,9 @@ internal sealed partial class InterfaceMethodMetadata
                         + "[ApiIgnore] 的语义是「完全不绑定」，两者同用是二义性。");
                 }
 
+                // 被忽略的参数不参与绑定，但它的实参仍按原值进入调用载荷（凭据提供方 / 错误工厂会读）。
+                // 快路只传正文与取消令牌，还原不出这个位置，因此这种形状不判快路。
+                argsRebuildable = false;
                 continue;
             }
 
@@ -92,6 +104,23 @@ internal sealed partial class InterfaceMethodMetadata
                 parameter.ValueType,
                 parameter.Description ?? $"{interfaceType.Name}.{methodName}.{parameter.Name}",
                 parameter.Format);
+
+            // 任何「整份正文以外」的绑定都让快路失效：生成代理在那种形状下仍然传参数数组。
+            if (parameter.Path
+                || parameter.Query
+                || parameter.Header
+                || parameter.HeaderCollection
+                || parameter.Part
+                || (!parameter.HasAnyBinding && !parameter.Ignore)
+                || (parameter.Body && (!string.IsNullOrWhiteSpace(parameter.BodyName) || parameter.Format is not null)))
+            {
+                argsRebuildable = false;
+            }
+
+            if (parameter.Body && string.IsNullOrWhiteSpace(parameter.BodyName))
+            {
+                rootBodyIndex = parameter.Index;
+            }
 
             if (parameter.Path)
             {
@@ -235,6 +264,15 @@ internal sealed partial class InterfaceMethodMetadata
             ? DeclarationNormalization.Authorization(declaration.AllowAnonymous, declaration.AuthorizeScheme, ownerText)
             : DeclarationNormalization.Authorization(owner.AllowAnonymous, owner.AuthorizeScheme, $"接口 {interfaceType.Name}");
 
+        // 实参形状够快路时，再确认声明级附加项也不需要额外装配。
+        var literalRootBody = argsRebuildable
+            && owner.StaticHeaders.Count == 0
+            && declaration.StaticHeaders.Count == 0
+            && contentType is null
+            && declaration.QueryCollectionFormat is null
+            && !isStreaming
+            && !declaration.HasStreamAttribute;
+
         return new InterfaceMethodMetadata(
             interfaceType,
             methodName,
@@ -248,7 +286,11 @@ internal sealed partial class InterfaceMethodMetadata
             declaration.QueryCollectionFormat,
             [.. parts],
             invoker: null,
-            fault: null);
+            fault: null,
+            rootBodyIndex,
+            parameterCount,
+            literalRootBody,
+            argsRebuildable);
     }
 
     /// <summary>错误消息里「返回类型…」这一句：能拿到 <see cref="Type"/> 时给出具体类型，否则用调用方给的固定说法。</summary>

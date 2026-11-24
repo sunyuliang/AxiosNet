@@ -215,6 +215,48 @@ public sealed class DeclarativeEntryTests
         [Query("verbose")] public bool Verbose { get; set; }
     }
 
+    /// <summary>
+    /// 拦截器换掉整份配置后，声明式的装配失败改判不能跟着丢：改判器属于「这次请求怎么来的」，
+    /// 而拦截器返回的新配置不带它。失败点必须落在拦截器之后（这里是查询串序列化），
+    /// 那时管线手里的配置已经是替换品。核心直调（非声明式）仍按 <c>ERR_BAD_OPTION_VALUE</c> 抛出。
+    /// </summary>
+    [Fact]
+    public async Task ConstructionFailure_SurvivesInterceptorReplacingConfig()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new ApiClient(server.Url);
+        client.Axios.Interceptors.Request.Use(
+            (Func<AxiosConfig, Task<AxiosConfig>>)(config => Task.FromResult(new AxiosConfig
+            {
+                BaseAddress = config.BaseAddress,
+                Url = config.Url,
+                Method = config.Method,
+
+                // 查询串在拦截器之后才序列化：取值抛错 → 管线内的「请求构造失败」。
+                Params = new ExplodingParams()
+            })));
+
+        // 改判后的异常类型是 RequestBindingErrors 的私有派生类（与改判前同一条产物），按基类断言。
+        var declarative = await Assert.ThrowsAnyAsync<AxiosException>(
+            () => client.RequestAsync(new EntryGetUserRequest { Id = 1 }));
+
+        Assert.Equal(AxiosException.ErrBadRequest, declarative.Code);
+        Assert.NotNull(declarative.Cause);
+        Assert.Empty(server.Received);
+
+        var core = await Assert.ThrowsAnyAsync<AxiosException>(() => client.Axios.GetAsync<Person>("users/1"));
+
+        // 核心直调的对外码是历史契约，不因声明式的改判器而变。
+        Assert.Equal(AxiosException.ErrBadOptionValue, core.Code);
+        Assert.NotNull(core.Cause);
+    }
+
+    /// <summary>查询串序列化时要读属性：getter 抛错，模拟装配期取值失败。</summary>
+    private sealed class ExplodingParams
+    {
+        public string Boom => throw new InvalidOperationException("boom");
+    }
+
     [Authorize]
     [Get("secure")]
     private sealed class EntryAuthorizedRequest : IApiRequest<Person>

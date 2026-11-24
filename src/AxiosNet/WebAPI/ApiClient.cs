@@ -67,26 +67,20 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     /// <param name="cancellationToken">外部取消令牌。</param>
     /// <exception cref="AxiosException">请求模型定义非法（缺路由特性、占位符未绑定、多个请求体等），错误码 <c>ERR_BAD_OPTION_VALUE</c>，内部异常在 <c>Cause</c>。</exception>
     /// <exception cref="AxiosAotMetadataException">Native AOT 下缺少该模型的生成元数据（源生成器未启用）。</exception>
-    public async Task<TResponse> RequestAsync<TResponse>(
+    public Task<TResponse> RequestAsync<TResponse>(
         IApiRequest<TResponse> request,
         CancellationToken cancellationToken = default)
-    {
-        var response = await RequestFullAsync(request, configure: null, cancellationToken).ConfigureAwait(false);
-        return response.Data!;
-    }
+        => RequestDataAsync(request, configure: null, cancellationToken);
 
     /// <summary>同 <see cref="RequestAsync{TResponse}(IApiRequest{TResponse}, CancellationToken)"/>，另支持按请求微调配置。</summary>
     /// <param name="request">请求模型实例。</param>
     /// <param name="configure">在参数绑定与 <see cref="IApiRequestConfigurable.Configure"/> 之后、授权之前调用。</param>
     /// <param name="cancellationToken">外部取消令牌。</param>
-    public async Task<TResponse> RequestAsync<TResponse>(
+    public Task<TResponse> RequestAsync<TResponse>(
         IApiRequest<TResponse> request,
         Action<AxiosConfig>? configure,
         CancellationToken cancellationToken = default)
-    {
-        var response = await RequestFullAsync(request, configure, cancellationToken).ConfigureAwait(false);
-        return response.Data!;
-    }
+        => RequestDataAsync(request, configure, cancellationToken);
 
     /// <summary>发送请求模型描述的请求，交付完整响应（状态码 / 响应头 / 请求消息 / 正文）：要读这些元数据时用它。</summary>
     /// <param name="request">请求模型实例（路径 / 查询 / 头 / 正文的取值来源）。</param>
@@ -96,7 +90,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     public Task<AxiosResponse<TResponse>> RequestFullAsync<TResponse>(
         IApiRequest<TResponse> request,
         CancellationToken cancellationToken = default)
-        => RequestFullAsync(request, configure: null, cancellationToken);
+        => RequestResponseAsync(request, configure: null, cancellationToken);
 
     /// <summary>同 <see cref="RequestFullAsync{TResponse}(IApiRequest{TResponse}, CancellationToken)"/>，另支持按请求微调配置。</summary>
     /// <param name="request">请求模型实例。</param>
@@ -111,22 +105,70 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         IApiRequest<TResponse> request,
         Action<AxiosConfig>? configure,
         CancellationToken cancellationToken = default)
+        => RequestResponseAsync(request, configure, cancellationToken);
+
+    /// <summary>绑定 + 授权 + 发送，交付完整响应；装配期异常按异步方法的时序交给返回的 Task。</summary>
+    private Task<AxiosResponse<TResponse>> RequestResponseAsync<TResponse>(
+        IApiRequest<TResponse> request,
+        Action<AxiosConfig>? configure,
+        CancellationToken cancellationToken)
     {
         try
         {
             ArgumentNullException.ThrowIfNull(request);
 
-            var metadata = AcquireMetadata(request.GetType());
-            var config = BuildConfig(metadata, request, configure, cancellationToken);
-
-            var auth = ApplyAuthorization(metadata.Authorization, request, config);
-
-            return SendAsync<TResponse>(request, config, auth, cancellationToken);
+            var prepared = Prepare(request, configure, cancellationToken);
+            return SendAsync<TResponse>(request, prepared.Config, prepared.Auth, cancellationToken, request.GetType().Name);
         }
         catch (Exception ex)
         {
             return Task.FromException<AxiosResponse<TResponse>>(ex);
         }
+    }
+
+    /// <summary>发出请求模型描述的请求，只交付响应正文（<c>Data</c>）；这是唯一的一层异步等待，不再转调完整响应版本。</summary>
+    private async Task<TResponse> RequestDataAsync<TResponse>(
+        IApiRequest<TResponse> request,
+        Action<AxiosConfig>? configure,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var prepared = Prepare(request, configure, cancellationToken);
+        var response = await SendAsync<TResponse>(request, prepared.Config, prepared.Auth, cancellationToken, request.GetType().Name)
+            .ConfigureAwait(false);
+        return response.Data!;
+    }
+
+    /// <summary>请求模型的绑定 + 授权结果：配置与本次的托管凭据适配器（没有托管凭据时为 <c>null</c>）。</summary>
+    private readonly struct PreparedRequest
+    {
+        public PreparedRequest(AxiosConfig config, ApiCredentialProviderAdapter? auth)
+        {
+            Config = config;
+            Auth = auth;
+        }
+
+        /// <summary>本次请求的生效配置。</summary>
+        public AxiosConfig Config { get; }
+
+        /// <summary>本次的托管凭据适配器；<c>null</c> 表示没走托管凭据。</summary>
+        public ApiCredentialProviderAdapter? Auth { get; }
+    }
+
+    /// <summary>请求模型的装配：取元数据 → 绑定配置 → 授权。失败（含声明错误）同步抛出，由调用方决定交给 Task 还是直接冒泡。</summary>
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2072",
+        Justification = "请求模型的运行时类型无法静态标注：AOT 下由 AxiosNet 源生成器在编译期写入成员取值委托，注册表命中后不再反射；"
+            + "未命中且无动态代码时抛 AxiosAotMetadataException，不会反射模型成员（README「运行时与 AOT」）。")]
+    private PreparedRequest Prepare(
+        object request,
+        Action<AxiosConfig>? configure,
+        CancellationToken cancellationToken)
+    {
+        var metadata = AcquireMetadata(request.GetType());
+        var config = BuildConfig(metadata, request, configure, cancellationToken);
+        return new PreparedRequest(config, ApplyAuthorization(metadata.Authorization, request, config));
     }
 
     /// <summary>按请求模型拼出最终 URL（路径替换、查询参数与 BaseAddress 合并），不发请求；返回实际发送形态（已转义）。</summary>
@@ -258,13 +300,19 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
 
         // 顺序与快捷方法一致：先写完头，再执行删头。
         AxiosClient.ApplyRemoveHeaders(config);
+
+        // 本次请求的装配失败改判器：内核在请求成型阶段抛错时用它换成 ERR_BAD_REQUEST。
+        config.ConstructionFailureMap = metadata.FailureMapper;
         return config;
     }
 
     /// <summary>授权链路：<see cref="AllowAnonymousAttribute"/> 清空凭据来源；返回的适配器 <c>null</c> 表示本次没走托管凭据。</summary>
+    /// <param name="authorization">声明上的授权策略。</param>
+    /// <param name="request">本次调用上下文；没有观测者读实参的入口可以给 <c>null</c>，此时必不走托管凭据。</param>
+    /// <param name="config">本次请求配置。</param>
     internal ApiCredentialProviderAdapter? ApplyAuthorization(
         ApiAuthorization authorization,
-        object request,
+        object? request,
         AxiosConfig config)
     {
         if (authorization.Mode == ApiAuthorizationMode.Anonymous)
@@ -310,38 +358,83 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
                 config);
         }
 
-        var adapter = new ApiCredentialProviderAdapter(CredentialProvider, request, authorization.Scheme, _credentialCache);
+        // 走到这里说明本次走托管凭据，调用方必然带了调用载荷（见 RequiresInvocationPayload）。
+        var adapter = new ApiCredentialProviderAdapter(CredentialProvider, request!, authorization.Scheme, _credentialCache);
         config.InternalCredentialProvider = adapter;
         return adapter;
     }
 
+    /// <summary>本次调用是否有观察者会读实参（凭据提供方 / 错误工厂）：有才需要组装调用对象与实参数组。</summary>
+    internal bool RequiresInvocationPayload => CredentialProvider is not null || ErrorFactory is not null;
+
     /// <summary>发送请求；「服务端给了响应却是错误状态码」时交给 <see cref="ErrorFactory"/>；<paramref name="auth"/> 为 <c>null</c> 表示本次没有托管凭据。</summary>
+    /// <remarks>
+    /// 没有托管凭据也没有错误工厂时直接走强类型内核路径：不建恢复状态机，装配失败改判由配置上的钩子完成。
+    /// </remarks>
     internal Task<AxiosResponse<TResponse>> SendAsync<TResponse>(
-        object request,
+        object? request,
         AxiosConfig config,
         ApiCredentialProviderAdapter? auth,
-        CancellationToken cancellationToken)
-        => SendCoreAsync(request, config, auth, cancellationToken, TypedSender<TResponse>.Send);
+        CancellationToken cancellationToken,
+        string targetName)
+        => auth is null && ErrorFactory is null
+            ? SendPreparedDeclarativeAsync<TResponse>(config)
+            : SendCoreAsync(request, config, auth, cancellationToken, TypedSender<TResponse>.Send, targetName);
 
     /// <summary>发送请求并交付非泛型响应（正文按 <see cref="System.Text.Json.JsonElement"/>）；错误处理同 <see cref="SendAsync{TResponse}"/>。</summary>
     internal Task<AxiosResponse> SendUntypedAsync(
-        object request,
+        object? request,
         AxiosConfig config,
         ApiCredentialProviderAdapter? auth,
-        CancellationToken cancellationToken)
-        => SendCoreAsync(request, config, auth, cancellationToken, ResponseSenders.Untyped);
+        CancellationToken cancellationToken,
+        string targetName)
+        => auth is null && ErrorFactory is null
+            ? SendPreparedDeclarativeAsync(config)
+            : SendCoreAsync(request, config, auth, cancellationToken, ResponseSenders.Untyped, targetName);
 
     /// <summary>只完成请求、不装配正文（接口声明返回 <c>Task</c>）；错误处理同 <see cref="SendAsync{TResponse}"/>。</summary>
-    internal async Task SendWithoutBodyAsync(
-        object request,
+    internal Task SendWithoutBodyAsync(
+        object? request,
         AxiosConfig config,
         ApiCredentialProviderAdapter? auth,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string targetName)
+        => auth is null && ErrorFactory is null
+            ? SendPreparedDeclarativeVoidAsync(config)
+            : SendWithoutBodyCoreAsync(request, config, auth, cancellationToken, targetName);
+
+    /// <summary>慢路：需要 401 重放或错误工厂接管时用，正文不装配、只完成请求。</summary>
+    private async Task SendWithoutBodyCoreAsync(
+        object? request,
+        AxiosConfig config,
+        ApiCredentialProviderAdapter? auth,
+        CancellationToken cancellationToken,
+        string targetName)
     {
-        var response = await SendCoreAsync(request, config, auth, cancellationToken, ResponseSenders.Void)
+        var response = await SendCoreAsync(request, config, auth, cancellationToken, ResponseSenders.Void, targetName)
             .ConfigureAwait(false);
 
-        // 正文归调用方时（responseType 配成 Stream）在这里释放；短路响应的 Data 归调用方，不释放。
+        DisposeDiscardedBody(response);
+    }
+
+    /// <summary>声明式快路：配置已填好、没有托管凭据也没有错误工厂，直接交给强类型内核路径（不再套恢复层）。</summary>
+    internal Task<AxiosResponse<TResponse>> SendPreparedDeclarativeAsync<TResponse>(AxiosConfig config)
+        => Axios.SendPreparedTypedAsync<TResponse>(config);
+
+    /// <summary>声明式快路的非泛型版本（正文按 <see cref="System.Text.Json.JsonElement"/> 原样给）。</summary>
+    internal Task<AxiosResponse> SendPreparedDeclarativeAsync(AxiosConfig config)
+        => Axios.SendPreparedAsync(config);
+
+    /// <summary>声明式快路的非泛型版本：只完成请求，正文丢弃。</summary>
+    internal async Task SendPreparedDeclarativeVoidAsync(AxiosConfig config)
+    {
+        var response = await Axios.SendPreparedAsync(config, typeof(void)).ConfigureAwait(false);
+        DisposeDiscardedBody(response);
+    }
+
+    /// <summary>丢弃正文时的释放：正文归调用方（<c>responseType</c> 配成 Stream）才释放；短路响应的 Data 归调用方，不释放。</summary>
+    private static void DisposeDiscardedBody(AxiosResponse response)
+    {
         if (response.Request is not null)
         {
             (response.Data as IDisposable)?.Dispose();
@@ -368,13 +461,14 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
             static (client, config) => client.SendPreparedAsync(config, typeof(void));
     }
 
-    /// <summary>发送一次并在同一条链路里收尾：401 重放（仅托管凭据）、装配失败改判、错误工厂接管。</summary>
+    /// <summary>慢路发送：需要 401 重放或错误工厂接管时用，一次发送在同一条链路里收尾；<paramref name="targetName"/> 用于装配失败消息。</summary>
     private async Task<TResult> SendCoreAsync<TResult>(
-        object request,
+        object? request,
         AxiosConfig config,
         ApiCredentialProviderAdapter? auth,
         CancellationToken cancellationToken,
-        Func<AxiosClient, AxiosConfig, Task<TResult>> send)
+        Func<AxiosClient, AxiosConfig, Task<TResult>> send,
+        string targetName)
     {
         try
         {
@@ -464,14 +558,14 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
             throw RequestBindingErrors.Create(
                 error.Config,
                 request: null,
-                InvocationTargetName(request),
+                targetName,
                 error.Cause ?? error);
         }
         catch (AxiosException error) when (ErrorFactory is not null && error.Response is not null)
         {
             // 只接管「服务端给了响应」的错误；工厂返回 null 时原样再抛。
             var replacement = await ErrorFactory
-                .CreateAsync(new ApiErrorContext(request, error), cancellationToken)
+                .CreateAsync(new ApiErrorContext(request!, error), cancellationToken)
                 .ConfigureAwait(false);
 
             if (replacement is not null)
@@ -549,12 +643,6 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         return next is { Value: { } value }
             && !string.Equals(value, previousValue, StringComparison.Ordinal);
     }
-
-    /// <summary>错误消息里的目标名：请求模型类型名，或接口调用的 <c>接口.方法</c>。</summary>
-    private static string InvocationTargetName(object request)
-        => request is ApiInterfaceInvocation invocation
-            ? $"{invocation.InterfaceType.Name}.{invocation.MethodName}"
-            : request.GetType().Name;
 
     /// <summary>释放底层 AxiosClient（仅当本门面拥有它）。</summary>
     public void Dispose()

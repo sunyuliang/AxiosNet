@@ -17,7 +17,7 @@
 - 声明式默认只交付正文：`RequestAsync` 返回 `Task<TResponse>`（此前 `Task<AxiosResponse<TResponse>>`），正文为空时返回 `default(TResponse)`，与接口式 `Task<T>` 形态一致；读响应元数据改用 `RequestFullAsync`。`RequestStreamAsync` 不变。
 - 快捷方法第二个参数的语义只看动词：`GetAsync` / `DeleteAsync` / `HeadAsync` / `OptionsAsync` 的第二个参数改为查询参数（参数名 `data` → `query`，写入 `Params`），读动词要发正文改写 `c => c.Body = ...`；`Stream` / `HttpContent` 落在查询参数位置抛 `ERR_BAD_OPTION_VALUE`。
 - `RootBodyAttribute` 删除，`[Body]` 用两种构造形态区分正文位置：无参 `[Body]` 是整份正文（原样发送、独占），`[Body("名")]` 是聚合正文里的一个键。`BodyAttribute.Name` 改为 `string?`（`null` 表示整份正文）；`RequestModelMemberBuilder.RootBody()` / `InterfaceParameterBuilder.RootBody()` 删除，改用无参 `Body()`。迁移对照见 [`docs/breaking-changes-1.8.md`](docs/breaking-changes-1.8.md)。
-- 正文形态不再由「正文来源个数」决定：此前单个正文来源原样发送、出现第二个才合并（`[RootBody]` 还会展开结构化值的属性），现在只看值自身——无参 `[Body]` 永远原样发送，其它来源永远按键聚合。无参 `[Body]` 与任何其它正文来源写在一起改在构建期报错（`AXA017` 与运行期构建器同一口径），错误消息给出「换通道」与「改成键」两条出路。
+- 正文形态不再由「正文来源个数」决定：此前单个正文来源原样发送、出现第二个才合并（`[RootBody]` 还会展开结构化值的属性），现在只看值自身——无参 `[Body]` 永远原样发送，其它来源永远按键聚合。无参 `[Body]` 与任何其它正文来源写在一起改在构建期报错（请求模型由 `AXA017` 在编译期报；接口式由绑定构建器在 `Create<T>()` 时按同一句错误报 `ERR_BAD_OPTION_VALUE`），错误消息给出「换通道」与「改成键」两条出路。
 
 ### Changed
 

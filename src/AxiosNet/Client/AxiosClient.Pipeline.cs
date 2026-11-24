@@ -40,6 +40,10 @@ public sealed partial class AxiosClient
         AxiosConfig? config = null;
         Uri? telemetryUri = null;
 
+        // 声明式装配失败改判器：属于「本次请求怎么来的」而不是「当前这份配置」，先抓下来。
+        // 拦截器可以换掉整份配置（换过的配置不再携带它），改判不能因此失效。
+        var constructionFailureMap = perCallConfig.ConstructionFailureMap;
+
         // 本次请求认下的观测实现。
         GuardedTelemetrySink? telemetry = null;
         var telemetryEntered = false;
@@ -312,6 +316,14 @@ public sealed partial class AxiosClient
             if (telemetryEntered)
             {
                 telemetry!.RequestFailed(config, telemetryUri, ex, telemetryStart, telemetryTrace);
+            }
+
+            // 声明式入口的装配失败改判：原始异常仍是 Cause，对外错误码由声明方决定（见 ConstructionFailureMap）。
+            // 本次请求的改判器优先，异常自身带的配置只做兜底。
+            if (ex is AxiosException { IsRequestConstructionFailure: true } constructionFailure
+                && (constructionFailureMap ?? constructionFailure.Config?.ConstructionFailureMap) is { } map)
+            {
+                throw map(constructionFailure);
             }
 
             throw;

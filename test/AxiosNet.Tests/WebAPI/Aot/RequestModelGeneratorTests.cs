@@ -952,7 +952,7 @@ public sealed class RequestModelGeneratorTests
         throw new InvalidOperationException("找不到仓库根（AxiosNet.sln），无法定位快照基线。");
     }
 
-    /// <summary>快照输入：一份模型 + 一个接口，覆盖路径 / 查询 / 头 / 正文与两种返回形态。</summary>
+    /// <summary>快照输入：模型 + 三个接口，覆盖路径 / 查询 / 头 / 正文、两种返回形态与「整份正文快路」的取舍。</summary>
     private const string SnapshotModels = """
         using System.Threading;
         using System.Threading.Tasks;
@@ -992,6 +992,40 @@ public sealed class RequestModelGeneratorTests
 
                 [Put("items")]
                 Task<SnapshotItem?> ReplaceAsync([Body] SnapshotItem item, CancellationToken cancellationToken);
+            }
+
+            // 接口级静态头必须让整份正文快路失效：头只能由绑定计划写进配置。
+            [Headers("X-Declared: 1")]
+            public interface ISnapshotHeaderApi
+            {
+                [Post("items/plain")]
+                Task<SnapshotItem?> CreateAsync([Body] SnapshotItem item, CancellationToken cancellationToken);
+            }
+
+            // 四种快路入口各一条，外加三个必须留在通用路径的形状。
+            public interface ISnapshotFastApi
+            {
+                [Post("items/plain")]
+                Task<SnapshotItem?> CreateAsync([Body] SnapshotItem item, CancellationToken cancellationToken);
+
+                [Get("items/plain")]
+                Task<AxiosResponse<SnapshotItem>> ReadAsync(CancellationToken cancellationToken);
+
+                [Delete("items/plain")]
+                Task PurgeAsync([Body] SnapshotItem item, CancellationToken cancellationToken);
+
+                [Put("items/plain")]
+                Task<AxiosResponse> RawAsync([Body] SnapshotItem item, CancellationToken cancellationToken);
+
+                [Post("items/plain")]
+                Task<AxiosResponse<SnapshotItem>> NamedAsync([Body("item")] SnapshotItem item, CancellationToken cancellationToken);
+
+                [Get("items/plain")]
+                Task<SnapshotItem?> SearchAsync([Query("q")] string? q, CancellationToken cancellationToken);
+
+                // 被忽略参数的实参仍要进调用载荷，快路还原不出，留在通用路径。
+                [Post("items/plain")]
+                Task<AxiosResponse> TracedAsync([Body] SnapshotItem item, [ApiIgnore] string? trace, CancellationToken cancellationToken);
             }
         }
         """;

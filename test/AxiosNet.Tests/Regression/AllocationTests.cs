@@ -392,13 +392,17 @@ public sealed class AllocationTests
         // 1KB HttpContent 正文 + 托管凭据 + PUT（幂等、可 401 重放）+ 200 响应。
         // 默认配置（未设 MaxRequestBytes）不允许在首次发送前读正文：旧实现会把正文读成两份缓冲，
         // 1KB 正文实测多出约 2.2KB/请求。这里用「有凭据 vs 无凭据」的差值卡住它，凭据本身只值几百字节。
+        // 对照组也挂一个错误工厂：两组因此都走带恢复层的发送路径，差值里只剩凭据链路的开销。
         var body = new byte[1024];
 
         using var plain = new ApiClient(
             new AxiosClient(
                 new AxiosConfig { BaseAddress = "http://units.test/" },
                 handler: new AlwaysOkHandler(),
-                disposeHandler: true));
+                disposeHandler: true))
+        {
+            ErrorFactory = new NoOpErrorFactory(),
+        };
 
         using var guarded = new ApiClient(
             new AxiosClient(
@@ -898,5 +902,12 @@ public sealed class AllocationTests
         Assert.Equal(2, invocation.Arguments.Count);
         Assert.Same(args[0], invocation.Arguments[0]);
         Assert.Equal(30, invocation.Arguments[1]);
+    }
+
+    /// <summary>什么都不改的错误工厂：只用来让对照组也走带恢复层的发送路径。</summary>
+    private sealed class NoOpErrorFactory : IApiErrorFactory
+    {
+        public ValueTask<Exception?> CreateAsync(ApiErrorContext context, CancellationToken cancellationToken)
+            => new((Exception?)null);
     }
 }

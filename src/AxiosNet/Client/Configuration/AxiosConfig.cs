@@ -376,6 +376,10 @@ public sealed partial class AxiosConfig
     /// <summary>这份配置里的实例级项（<c>BaseAddress</c> / <c>CancellationToken</c> / 序列化注册表等）已按实例生效值填好，合并时沿用本实例默认值；随 <see cref="Clone"/> 继承。</summary>
     internal bool InstanceOptionsInherited { get; set; }
 
+    /// <summary>声明式入口的装配失败改判器：管线在请求成型阶段抛「构造失败」时用它换成对外错误；<c>null</c> 表示不改判。</summary>
+    /// <remarks>由请求模型 / 接口方法的元数据在绑定期写入，每条声明共用一份委托；非声明式请求保持 <c>null</c>。</remarks>
+    internal Func<AxiosException, AxiosException>? ConstructionFailureMap { get; set; }
+
     // 401 重放与凭据解析的按请求状态，只在真正用到时才分配。
     private AuthReplayState? _authReplay;
 

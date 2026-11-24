@@ -3,9 +3,9 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2898%20passed-success)](#构建与测试)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2748%20passed-success)](#构建与测试)
-[![coverage](https://img.shields.io/badge/coverage-92.2%25_(branch_87.4%25)-success)](#构建与测试)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2921%20passed-success)](#构建与测试)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2771%20passed-success)](#构建与测试)
+[![coverage](https://img.shields.io/badge/coverage-92.2%25_(branch_87.5%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -207,7 +207,7 @@ await http.DeleteAsync("users", new { reason = "duplicated" });         // -> ?r
 | 带请求正文 | `PostAsync(url, data, c => …, ct)`；读动词写 `c => c.Body = …` | 同上两种 |
 | 只传取消令牌 | `GetAsync(url, ct)` | `AxiosResponse` / `AxiosResponse<T>` |
 
-- 后三个参数（`query` / `data` / `configure` / `cancellationToken`）都有默认值，`GetAsync(url)` 就能发；`GetAsync(url, ct)` 是**显式令牌**形态，令牌不会被当成正文。
+- 第二到第四个参数都有默认值（读动词是 `query`、写动词是 `data`，再加 `configure` 与 `cancellationToken`），`GetAsync(url)` 就能发；`GetAsync(url, ct)` 是**显式令牌**形态，令牌不会被当成正文。
 - 用**预先造好的配置**发一次请求：`RequestAsync(config)`（实例与静态门面都有，config 自己带 url / method）。实例的 `GetAsync` / `DeleteAsync` / `HeadAsync` / `OptionsAsync` / `PostAsync` / `PutAsync` / `PatchAsync` 另有 `(url, config)` 形态，会用参数上的 url / method 覆盖配置里的同名项、**不就地改调用方的对象**；表单动词（`PostFormAsync` 等）没有这一形态；它们的作用是设置表单 `ContentType`，需要配置形态时直接用 `RequestAsync`。
 - 把 `AxiosConfig` / `CancellationToken` 放到第二个参数，或在读动词的查询参数位置传 `Stream` / `HttpContent`，都会立刻抛 `ERR_BAD_OPTION_VALUE` 并指路：`object?` 能吞下一切，不拦就会「把配置 / 令牌当正文或查询串发出去」，或者退化成一句与真实原因无关的序列化失败。
 
@@ -2491,6 +2491,8 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 | `AXA016` | Error | 路由模板里的 `{name}` 没有任何成员用 `[Path]` 绑定（名字比对大小写不敏感；占位符文法与运行期一致，只认 `[A-Za-z_][A-Za-z0-9_]*` —— `{{` 是字面量，`{id:int}` 这类约束式花括号不产出本诊断，留给运行期报「无法识别的花括号」） |
 | `AXA017` | Error | 请求体声明冲突：无参 `[Body]`（整份正文）与正文键、另一个无参 `[Body]` 或 `[Multipart]` 同用 |
 
+`AXA016` / `AXA017` 只在**请求模型**上报告：接口声明里的同一处冲突由绑定构建器在 `Create<T>()` 时抛 `ERR_BAD_OPTION_VALUE`（错误句子一致，只是晚到运行期）。
+
 `System.Text.Json` 的序列化元数据仍需要按需注册（源生成 `JsonSerializerContext`）：
 
 ```csharp
@@ -2727,15 +2729,15 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 2692 / 2679 | `net8.0` / `net6.0` | 5371 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2715 / 2702 | `net8.0` / `net6.0` | 5417 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests`（OpenAPI 生成） | 80 | `net8.0` | 80 |
 | `AxiosNet.Compat.Tests`（netstandard2.0 兼容资产） | 57 / 52 | `net8.0` / `net472` | 109 |
-| **合计** | **2898 / 2800** | | **5698** |
+| **合计** | **2921 / 2823** | | **5744** |
 
 表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。
 
-行覆盖率 **92.2%**、分支覆盖率 **87.4%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例）：
+行覆盖率 **92.2%**、分支覆盖率 **87.5%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例）：
 
 ```bash
 dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat Code Coverage" \

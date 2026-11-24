@@ -65,20 +65,20 @@ namespace AxiosNet.SourceGen
             foreach (var method in model.Methods)
             {
                 builder.AppendLine();
-                EmitProxyMethod(builder, method);
+                EmitProxyMethod(builder, model, method);
             }
 
             builder.AppendLine("    }");
         }
 
-        // 写一个显式接口实现：签名照抄声明，方法体统一转成一次 ApiInterfaceInvocation。
-        private static void EmitProxyMethod(StringBuilder builder, InterfaceMethodInfo method)
+        // 写一个显式接口实现：签名照抄声明，方法体落成一次发送调用（整份正文快路或参数数组通用路径）。
+        private static void EmitProxyMethod(StringBuilder builder, InterfaceModelInfo model, InterfaceMethodInfo method)
         {
             var parameters = BuildParameterList(method);
             builder.Append("        ").Append(GetReturnType(method)).Append(' ')
                 .Append(method.DeclaringInterfaceExpression).Append('.').Append(EscapeIdentifier(method.Name))
                 .Append('(').Append(parameters).AppendLine(")");
-            builder.Append("            => __method").Append(method.Index).Append('.').Append(BuildCall(method)).AppendLine(";");
+            builder.Append("            => __method").Append(method.Index).Append('.').Append(BuildCall(model, method)).AppendLine(";");
         }
 
         // 拼形参表：类型与名字按原声明顺序（含默认值与 ref / out 修饰）。
@@ -113,8 +113,84 @@ namespace AxiosNet.SourceGen
                 _ => Task + "<" + AxiosResponse + "<" + method.ResponseTypeExpression + ">>"
             };
 
-        // 拼出真正发出的那次调用：方法、路由、参数数组与取消令牌，返回值按形态再包一层。
-        private static string BuildCall(InterfaceMethodInfo method)
+        // 拼出真正发出的那次调用：字面量形状走整份正文重载，其余形状按参数数组交给通用路径。
+        private static string BuildCall(InterfaceModelInfo model, InterfaceMethodInfo method)
+            => TryBuildLiteralCall(model, method, out var literal)
+                ? literal
+                : BuildArgumentCall(method);
+
+        // 字面量快路：方法 + 字面量路由 + 单整份正文（或无正文），且没有别的绑定、静态头与媒体类型声明。
+        // 判据必须与运行期 InterfaceMethodMetadata 的 _literalRootBody 一致：任何一侧放宽都会让快路变成通用路径，
+        // 生成代理只传了正文与取消令牌，别的绑定通道在这里是拿不回来的。
+        private static bool TryBuildLiteralCall(InterfaceModelInfo model, InterfaceMethodInfo method, out string call)
+        {
+            call = string.Empty;
+
+            if (method.Multipart
+                || method.IsStreaming
+                || model.StaticHeaders.Length > 0
+                || method.StaticHeaders.Length > 0
+                || method.ContentType is not null
+                || method.QueryCollectionFormat is not null
+                || method.RoutePath.IndexOf('{') >= 0)
+            {
+                return false;
+            }
+
+            var bodyIndex = -1;
+            foreach (var parameter in method.Parameters)
+            {
+                // 被忽略参数的实参在运行期仍要进入调用载荷，快路还原不出它，因此也不判快路。
+                if (parameter.Path
+                    || parameter.Query
+                    || parameter.Header
+                    || parameter.HeaderCollection
+                    || parameter.Part
+                    || parameter.Ignore
+                    || parameter.FormatExpression is not null)
+                {
+                    return false;
+                }
+
+                if (parameter.Body)
+                {
+                    if (parameter.BodyName is not null)
+                    {
+                        return false;
+                    }
+
+                    bodyIndex = parameter.Index;
+                    continue;
+                }
+
+                // 剩下只允许取消令牌的位置。
+                if (parameter.Index != method.CancellationTokenIndex)
+                {
+                    return false;
+                }
+            }
+
+            var body = bodyIndex >= 0 ? "p" + bodyIndex : "(object?)null";
+            var cancellationToken = method.CancellationTokenIndex >= 0
+                ? "p" + method.CancellationTokenIndex
+                : "default(" + CancellationToken + ")";
+
+            call = method.ReturnKind switch
+            {
+                InterfaceReturnKind.Void
+                    => "SendRootBodyVoidAsync(_client, " + body + ", " + cancellationToken + ")",
+                InterfaceReturnKind.Data
+                    => "SendRootBodyDataAsync<" + method.ResponseTypeExpression + ">(_client, " + body + ", " + cancellationToken + ")",
+                _ when method.ResponseTypeExpression is null
+                    => "SendRootBodyUntypedAsync(_client, " + body + ", " + cancellationToken + ")",
+                _ => "SendRootBodyResponseAsync<" + method.ResponseTypeExpression + ">(_client, " + body + ", " + cancellationToken + ")"
+            };
+
+            return true;
+        }
+
+        // 通用形状的调用：把实参装箱成数组，交给绑定计划。
+        private static string BuildArgumentCall(InterfaceMethodInfo method)
         {
             var arguments = BuildArgumentArray(method);
             var cancellationToken = method.CancellationTokenIndex >= 0
