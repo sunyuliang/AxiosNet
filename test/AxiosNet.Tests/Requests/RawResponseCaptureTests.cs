@@ -5,8 +5,8 @@ using System.Text;
 namespace AxiosNet.Tests.Requests;
 
 /// <summary>
-/// 响应对象上对外开放的正文：<see cref="AxiosResponse.RawText"/>（错误体原文，始终保留）与
-/// <see cref="AxiosResponse.RawBody"/>（原始字节，按 <see cref="AxiosConfig.ObservabilitySettings.CaptureRawResponseBody"/> 显式开启）。
+/// 响应对象上对外开放的正文：<see cref="AxiosResponse.RawBody"/> 是原始字节的唯一来源，
+/// <see cref="AxiosResponse.RawText"/> 由它按 charset 派生；错误、短路、缓存与 <c>byte[]</c> 形态的正文本来就被持有，不额外占内存。
 /// </summary>
 public sealed class RawResponseCaptureTests
 {
@@ -19,6 +19,7 @@ public sealed class RawResponseCaptureTests
 
         var response = await client.GetAsync("x");
 
+        // 正文解析成对象后字节即弃：没有开关就没有字节，也就没有派生文本。
         Assert.Null(response.RawText);
         Assert.Null(response.RawBody);
     }
@@ -47,12 +48,12 @@ public sealed class RawResponseCaptureTests
         Assert.Equal(payload, response.RawBody!.Value.ToArray());
         Assert.Equal(hooked, response.RawBody.Value.ToArray());
 
-        // 2xx 不保留整段文本：RawText 只服务错误体。
-        Assert.Null(response.RawText);
+        // 2xx 打开开关后同样能读原文：文本由同一份字节派生，不再是 null。
+        Assert.Equal("{\"name\":\"张三\"}", response.RawText);
     }
 
     [Fact]
-    public async Task ErrorResponse_KeepsRawText_WithoutOptIn()
+    public async Task ErrorResponse_KeepsTextAndBytes_WithoutOptIn()
     {
         var payload = Encoding.UTF8.GetBytes("missing");
 
@@ -67,8 +68,9 @@ public sealed class RawResponseCaptureTests
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("nope"));
 
+        // 错误响应的字节本来就在手上：文本与字节都能读到，不需要任何开关。
         Assert.Equal("missing", ex.Response!.RawText);
-        Assert.Null(ex.Response.RawBody);
+        Assert.Equal(payload, ex.Response.RawBody!.Value.ToArray());
     }
 
     [Fact]
@@ -156,7 +158,7 @@ public sealed class RawResponseCaptureTests
     }
 
     [Fact]
-    public async Task ParseFailure_OnAcceptedStatus_KeepsRawText_WithoutOptIn()
+    public async Task ParseFailure_OnAcceptedStatus_KeepsTextAndBytes_WithoutOptIn()
     {
         var payload = Encoding.UTF8.GetBytes("not-json");
 
@@ -172,7 +174,7 @@ public sealed class RawResponseCaptureTests
 
         Assert.Null(ex.Response!.Data);
         Assert.Equal("not-json", ex.Response.RawText);
-        Assert.Null(ex.Response.RawBody);
+        Assert.Equal(payload, ex.Response.RawBody!.Value.ToArray());
     }
 
     [Fact]
@@ -192,6 +194,37 @@ public sealed class RawResponseCaptureTests
         Assert.Null(ex.Response!.Data);
         Assert.Equal("not-json", ex.Response.RawText);
         Assert.Equal(payload, ex.Response.RawBody!.Value.ToArray());
+    }
+
+    [Fact]
+    public async Task ShortCircuit_ParseFailure_OverByteLimit_StillKeepsBytes()
+    {
+        using var client = new AxiosClient();
+        var payload = Encoding.ASCII.GetBytes(new string('x', 70 * 1024));
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<int>(
+            "http://short.local/x",
+            c => c.ShortCircuit = new AxiosShortCircuit { Body = payload, ContentType = "text/plain" }));
+
+        // 短路正文由调用方提供，本来就在内存里：不受错误体 64 KB 上限约束。
+        Assert.NotNull(ex.Response!.RawBody);
+        Assert.Equal(payload.Length, ex.Response.RawBody.Value.Length);
+        Assert.Equal(payload.Length, ex.Response.RawText!.Length);
+    }
+
+    [Fact]
+    public async Task ShortCircuit_ByteArrayData_ExposesRawBody()
+    {
+        using var client = new AxiosClient();
+        var payload = Encoding.UTF8.GetBytes("data-bytes");
+
+        var response = await client.GetAsync<byte[]>("http://short.local/x",
+            c => c.ShortCircuit = new AxiosShortCircuit { Data = payload, ContentType = "text/plain" });
+
+        // Data 直接给 byte[]：字节在手上，视图与文本同样给，且不复制。
+        Assert.Same(payload, response.Data);
+        Assert.Equal(payload, response.RawBody!.Value.ToArray());
+        Assert.Equal("data-bytes", response.RawText);
     }
 
     [Fact]
@@ -223,7 +256,7 @@ public sealed class RawResponseCaptureTests
     }
 
     [Fact]
-    public async Task TransformFailure_OnAcceptedStatus_KeepsRawText()
+    public async Task TransformFailure_OnAcceptedStatus_KeepsTextAndBytes()
     {
         var payload = Encoding.UTF8.GetBytes("{\"name\":\"ada\"}");
 
@@ -241,7 +274,7 @@ public sealed class RawResponseCaptureTests
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
         Assert.Null(ex.Response!.Data);
         Assert.Equal("{\"name\":\"ada\"}", ex.Response.RawText);
-        Assert.Null(ex.Response.RawBody);
+        Assert.Equal(payload, ex.Response.RawBody!.Value.ToArray());
     }
 
     [Fact]
@@ -301,7 +334,7 @@ public sealed class RawResponseCaptureTests
         // 换端点成功：原文 / 字节 / 字节数全部是镜像这一份，不残留主端点 500 的正文。
         Assert.Equal(200, response.Status);
         Assert.True(response.Data!["mirror"]);
-        Assert.Null(response.RawText);
+        Assert.Equal("{\"mirror\":true}", response.RawText);
         Assert.Equal(mirrorPayload, response.RawBody!.Value.ToArray());
         Assert.Equal(mirrorPayload.Length, response.BodyBytes);
     }
@@ -330,11 +363,11 @@ public sealed class RawResponseCaptureTests
 
         var revalidated = await client.GetAsync<Person>(server.Url + "x");
 
-        // 304 没有正文：RawBody 是缓存里的那一份，与 Data 同源。
+        // 304 没有正文：RawBody 是缓存里的那一份，文本由它派生，与 Data 同源。
         Assert.Equal(2, server.Received.Count);
         Assert.Equal(200, revalidated.Status);
         Assert.Equal("ada", revalidated.Data!.Name);
-        Assert.Null(revalidated.RawText);
+        Assert.Equal(Encoding.UTF8.GetString(payload), revalidated.RawText);
         Assert.Equal(payload, revalidated.RawBody!.Value.ToArray());
         Assert.Equal(payload.Length, revalidated.BodyBytes);
     }
@@ -411,6 +444,113 @@ public sealed class RawResponseCaptureTests
         Assert.Equal(200, ex.Response!.Status);
         Assert.Equal("{\"ok\":true}", ex.Response.RawText);
         Assert.Null(ex.Response.RawBodyBuffer);
+    }
+
+    [Fact]
+    public async Task ErrorResponse_OverByteLimit_KeepsTextButDropsBytes()
+    {
+        var payload = Encoding.UTF8.GetBytes(new string('x', 80 * 1024));
+
+        await using var server = TestHttpServer.Start(_ => new TestResponse
+        {
+            StatusCode = 500,
+            Body = payload,
+            ContentType = "text/plain"
+        });
+
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("big"));
+
+        // 文本始终完整；字节只在小响应上跟随，避免整段错误体常驻内存。
+        Assert.Equal(payload.Length, ex.Response!.RawText!.Length);
+        Assert.Null(ex.Response.RawBody);
+    }
+
+    [Fact]
+    public async Task ByteArrayData_AliasesRawBody_WithoutOptIn()
+    {
+        var payload = Encoding.UTF8.GetBytes("binary");
+
+        await using var server = TestHttpServer.Start(_ => new TestResponse
+        {
+            Body = payload,
+            ContentType = "application/octet-stream"
+        });
+
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
+
+        var response = await client.GetAsync<byte[]>("bin");
+
+        // Data 就是那块数组：RawBody 直接别名，不额外占内存，也不需要开关。
+        Assert.Equal(payload, response.Data);
+        Assert.Equal(payload, response.RawBody!.Value.ToArray());
+        Assert.Equal("binary", response.RawText);
+    }
+
+    [Fact]
+    public async Task ShortCircuit_ExposesRawBody_WithoutOptIn()
+    {
+        using var client = new AxiosClient();
+
+        var payload = Encoding.UTF8.GetBytes("short");
+        var response = await client.GetAsync<string>("http://short.local/x", c =>
+        {
+            c.ShortCircuit = new AxiosShortCircuit { Body = payload, ContentType = "text/plain" };
+        });
+
+        // 短路正文由调用方提供，本来就在内存里：视图与文本都直接给。
+        Assert.Equal("short", response.Data);
+        Assert.Equal(payload, response.RawBody!.Value.ToArray());
+        Assert.Equal("short", response.RawText);
+    }
+
+    [Fact]
+    public async Task StreamResponse_Failure_KeepsSalvagedTextAndBytes()
+    {
+        var payload = Encoding.UTF8.GetBytes("stream-error");
+
+        await using var server = TestHttpServer.Start(_ => new TestResponse
+        {
+            StatusCode = 503,
+            Body = payload,
+            ContentType = "text/plain"
+        });
+
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("s", c =>
+            c.ResponseType = ResponseType.Stream));
+
+        // 流式失败没人读正文：抢救到的这一段同时进字节与文本。
+        Assert.Equal("stream-error", ex.Response!.RawText);
+        Assert.Equal(payload, ex.Response.RawBody!.Value.ToArray());
+    }
+
+    [Fact]
+    public async Task CacheHit_Success_ExposesRawBodyAndText_WithoutOptIn()
+    {
+        var payload = Encoding.UTF8.GetBytes("{\"ok\":true}");
+
+        await using var server = TestHttpServer.Start(_ => new TestResponse
+        {
+            Body = payload,
+            ContentType = "application/json; charset=utf-8"
+        });
+
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = server.Url,
+            Caching = new AxiosNet.Cache.AxiosCache(new AxiosNet.Cache.AxiosCacheOptions()),
+        });
+
+        await client.GetAsync<Dictionary<string, bool>>("x");
+        var hit = await client.GetAsync<Dictionary<string, bool>>("x");
+
+        // 命中缓存不发请求：正文在缓存条目里，视图零成本。
+        Assert.Single(server.Received);
+        Assert.Equal(payload, hit.RawBody!.Value.ToArray());
+        Assert.Equal("{\"ok\":true}", hit.RawText);
     }
 
     private static Dictionary<string, string> HeaderValues(params (string Name, string Value)[] pairs)

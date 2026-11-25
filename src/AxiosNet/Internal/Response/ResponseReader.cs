@@ -338,12 +338,18 @@ internal static class ResponseReader
         var response = target ?? new AxiosResponse();
         response.Data = data;
 
-        response.RawText = lenient ? rawText : null;
         response.Status = status;
         response.StatusText = statusText;
         response.ProtocolVersion = message.Version;
         response.BodyBytes = bodyBytes;
-        ApplyRawBody(response, rawBody, config);
+
+        // 字节先落（会清掉上一轮尝试残留的文本），错误原文再覆盖。
+        ApplyRawBody(response, rawBody, config, lenient, data);
+        if (lenient)
+        {
+            response.RawText = rawText;
+        }
+
         response.Headers = headers;
         response.Config = config;
         response.Request = request;
@@ -351,6 +357,7 @@ internal static class ResponseReader
     }
 
     /// <summary>装配失败时把响应上下文（状态码、响应头、原文）补进错误；网络与短路路径共用。</summary>
+    /// <remarks><paramref name="ownedBytes"/> 为真表示字节本来就被这次响应持有（短路 / 缓存），不受错误体上限限制。</remarks>
     private static void AttachResponseContext(
         AxiosException exception,
         AxiosConfig config,
@@ -362,11 +369,11 @@ internal static class ResponseReader
         IReadOnlyDictionary<string, IEnumerable<string>> headers,
         string? rawText,
         byte[]? rawBytes,
-        long? bodyBytes)
+        long? bodyBytes,
+        bool ownedBytes = false)
     {
         var failed = target ?? new AxiosResponse();
         failed.Data = null;
-        failed.RawText = rawText;
         failed.Status = status;
         failed.StatusText = statusText;
         failed.ProtocolVersion = protocolVersion;
@@ -375,24 +382,55 @@ internal static class ResponseReader
         failed.Config = config;
         failed.Request = request;
 
-        // 目标对象可能被重试复用，正文相关字段都要重写。
-        ApplyRawBody(failed, rawBytes, config);
+        // 目标对象可能被重试复用，正文相关字段都要重写；文本是错误消息的输入，必须在字节之后写。
+        ApplyRawBody(failed, rawBytes, config, error: true, owned: ownedBytes);
+        failed.RawText = rawText;
         exception.Response = failed;
     }
 
+    /// <summary>错误响应留给 <see cref="AxiosResponse.RawBody"/> 的字节上限：超过只留文本（<see cref="AxiosResponse.RawText"/> 始终完整）。</summary>
+    private const int ErrorRawBodyLimit = 64 * 1024;
+
     /// <summary>把正文缓冲与只读视图写进响应。</summary>
-    private static void ApplyRawBody(AxiosResponse response, byte[]? rawBytes, AxiosConfig config)
+    /// <param name="response">目标响应（重试时可能复用）。</param>
+    /// <param name="rawBytes">本次尝试读到的完整字节，流式路径为 <c>null</c>。</param>
+    /// <param name="config">本次请求的生效配置。</param>
+    /// <param name="error">这条响应是否按错误交付（决定是否主动保留字节）。</param>
+    /// <param name="data">已装配的正文；<c>byte[]</c> 形态时与 <paramref name="rawBytes"/> 是同一块数组。</param>
+    /// <param name="owned">字节本来就被这次响应持有（短路 / 缓存的正文），保留视图不增加常驻内存。</param>
+    private static void ApplyRawBody(
+        AxiosResponse response,
+        byte[]? rawBytes,
+        AxiosConfig config,
+        bool error,
+        object? data = null,
+        bool owned = false)
     {
         response.RawBodyBuffer = config.CacheCaptureRawBody ? rawBytes : null;
-        SetRawBodyView(response, rawBytes, config);
+
+        // 保留条件：字节这次响应本来就要持有（短路 / 缓存的正文、byte[] 形态的 Data、阈值内的错误体），或调用方显式要求。
+        var retain = rawBytes is not null
+                     && (owned
+                         || ReferenceEquals(rawBytes, data)
+                         || (error && rawBytes.Length <= ErrorRawBodyLimit));
+
+        SetRawBodyView(response, rawBytes, config, retain);
     }
 
-    /// <summary>设置只读原始字节视图；未显式开启时为 <c>null</c>。</summary>
-    private static void SetRawBodyView(AxiosResponse response, byte[]? rawBytes, AxiosConfig config)
+    /// <summary>设置只读原始字节视图：<paramref name="retain"/> 为真或调用方显式开启时才有值。</summary>
+    private static void SetRawBodyView(AxiosResponse response, byte[]? rawBytes, AxiosConfig config, bool retain)
     {
-        response.RawBody = config.ObservabilityOrNull?.CaptureRawResponseBody is true && rawBytes is not null
-            ? rawBytes.AsMemory()
-            : (ReadOnlyMemory<byte>?)null;
+        if (rawBytes is null
+            || !(retain || config.ObservabilityOrNull?.CaptureRawResponseBody is true))
+        {
+            response.SetRawBody(null, null, null);
+            return;
+        }
+
+        response.SetRawBody(
+            rawBytes.AsMemory(),
+            config.Response?.CharSet,
+            config.SerializationOrNull?.TextEncoding);
     }
 
     /// <summary>是否需要把响应字节解码成文本。</summary>
@@ -642,8 +680,8 @@ internal static class ResponseReader
             }
             catch (AxiosException ex) when (ex.Code == AxiosException.ErrBadResponse && ex.Response is null)
             {
-                // 超限与解析失败同样补响应上下文。
-                AttachResponseContext(ex, config, null, target, status, statusText, reply.ProtocolVersion, headers, rawText, reply.Body, bodyBytes);
+                // 超限与解析失败同样补响应上下文；短路正文由调用方提供，不受错误体上限限制。
+                AttachResponseContext(ex, config, null, target, status, statusText, reply.ProtocolVersion, headers, rawText, reply.Body, bodyBytes, ownedBytes: true);
                 throw;
             }
         }
@@ -657,13 +695,20 @@ internal static class ResponseReader
 
         var response = target ?? new AxiosResponse();
         response.Data = data;
-        response.RawText = lenient ? rawText : null;
         response.Status = status;
         response.StatusText = statusText;
         response.ProtocolVersion = reply.ProtocolVersion;
         response.BodyBytes = bodyBytes;
 
-        SetRawBodyView(response, reply.Body, config);
+        // 短路正文由调用方提供，本来就在内存里，视图恒给；字节先落，错误原文再覆盖。
+        // Data 直接给 byte[] 时字节同样在手上，与网络路径的别名规则一致。
+        var ownedBytes = reply.Body ?? reply.Data as byte[];
+        SetRawBodyView(response, ownedBytes, config, retain: ownedBytes is not null);
+        if (lenient)
+        {
+            response.RawText = rawText;
+        }
+
         response.Headers = headers;
         response.Config = config;
 

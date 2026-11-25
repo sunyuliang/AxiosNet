@@ -3,19 +3,19 @@ using AxiosNet;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>39. 响应对象上的正文：错误体原文 RawText 与 opt-in 的原始字节 RawBody。</summary>
+/// <summary>39. 响应对象上的正文：原始字节 RawBody 与其按 charset 派生的文本 RawText。</summary>
 public sealed class RawBodyExample : IExample
 {
     public int Number => 39;
 
-    public string Title => "响应正文原文 RawText / 原始字节 RawBody（记日志与排查）";
+    public string Title => "响应正文原始字节 RawBody / 派生文本 RawText（记日志与排查）";
 
-    /// <summary>示例入口：响应正文原文 RawText / 原始字节 RawBody（记日志与排查）。</summary>
+    /// <summary>示例入口：响应正文原始字节 RawBody / 派生文本 RawText（记日志与排查）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);
 
-        // 1) 错误体原文：状态码被 validateStatus 拒绝时自动保留，不需要任何配置。
+        // 1) 错误响应：字节本来就在手上，文本与字节都自动保留，不需要任何配置。
         try
         {
             await Axios.GetAsync(context.BaseUrl + "not-found");
@@ -23,7 +23,7 @@ public sealed class RawBodyExample : IExample
         catch (AxiosException ex)
         {
             Console.WriteLine($"  404 原文: {ex.Response!.RawText}");
-            Console.WriteLine($"  404 原始字节: {(ex.Response.RawBody is null ? "null（未开启 CaptureRawResponseBody）" : $"{ex.Response.RawBody.Value.Length} bytes")}");
+            Console.WriteLine($"  404 原始字节: {ex.Response.RawBody?.Length ?? 0} bytes（错误响应默认保留）");
         }
 
         // 2) 成功响应默认不保留正文：要留就显式打开 CaptureRawResponseBody（只对非流式响应生效）。
@@ -37,7 +37,7 @@ public sealed class RawBodyExample : IExample
         var raw = response.RawBody!.Value;
         var preview = Encoding.UTF8.GetString(raw.Span[..Math.Min(48, raw.Length)]);
         Console.WriteLine($"  RawBody: {raw.Length} bytes，开头: {preview}");
-        Console.WriteLine($"  成功响应不保留 RawText: {response.RawText ?? "null"}");
+        Console.WriteLine($"  RawText: {response.RawText}");
 
         // 3) 2xx 但正文与声明类型不符：Data 为 null，RawText 仍保留原文（排查坏正文不用提前开开关）。
         try

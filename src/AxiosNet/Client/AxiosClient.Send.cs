@@ -216,7 +216,9 @@ public sealed partial class AxiosClient
                 if (ctx.StreamResponse)
                 {
                     // 失败响应没人读正文：先抢救一段错误体，再释放内容把连接还回池。
-                    response.RawText = await ReadStreamErrorBodyAsync(response.Data as Stream, config, budget.Token).ConfigureAwait(false);
+                    var (errorBytes, errorText) = await ReadStreamErrorBodyAsync(response.Data as Stream, config, budget.Token).ConfigureAwait(false);
+                    response.SetRawBody(errorBytes, config.Response?.CharSet, config.SerializationOrNull?.TextEncoding);
+                    response.RawText = errorText;
 
                     (response.Data as IDisposable)?.Dispose();
                     response.Data = null;
@@ -414,15 +416,15 @@ public sealed partial class AxiosClient
     /// <summary>流式失败响应保留的错误体上限。</summary>
     private const int StreamErrorBodyLimit = 64 * 1024;
 
-    /// <summary>把流式失败响应的正文读成文本（上限取 <see cref="StreamErrorBodyLimit"/> 与 <c>Limits.MaxResponseBytes</c> 的较小值）；读取失败 / 超时 / 超限都只保留已读部分。</summary>
-    private static async Task<string?> ReadStreamErrorBodyAsync(
+    /// <summary>把流式失败响应的正文读成字节与文本（上限取 <see cref="StreamErrorBodyLimit"/> 与 <c>Limits.MaxResponseBytes</c> 的较小值）；读取失败 / 超时 / 超限都只保留已读部分。</summary>
+    private static async Task<(ReadOnlyMemory<byte>? Bytes, string? Text)> ReadStreamErrorBodyAsync(
         Stream? body,
         AxiosConfig config,
         CancellationToken cancellationToken)
     {
         if (body is null)
         {
-            return null;
+            return (null, null);
         }
 
         var limit = config.LimitsOrNull?.MaxResponseBytes is long max && max < StreamErrorBodyLimit
@@ -430,7 +432,7 @@ public sealed partial class AxiosClient
             : StreamErrorBodyLimit;
         if (limit <= 0)
         {
-            return null;
+            return (null, null);
         }
 
         // 缓冲走 ArrayPool，读取上限仍按 limit。
@@ -456,10 +458,16 @@ public sealed partial class AxiosClient
                 // 错误体读不完不影响「这是一次失败响应」。
             }
 
-            // 解码必须在归还缓冲之前完成。
-            return total == 0
-                ? null
-                : ResponseTextDecoder.Decode(buffer.AsSpan(0, total), config.Response?.CharSet, config.SerializationOrNull?.TextEncoding);
+            // 解码必须在归还缓冲之前完成；字节要留精确数组，池数组不能交给响应。
+            if (total == 0)
+            {
+                return (null, null);
+            }
+
+            var text = ResponseTextDecoder.Decode(buffer.AsSpan(0, total), config.Response?.CharSet, config.SerializationOrNull?.TextEncoding);
+            var bytes = new byte[total];
+            buffer.AsSpan(0, total).CopyTo(bytes);
+            return (bytes, text);
         }
         finally
         {

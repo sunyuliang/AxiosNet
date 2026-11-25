@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2921%20passed-success)](#构建与测试)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2928%20passed-success)](#构建与测试)
 [![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2771%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-92.2%25_(branch_87.5%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -528,22 +528,22 @@ await client.GetAsync<User>("users/1", c =>
 
 #### 响应对象上的正文
 
-回调之外，响应对象本身也带两个只读入口，返回后照样能读：
+回调之外，响应对象本身也带两个只读入口，返回后照样能读。**字节是唯一来源，文本由它派生**：
 
 | 成员 | 何时有值 | 说明 |
 | --- | --- | --- |
-| `RawText` | 状态码被 `ValidateStatus` 拒绝，或正文解析 / `transformResponse` 失败时 | 错误体原文（字符串）。正常响应不保留整段文本，避免大正文跟着响应对象一起存活；解析失败时 `Data` 为 `null` 而这里仍是原文；流式失败会先抢救一段；原始字节用 `CaptureRawResponseBody` |
-| `RawBody` | 打开 `Observability.CaptureRawResponseBody` 的非流式响应 | `ReadOnlyMemory<byte>?`，与 `OnRawResponse` 看到的字节一致（已解压、未解码）。默认 `null`，不额外占内存 |
+| `RawBody` | 这次响应本来就持有完整字节：错误响应、短路 / 缓存命中、`byte[]` 形态的 `Data`；或打开 `Observability.CaptureRawResponseBody` | `ReadOnlyMemory<byte>?`，与 `OnRawResponse` 看到的字节一致（已解压、未解码）。解析成对象的成功响应默认 `null`，不额外占内存 |
+| `RawText` | `RawBody` 有值时 | 按 `charset` 解码的原文，首次读取才解码。错误响应一定可读（错误消息要用它）；解析失败时 `Data` 为 `null` 而这里仍是原文 |
 
 ```csharp
 var response = await client.GetAsync<User>("users/1", c => c.Observability.CaptureRawResponseBody = true);
 
-logger.LogInformation("raw body: {Body}", Encoding.UTF8.GetString(response.RawBody!.Value.Span));
+logger.LogInformation("raw body: {Body}", response.RawText);
 ```
 
-- `RawBody` 是只读视图而不是 `byte[]`：底层数组可能与缓存条目共用，交出去改了就污染缓存。空正文是长度 0，不是 `null`。
-- 打开后整段正文随响应对象一起存活，只在需要排查的那几次请求上开；长期留档用 `OnRawResponse` 自己复制。
-- 流式响应（`ResponseType.Stream`）没有完整字节，开了也没有 `RawBody`；短路 / 缓存命中的正文不受此限。
+- `RawBody` 是只读视图而不是 `byte[]`：底层数组可能与缓存条目共用，交出去改了就污染缓存；`byte[]` 形态的 `Data` 与它同数组，改 `Data` 等于改它。空正文是长度 0，不是 `null`。
+- **谁开谁付内存**：解析成对象的成功响应，字节读完即弃，要留下就显式开 `CaptureRawResponseBody`；错误响应不受此限——字节本来就在手上，但超过 64 KB 的只留文本，避免整段错误体常驻。长期留档用 `OnRawResponse` 自己复制。
+- 流式响应（`ResponseType.Stream`）没有完整字节，开了也没有 `RawBody`；短路 / 缓存命中的正文不受此限。流式**失败**会抢救最多 64 KB 错误体，字节与文本都读得到。
 - 失败时已抛出的异常上也有一份捷径：`AxiosException.ResponseBody` 就是 `Response.RawText`，不必先判空 `Response`。
 
 ### 方法与 URL
@@ -761,7 +761,7 @@ await client.GetAsync("maybe-404", c => c.ValidateStatus = s => s is >= 200 and 
 | `OnUploadProgress` | `null` | 上传进度回调 |
 | `OnDownloadProgress` | `null` | 下载进度回调 |
 | `OnRawResponse` | `null` | 原始响应字节回调 |
-| `CaptureRawResponseBody` | `false` | 是否缓存原始正文 |
+| `CaptureRawResponseBody` | `false` | 是否把原始正文留在 `response.RawBody`（成功响应按需开启；错误 / 短路 / 缓存本就有） |
 | `OnSendingRequest` | `null` | 发送前钩子（签名 / 最终请求） |
 | `TimeoutMessage` | `null` | 自定义超时文案 |
 
@@ -1599,7 +1599,7 @@ using var client = Axios.Create(c => c.Resilience.Retry.Policy = new RetryPolicy
 | 在序列化前加工要发的 `Body` | `transformRequest` |
 | 在发送前改写最终请求消息（签名、时间戳、幂等键，每次尝试） | `c.Observability.OnSendingRequest` |
 | 在反序列化前拿原始响应字节（每次尝试） | `c.Observability.OnRawResponse` |
-| 请求返回后仍要读正文原文 / 原始字节（记日志、排查） | `response.RawText`（错误体）/ `c.Observability.CaptureRawResponseBody` + `response.RawBody` |
+| 请求返回后仍要读正文原文 / 原始字节（记日志、排查） | `response.RawBody`（字节）/ `response.RawText`（派生文本）；成功响应要留字节需开 `c.Observability.CaptureRawResponseBody` |
 | 在反序列化后加工回来的 `Data`（每次尝试） | `transformResponse` |
 | 加工最终响应、把异常兜成响应 | 响应拦截器 |
 | 观察或干预**每一次尝试**（含审计） | 尝试中间件 |
@@ -2729,11 +2729,11 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 2715 / 2702 | `net8.0` / `net6.0` | 5417 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2722 / 2709 | `net8.0` / `net6.0` | 5431 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests`（OpenAPI 生成） | 80 | `net8.0` | 80 |
 | `AxiosNet.Compat.Tests`（netstandard2.0 兼容资产） | 57 / 52 | `net8.0` / `net472` | 109 |
-| **合计** | **2921 / 2823** | | **5744** |
+| **合计** | **2928 / 2830** | | **5758** |
 
 表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。
 

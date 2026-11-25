@@ -6,6 +6,12 @@
 
 > **说明：本文件从 `1.5.0` 起建立，此前版本未追述。** 更早的历史（`1.4.x` 及以前）请以 git 提交历史为准；`1.x → 1.5` 的完整迁移对照见 [`docs/breaking-changes-1.5.md`](docs/breaking-changes-1.5.md)（英文：[`docs/breaking-changes-1.5.en.md`](docs/breaking-changes-1.5.en.md)），`1.7 → 1.8` 见 [`docs/breaking-changes-1.8.md`](docs/breaking-changes-1.8.md)（英文：[`docs/breaking-changes-1.8.en.md`](docs/breaking-changes-1.8.en.md)）。每个条目只记录能从版本 tag 与对应提交中取证的改动。
 
+## [Unreleased]
+
+### Changed (Breaking)
+
+- `AxiosResponse.RawBody` 是原始正文的唯一来源，`RawText` 由它按 charset 派生（首次读取才解码）：错误响应、短路 / 缓存命中与 `byte[]` 形态的 `Data` 不需要 `Observability.CaptureRawResponseBody` 就有 `RawBody`，成功响应打开该开关后 `RawText` 也可读。此前 `RawText` 只服务错误体、`RawBody` 只受开关控制，两者不可能同时有值。错误响应的字节超过 64 KB 时只留文本。迁移：不再能用 `RawBody is null` 判断「没开开关」，该判断请读 `Config.Observability.CaptureRawResponseBody`。
+
 ## [1.8.0] - 2026-11-23
 
 ### Added

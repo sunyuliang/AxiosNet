@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2921%20passed-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2928%20passed-success)](#build-and-test)
 [![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2771%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-92.2%25_(branch_87.5%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -526,22 +526,22 @@ await client.GetAsync<User>("users/1", c =>
 
 #### Body on the response object
 
-Besides the callback, the response object itself carries two read-only entries that are still readable after the call returns:
+Besides the callback, the response object itself carries two read-only entries that are still readable after the call returns. **The bytes are the single source; the text is derived from them**:
 
 | Member | When it has a value | Notes |
 | --- | --- | --- |
-| `RawText` | The status was rejected by `ValidateStatus`, or body parsing / `transformResponse` failed | Error body as a string. Successful responses do not keep the whole text, so a large body never outlives the call; when parsing failed, `Data` is `null` while this still holds the original text; a failed streaming response rescues a snippet first; use `CaptureRawResponseBody` for raw bytes |
-| `RawBody` | Non-streaming responses with `Observability.CaptureRawResponseBody` turned on | `ReadOnlyMemory<byte>?`, the same bytes `OnRawResponse` sees (decompressed, not decoded). `null` by default, so nothing extra is held |
+| `RawBody` | This response already holds the full bytes: error responses, short-circuit / cache hits, `byte[]` shaped `Data`; or `Observability.CaptureRawResponseBody` is on | `ReadOnlyMemory<byte>?`, the same bytes `OnRawResponse` sees (decompressed, not decoded). Successful responses parsed into objects are `null` by default, so nothing extra is held |
+| `RawText` | Whenever `RawBody` has a value | The text decoded with the response `charset`, decoded on first read. Error responses always have it (the error message needs it); when parsing failed, `Data` is `null` while this still holds the original text |
 
 ```csharp
 var response = await client.GetAsync<User>("users/1", c => c.Observability.CaptureRawResponseBody = true);
 
-logger.LogInformation("raw body: {Body}", Encoding.UTF8.GetString(response.RawBody!.Value.Span));
+logger.LogInformation("raw body: {Body}", response.RawText);
 ```
 
-- `RawBody` is a read-only view rather than a `byte[]`: the underlying array may be shared with a cache entry, so handing it out would let callers poison the cache. An empty body is length 0, not `null`.
-- Turning it on keeps the whole body alive with the response — do it for the requests you are debugging. For durable archives, copy inside `OnRawResponse` instead.
-- Streaming responses (`ResponseType.Stream`) have no full byte array, so there is no `RawBody` even when enabled; short-circuit / cache-hit bodies are not affected.
+- `RawBody` is a read-only view rather than a `byte[]`: the underlying array may be shared with a cache entry, so handing it out would let callers poison the cache; a `byte[]` shaped `Data` shares the same array, so mutating `Data` mutates it too. An empty body is length 0, not `null`.
+- **You pay for what you keep**: a successful response parsed into an object drops its bytes; turn `CaptureRawResponseBody` on when you need them. Error responses are exempt — the bytes are already in hand — but anything over 64 KB keeps only the text so the whole error body never outlives the call. For durable archives, copy inside `OnRawResponse`.
+- Streaming responses (`ResponseType.Stream`) have no full byte array, so there is no `RawBody` even when enabled; short-circuit / cache-hit bodies are not affected. A failed streaming response rescues up to 64 KB of the error body, readable as both bytes and text.
 - On failure the thrown exception carries a shortcut: `AxiosException.ResponseBody` is exactly `Response.RawText`, so no null check on `Response` is needed.
 
 ### Methods and URLs
@@ -757,7 +757,7 @@ The other four sub-objects (created lazily on first access). Each leaf is listed
 | `OnUploadProgress` | `null` | upload progress callback |
 | `OnDownloadProgress` | `null` | download progress callback |
 | `OnRawResponse` | `null` | raw response bytes callback |
-| `CaptureRawResponseBody` | `false` | whether to keep the raw body |
+| `CaptureRawResponseBody` | `false` | whether to keep the raw body on `response.RawBody` (opt in for successful responses; error / short-circuit / cache bodies already have it) |
 | `OnSendingRequest` | `null` | sending-request hook (signing / final request) |
 | `TimeoutMessage` | `null` | custom timeout text |
 
@@ -1594,7 +1594,7 @@ How it divides the work with the other extension points:
 | Shape outgoing `Body` before serialization | `transformRequest` |
 | Rewrite the final request message before sending (signing, timestamps, idempotency keys; per attempt) | `c.Observability.OnSendingRequest` |
 | Get the raw response bytes before deserialization (per attempt) | `c.Observability.OnRawResponse` |
-| Read the body text / raw bytes after the call returns (logging, debugging) | `response.RawText` (error body) / `c.Observability.CaptureRawResponseBody` + `response.RawBody` |
+| Read the body text / raw bytes after the call returns (logging, debugging) | `response.RawBody` (bytes) / `response.RawText` (derived text); turn on `c.Observability.CaptureRawResponseBody` to keep bytes on successful responses |
 | Shape incoming `Data` after deserialization (per attempt) | `transformResponse` |
 | Shape the final response, turn an exception into a response | Response interceptor |
 | Observe or steer **each attempt** (auditing included) | Attempt middleware |
@@ -2727,11 +2727,11 @@ Sources compile as **C# 12**: every project declares `<LangVersion>12.0</LangVer
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2715 / 2702 | `net8.0` / `net6.0` | 5417 |
+| `AxiosNet.Tests` (core + declarative) | 2722 / 2709 | `net8.0` / `net6.0` | 5431 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests` (OpenAPI generation) | 80 | `net8.0` | 80 |
 | `AxiosNet.Compat.Tests` (netstandard2.0 compat asset) | 57 / 52 | `net8.0` / `net472` | 109 |
-| **Total** | **2921 / 2823** | | **5744** |
+| **Total** | **2928 / 2830** | | **5758** |
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed".
 

@@ -72,7 +72,7 @@ public class AxiosException : Exception
     public int? Status => Response?.Status;
 
     /// <summary>失败响应的正文原文（等价于 <c>Response.RawText</c>）。</summary>
-    /// <remarks>状态码被拒绝、响应装配失败时保留；二进制响应、流式成功响应为 <c>null</c>。</remarks>
+    /// <remarks>状态码被拒绝或响应装配失败时保留；网络流式成功响应没有正文，为 <c>null</c>。</remarks>
     public string? ResponseBody => Response?.RawText;
 
     /// <summary>熔断拒绝时的建议等待时间（只有 <see cref="ErrCircuitOpen"/> 才可能有值，库不会据此自动重试）。</summary>

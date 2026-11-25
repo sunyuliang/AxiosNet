@@ -90,11 +90,11 @@ public sealed partial class AxiosConfig
         }
 
         /// <summary>
-        /// 把响应正文的原始字节留在 <see cref="AxiosResponse.RawBody"/> 上（默认 <c>false</c>）：请求返回后仍可读，供记日志与排查。
+        /// 成功响应是否把正文原始字节留在 <see cref="AxiosResponse.RawBody"/> 上（默认 <c>false</c>）：请求返回后仍可读，供记日志与排查。
         /// </summary>
         /// <remarks>
-        /// 打开后整段正文跟着响应对象一起存活；网络流式响应没有完整字节，短路 / 缓存命中的正文不受此限。
-        /// 与 <see cref="OnRawResponse"/> 的差别是「回调里借用一次」还是「随响应交付」，两者看到的字节一致。
+        /// 打开后整段正文跟着响应对象一起存活；错误响应、短路 / 缓存命中与 <c>byte[]</c> 形态的正文本来就有，不受本项影响。
+        /// 网络流式响应没有完整字节。与 <see cref="OnRawResponse"/> 的差别是「随响应交付」还是「回调里借用一次」，两者字节一致。
         /// 按请求显式写 <c>false</c> 会关掉实例默认值；省略则继承。
         /// </remarks>
         public bool CaptureRawResponseBody
