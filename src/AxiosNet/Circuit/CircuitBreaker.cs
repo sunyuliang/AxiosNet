@@ -40,29 +40,105 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
 {
     private readonly ConcurrentDictionary<string, HostState> _hosts = new(StringComparer.OrdinalIgnoreCase);
 
-    // 进程级状态计数，供 circuit.state 仪表读取。
-    private static long _trackedHosts;
-    private static long _openHosts;
-    private static long _halfOpenHosts;
+    // 存活实例表：仪表读取时按它汇总，实例被回收后它的维度账随之消失（不会被永久计入）。
+    private static readonly List<WeakReference<CircuitBreaker>> LiveInstances = new();
+    private static readonly object LiveInstancesGate = new();
 
-    /// <summary>所有熔断器实例当前跟踪的维度总数（进程级）。</summary>
-    internal static long TrackedCount => Interlocked.Read(ref _trackedHosts);
+    // 距上次清理死实例又建了多少个实例：没有仪表读取时也要有个回收时机。
+    private static int _registrationsSincePrune;
 
-    /// <summary>所有熔断器实例中处于打开态的维度数（进程级）。</summary>
-    internal static long OpenCount => Interlocked.Read(ref _openHosts);
+    /// <summary>清理死实例的间隔（按新建实例数计）。</summary>
+    private const int PruneEveryRegistrations = 32;
 
-    /// <summary>所有熔断器实例中处于半开态的维度数（进程级）。</summary>
-    internal static long HalfOpenCount => Interlocked.Read(ref _halfOpenHosts);
+    /// <summary>把新实例登记进存活表，并按间隔清掉已回收的条目。</summary>
+    /// <param name="breaker">刚构造的实例。</param>
+    private static void RegisterLive(CircuitBreaker breaker)
+    {
+        lock (LiveInstancesGate)
+        {
+            LiveInstances.Add(new WeakReference<CircuitBreaker>(breaker));
+
+            if (++_registrationsSincePrune < PruneEveryRegistrations)
+            {
+                return;
+            }
+
+            _registrationsSincePrune = 0;
+            CompactLiveInstances();
+        }
+    }
+
+    /// <summary>就地压缩存活表，丢掉已被回收的条目；调用方须持有 <see cref="LiveInstancesGate"/>。</summary>
+    private static void CompactLiveInstances()
+    {
+        var live = 0;
+        for (var i = 0; i < LiveInstances.Count; i++)
+        {
+            if (LiveInstances[i].TryGetTarget(out _))
+            {
+                LiveInstances[live++] = LiveInstances[i];
+            }
+        }
+
+        if (live < LiveInstances.Count)
+        {
+            LiveInstances.RemoveRange(live, LiveInstances.Count - live);
+        }
+    }
+
+    /// <summary>进程级状态快照：所有存活实例按状态汇总的维度数，供 <c>circuit.state</c> 仪表读取。</summary>
+    /// <remarks>同一时刻可能有别的线程增删维度，快照只保证「不是过期数据」；已回收实例的维度不计入。</remarks>
+    /// <returns>跟踪维度总数、打开态维度数、半开态维度数。</returns>
+    internal static (long Tracked, long Open, long HalfOpen) ProcessSnapshot()
+    {
+        long tracked = 0;
+        long open = 0;
+        long halfOpen = 0;
+
+        lock (LiveInstancesGate)
+        {
+            for (var i = 0; i < LiveInstances.Count; i++)
+            {
+                if (!LiveInstances[i].TryGetTarget(out var breaker))
+                {
+                    // 实例已回收：它的维度账一起消失。
+                    continue;
+                }
+
+                foreach (var host in breaker._hosts)
+                {
+                    tracked++;
+
+                    switch (host.Value.State)
+                    {
+                        case AxiosCircuitState.Open:
+                            open++;
+                            break;
+
+                        case AxiosCircuitState.HalfOpen:
+                            halfOpen++;
+                            break;
+                    }
+                }
+            }
+
+            CompactLiveInstances();
+        }
+
+        return (tracked, open, halfOpen);
+    }
 
     /// <summary>默认配置：连续 5 次失败或窗口失败率过半（至少 10 样本）熔断，冷却 30 秒，连续 3 次成功恢复。</summary>
     public CircuitBreaker()
     {
+        RegisterLive(this);
     }
 
     /// <summary>按阈值与冷却时长构造（其余取默认值）。</summary>
     /// <param name="failureThreshold">连续多少次下游故障后打开熔断，必须 &gt;= 1。</param>
     /// <param name="breakDuration">打开后多久才允许探测，必须 &gt; <see cref="TimeSpan.Zero"/>。</param>
     public CircuitBreaker(int failureThreshold, TimeSpan breakDuration)
+        : this()
     {
         FailureThreshold = failureThreshold;
         BreakDuration = breakDuration;
@@ -124,7 +200,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
             // 按「键 + 实例」移除。
             if (_hosts.TryRemove(new KeyValuePair<string, HostState>(pair.Key, pair.Value)))
             {
-                var removed = Unregister(pair.Value);
+                var removed = pair.Value.State;
 
                 if (removed != AxiosCircuitState.Closed)
                 {
@@ -142,7 +218,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
             return false;
         }
 
-        var removed = Unregister(state);
+        var removed = state.State;
 
         if (removed != AxiosCircuitState.Closed)
         {
@@ -421,7 +497,6 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
         {
             if (_hosts.TryAdd(key, candidate))
             {
-                Interlocked.Increment(ref _trackedHosts);
                 return candidate;
             }
 
@@ -514,41 +589,10 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
             // 按「键 + 实例」移除。
             if (evictable && _hosts.TryRemove(new KeyValuePair<string, HostState>(key, state)))
             {
-                Unregister(state);
                 return true;
             }
 
             return false;
-        }
-    }
-
-    /// <summary>条目离开跟踪表：维度计数 -1 并减掉它当前状态的计数，返回原状态供调用方发迁移通知。</summary>
-    /// <remarks>须在 <c>host.Gate</c> 内调用。</remarks>
-    private static AxiosCircuitState Unregister(HostState state)
-    {
-        lock (state.Gate)
-        {
-            state.Tracked = false;
-            Interlocked.Decrement(ref _trackedHosts);
-
-            var removed = state.State;
-            AdjustStateCount(removed, -1);
-            return removed;
-        }
-    }
-
-    /// <summary>状态计数增减：只有打开 / 半开需要单独记（闭合态由「总数 - 两者」推出）。</summary>
-    private static void AdjustStateCount(AxiosCircuitState state, int delta)
-    {
-        switch (state)
-        {
-            case AxiosCircuitState.Open:
-                Interlocked.Add(ref _openHosts, delta);
-                break;
-
-            case AxiosCircuitState.HalfOpen:
-                Interlocked.Add(ref _halfOpenHosts, delta);
-                break;
         }
     }
 
@@ -583,13 +627,6 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
 
         // 每次迁移换一代；序号全局自增。
         host.Generation = NextGenerationEpoch();
-
-        // 计数随迁移成对调整；已离开跟踪表的不再动。
-        if (host.Tracked)
-        {
-            AdjustStateCount(previous, -1);
-            AdjustStateCount(next, +1);
-        }
 
         return new AxiosCircuitTransition(host.Key, previous, next);
     }
@@ -724,8 +761,5 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
             _windowFailures = 0;
             _windowIndex = 0;
         }
-
-        /// <summary>是否仍在跟踪表里；决定状态迁移要不要动全局计数，仅在 <see cref="Gate"/> 内读写。</summary>
-        public bool Tracked = true;
     }
 }

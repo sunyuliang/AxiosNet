@@ -1256,7 +1256,7 @@ builder.Services.AddOpenTelemetry()
 - `cache.stores` 记的是「写入完成」，不是「条目已落库」：内置存储容量满时会静默拒收新键（文档化策略，见 `MemoryCacheStore`），这次写入**仍然计入** `cache.stores`；`cache.store_failures` 只统计存储抛错、写超时与总预算耗尽。命中率与 `stores` 对不上时，先看容量上限。
 - 指标只用低基数标签；URL 路径只进 span。**池指标不带 host / port**：网关 / 爬虫 / 多租户场景下一个 host 一条时间序列会把后端打爆；要定位到具体 origin 看 span 的 `server.address` / `server.port` 与 `axiosnet.pool.endpoint.reused`。
 - `axiosnet.retry.reason` 取值有界：有状态码统一报 `status`（具体码在 `error.type`），否则是库错误码（`ECONNABORTED` / `ERR_NETWORK` …）——「该调策略（429）」和「该修下游（5xx）」在面板上直接分得开。
-- `gate.queue_depth` 是此刻正在等槽位的请求数（进程级）；`gate.rejections` 是入口拒绝计数（排队超时 / 队列满）；`circuit.state` 是「多少个熔断维度处于该状态」（熔断器实例 × key）；`circuit.untracked_host` 是「状态表满员后按闭合态直通」的次数；`retry.budget_exhausted` 是「想重试但被共享预算拦下」的次数。
+- `gate.queue_depth` 是此刻正在等槽位的请求数（进程级）；`gate.rejections` 是入口拒绝计数（排队超时 / 队列满）；`circuit.state` 是「多少个熔断维度处于该状态」（存活的熔断器实例 × key，实例被回收后不再计入）；`circuit.untracked_host` 是「状态表满员后按闭合态直通」的次数；`retry.budget_exhausted` 是「想重试但被共享预算拦下」的次数。
 - 缓存五件套（`cache.hits` / `misses` / `stores` / `store_failures` / `revalidations`）同样不带标签 —— 上面这些都不带 host。
 - `request.duration` 是逻辑请求耗时（含重试、退避与缓存落库等待）；`active_requests` 请求结束即减（流式到响应头），`active_leases` 要等正文流释放——「长下载占了多少并发额度」看后者。
 - 池域指标描述池这个资源，不受 `Observability.Capture = TelemetryCapture.Off` 影响。

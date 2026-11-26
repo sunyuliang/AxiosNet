@@ -12,6 +12,10 @@
 
 - `AxiosResponse.RawBody` 是原始正文的唯一来源，`RawText` 由它按 charset 派生（首次读取才解码）：错误响应、短路 / 缓存命中与 `byte[]` 形态的 `Data` 不需要 `Observability.CaptureRawResponseBody` 就有 `RawBody`，成功响应打开该开关后 `RawText` 也可读。此前 `RawText` 只服务错误体、`RawBody` 只受开关控制，两者不可能同时有值。错误响应的字节超过 64 KB 时只留文本。迁移：不再能用 `RawBody is null` 判断「没开开关」，该判断请读 `Config.Observability.CaptureRawResponseBody`。
 
+### Fixed
+
+- `axiosnet.client.circuit.state` 只统计存活 `CircuitBreaker` 实例的维度：此前它由三个进程级计数器汇总，实例被回收后那些计数不会归还，长进程里该仪表会一直虚高（新建实例只增不减）。现在每次采样按存活实例重算，实例被回收后它的维度随之消失，口径与文档写的「熔断器实例 × key」一致。
+
 ## [1.8.0] - 2026-11-23
 
 ### Added

@@ -378,9 +378,8 @@ public static class AxiosTelemetry
     /// <summary>熔断状态的分组计数：<c>closed</c> 由「已跟踪维度 - 打开 - 半开」推出。</summary>
     private static IEnumerable<Measurement<long>> ObserveCircuitStates()
     {
-        var open = CircuitBreaker.OpenCount;
-        var halfOpen = CircuitBreaker.HalfOpenCount;
-        var closed = CircuitBreaker.TrackedCount - open - halfOpen;
+        var (tracked, open, halfOpen) = CircuitBreaker.ProcessSnapshot();
+        var closed = tracked - open - halfOpen;
 
         if (closed < 0)
         {
