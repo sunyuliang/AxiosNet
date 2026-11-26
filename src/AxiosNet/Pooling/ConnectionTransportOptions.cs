@@ -52,4 +52,26 @@ public sealed class ConnectionTransportOptions
 
     /// <summary>浅拷贝（合并层用）。</summary>
     internal ConnectionTransportOptions Clone() => (ConnectionTransportOptions)MemberwiseClone();
+
+    /// <summary>
+    /// 两条档设置是否等价：标量逐项比，引用成员（代理 / 凭据 / 委托）按同一实例判定。
+    /// </summary>
+    /// <remarks>
+    /// 与属性定义同文件维护：新增档字段时在紧邻位置补一行，避免「加字段但忘了参与等价判定」。
+    /// </remarks>
+    internal bool EqualsCore(ConnectionTransportOptions other)
+    {
+        var same = UseCookies == other.UseCookies
+                   && EnabledSslProtocols == other.EnabledSslProtocols
+                   && ReferenceEquals(Proxy, other.Proxy)
+                   && ReferenceEquals(Credentials, other.Credentials)
+                   && ReferenceEquals(ServerCertificateCustomValidationCallback, other.ServerCertificateCustomValidationCallback)
+                   && ReferenceEquals(HandlerFactory, other.HandlerFactory);
+#if !NETSTANDARD2_0
+        same = same
+               && ReferenceEquals(ConfigureSslOptions, other.ConfigureSslOptions)
+               && ReferenceEquals(ConnectCallback, other.ConnectCallback);
+#endif
+        return same;
+    }
 }

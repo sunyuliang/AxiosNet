@@ -229,6 +229,50 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         Options.Freeze();
     }
 
+    /// <summary>创建<b>自建连接池</b>的实例：最常用形态，池归本实例所有并在释放时关闭。</summary>
+    /// <param name="defaults">实例默认配置：每次请求合并到它上面。</param>
+    /// <param name="poolOptions">自建池的选项；<c>null</c> 用默认值。</param>
+    /// <param name="options">实例级选项；<c>null</c> 用默认值。</param>
+    /// <param name="pipeline">尝试管线；<c>null</c> 用 <see cref="AxiosAttemptPipeline.Default"/>。</param>
+    public static AxiosClient Pooled(
+        AxiosConfig? defaults = null,
+        ConnectionPoolOptions? poolOptions = null,
+        AxiosClientOptions? options = null,
+        AxiosAttemptPipeline? pipeline = null)
+        => new(defaults, options, null, poolOptions, null, true, pipeline);
+
+    /// <summary>创建<b>直接注入 Handler</b> 的实例：不使用连接池，连接行为由 <paramref name="handler"/> 自己决定。</summary>
+    /// <param name="handler">注入的 Handler，不能为 <c>null</c>。</param>
+    /// <param name="defaults">实例默认配置。</param>
+    /// <param name="options">实例级选项（连接层选项在注入 Handler 时不生效）。</param>
+    /// <param name="disposeHandler">释放本实例时是否一并释放 <paramref name="handler"/>。</param>
+    /// <param name="pipeline">尝试管线；<c>null</c> 用默认管线。</param>
+    public static AxiosClient WithHandler(
+        HttpMessageHandler handler,
+        AxiosConfig? defaults = null,
+        AxiosClientOptions? options = null,
+        bool disposeHandler = true,
+        AxiosAttemptPipeline? pipeline = null)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+        return new(defaults, options, null, null, handler, disposeHandler, pipeline);
+    }
+
+    /// <summary>创建<b>共享已有连接池</b>的实例：不拥有该池，释放本实例不会关闭它。</summary>
+    /// <param name="pool">共享池，不能为 <c>null</c>。</param>
+    /// <param name="defaults">实例默认配置。</param>
+    /// <param name="options">实例级选项（连接层选项以池为准）。</param>
+    /// <param name="pipeline">尝试管线；<c>null</c> 用默认管线。</param>
+    public static AxiosClient WithSharedPool(
+        HttpConnectionPool pool,
+        AxiosConfig? defaults = null,
+        AxiosClientOptions? options = null,
+        AxiosAttemptPipeline? pipeline = null)
+    {
+        ArgumentNullException.ThrowIfNull(pool);
+        return new(defaults, options, pool, null, null, true, pipeline);
+    }
+
     /// <summary>连接层配置在构造期定型：把池实际生效的出口写回 <see cref="Options"/>，使 getter 反映真实行为。</summary>
     private void SyncOptionsFromPool()
     {

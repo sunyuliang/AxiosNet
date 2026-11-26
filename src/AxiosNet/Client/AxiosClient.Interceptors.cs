@@ -115,8 +115,7 @@ public sealed partial class AxiosClient
             throw AxiosException.Canceled(config, null);
         }
 
-        var validateStatus = config.ValidateStatus ?? DefaultValidateStatus;
-        var statusAccepted = validateStatus(reply.Status);
+        var statusAccepted = IsStatusAccepted(config, reply.Status);
 
         // 状态码不合法时按宽松口径解析。
         var response = ResponseReader.ReadShortCircuit(reply, config, dataType, target, lenient: !statusAccepted);

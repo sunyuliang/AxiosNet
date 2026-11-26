@@ -220,7 +220,7 @@ public sealed partial class AxiosClient
                 try
                 {
                     // 先校验：坏头不进缓存。
-                    AxiosHeaders.ValidateHeaderValue(AxiosHeaders.ValidateHeaderName(header.Key), value);
+                    AxiosHeaders.ValidateHeaderValue(AxiosHeaders.ValidateName(header.Key), value);
                     values.Add(value);
                 }
                 catch (ArgumentException)
@@ -316,8 +316,7 @@ public sealed partial class AxiosClient
         var config = ctx.Config;
         var merged = MergeNotModified(config.RevalidationEntry!, message);
 
-        var validateStatus = config.ValidateStatus ?? DefaultValidateStatus;
-        var statusAccepted = validateStatus(merged.Status);
+        var statusAccepted = IsStatusAccepted(config, merged.Status);
 
         var response = ResponseReader.ReadShortCircuit(merged, config, ctx.DataType, ctx.Target, lenient: !statusAccepted);
 

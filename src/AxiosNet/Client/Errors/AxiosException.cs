@@ -141,25 +141,24 @@ public class AxiosException : Exception
         Exception? inner = null,
         TimeSpan? effectiveTimeout = null)
     {
-        string message;
+        var message = CustomTimeoutMessage(config);
 
-        if (!string.IsNullOrWhiteSpace(config.ObservabilityOrNull?.TimeoutMessage))
+        if (message is null)
         {
-            message = config.ObservabilityOrNull!.TimeoutMessage!;
-        }
-        else if (effectiveTimeout is { } effective)
-        {
-            // 0 在库里的含义是「不限时」，消息里写 unset。
-            var configured = config.Timeout > TimeSpan.Zero
-                ? $"{config.Timeout.TotalMilliseconds:0}ms"
-                : "unset";
+            if (effectiveTimeout is { } effective)
+            {
+                // 0 在库里的含义是「不限时」，消息里写 unset。
+                var configured = config.Timeout > TimeSpan.Zero
+                    ? $"{config.Timeout.TotalMilliseconds:0}ms"
+                    : "unset";
 
-            message = $"timeout of {effective.TotalMilliseconds:0}ms exceeded "
-                      + $"(remaining TotalTimeout budget; Timeout = {configured})";
-        }
-        else
-        {
-            message = $"timeout of {config.Timeout.TotalMilliseconds:0}ms exceeded";
+                message = $"timeout of {effective.TotalMilliseconds:0}ms exceeded "
+                          + $"(remaining TotalTimeout budget; Timeout = {configured})";
+            }
+            else
+            {
+                message = $"timeout of {config.Timeout.TotalMilliseconds:0}ms exceeded";
+            }
         }
 
         return new AxiosException(message, ErrConnAborted, config, request, null, inner)
@@ -182,22 +181,7 @@ public class AxiosException : Exception
         int attempt,
         TimeSpan? budget,
         Exception? inner = null)
-    {
-        var headline = budget is { } known && known > TimeSpan.Zero
-            ? $"TotalTimeout of {known.TotalMilliseconds:0}ms exceeded"
-            : "TotalTimeout exceeded";
-
-        var message = string.IsNullOrWhiteSpace(config.ObservabilityOrNull?.TimeoutMessage)
-            ? $"{headline} before attempt #{attempt} could be sent: "
-              + "the total budget covers all retries, failover endpoints and hedges — "
-              + "raise TotalTimeout, cut MaxRetries / MaxHedges, or shorten Timeout"
-            : config.ObservabilityOrNull!.TimeoutMessage!;
-
-        return new AxiosException(message, ErrConnAborted, config, request, null, inner)
-        {
-            IsTotalTimeoutExceeded = true
-        };
-    }
+        => TotalTimeout(config, request, attempt, budget, duringAttempt: false, inner);
 
     /// <summary>
     /// 总预算在某次尝试<b>发出之后</b>到点：错误码与超时一致（<c>ECONNABORTED</c>），对外同样以 <see cref="IsTotalTimeoutExceeded"/> 表示预算已花完。
@@ -209,22 +193,51 @@ public class AxiosException : Exception
         int attempt,
         TimeSpan? budget,
         Exception? inner = null)
-    {
-        var headline = budget is { } known && known > TimeSpan.Zero
-            ? $"TotalTimeout of {known.TotalMilliseconds:0}ms exceeded"
-            : "TotalTimeout exceeded";
+        => TotalTimeout(config, request, attempt, budget, duringAttempt: true, inner);
 
-        var message = string.IsNullOrWhiteSpace(config.ObservabilityOrNull?.TimeoutMessage)
-            ? $"{headline} while attempt #{attempt} was in flight: "
-              + "no further attempt is sent (the total budget covers all retries, failover endpoints and hedges) — "
-              + "raise TotalTimeout, cut MaxRetries / MaxHedges, or shorten Timeout"
-            : config.ObservabilityOrNull!.TimeoutMessage!;
+    /// <summary>两个总预算超时入口的共同实现：只差「未发出」与「在途」这一句文案。</summary>
+    /// <param name="config">本次请求的生效配置。</param>
+    /// <param name="request">触发本次失败的请求。</param>
+    /// <param name="attempt">第几次尝试。</param>
+    /// <param name="budget">总预算的配置值，只用于消息。</param>
+    /// <param name="duringAttempt">为 <c>true</c> 表示到点时该次尝试已在途。</param>
+    /// <param name="inner">归因到的那次失败，保留 <c>Cause</c> 链。</param>
+    private static AxiosException TotalTimeout(
+        AxiosConfig config,
+        HttpRequestMessage? request,
+        int attempt,
+        TimeSpan? budget,
+        bool duringAttempt,
+        Exception? inner)
+    {
+        var message = CustomTimeoutMessage(config);
+
+        if (message is null)
+        {
+            var headline = budget is { } known && known > TimeSpan.Zero
+                ? $"TotalTimeout of {known.TotalMilliseconds:0}ms exceeded"
+                : "TotalTimeout exceeded";
+
+            message = duringAttempt
+                ? $"{headline} while attempt #{attempt} was in flight: "
+                  + "no further attempt is sent (the total budget covers all retries, failover endpoints and hedges) — "
+                  + "raise TotalTimeout, cut MaxRetries / MaxHedges, or shorten Timeout"
+                : $"{headline} before attempt #{attempt} could be sent: "
+                  + "the total budget covers all retries, failover endpoints and hedges — "
+                  + "raise TotalTimeout, cut MaxRetries / MaxHedges, or shorten Timeout";
+        }
 
         return new AxiosException(message, ErrConnAborted, config, request, null, inner)
         {
             IsTotalTimeoutExceeded = true
         };
     }
+
+    /// <summary>配置里的自定义超时文案；未配置（或只有空白）时返回 <c>null</c>，由调用方拼默认文案。</summary>
+    private static string? CustomTimeoutMessage(AxiosConfig config)
+        => string.IsNullOrWhiteSpace(config.ObservabilityOrNull?.TimeoutMessage)
+            ? null
+            : config.ObservabilityOrNull!.TimeoutMessage!;
 
     /// <summary>流式响应的单帧超过内部上限。</summary>
     internal static AxiosException StreamFrameTooLarge(AxiosConfig config, HttpRequestMessage? request, string format, int limit)

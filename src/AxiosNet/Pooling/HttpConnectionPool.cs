@@ -144,7 +144,7 @@ public sealed class HttpConnectionPool : IDisposable
     /// <summary>同一 key 上重复传 options 时的校验：一致放行（幂等初始化），不一致明确报错。</summary>
     private static void EnsureSameOptions(string key, HttpConnectionPool pool, ConnectionPoolOptions? options)
     {
-        if (options is null || SameOptions(pool._options, options))
+        if (options is null || pool._options.EqualsCore(options))
         {
             return;
         }
@@ -153,81 +153,6 @@ public sealed class HttpConnectionPool : IDisposable
             $"命名池 '{key}' 已用另一份 ConnectionPoolOptions 创建：同一 key 上重复取池请不要传 options，"
             + "或让两次传入的配置完全一致（HandlerFactory / Proxy / Credentials / 证书回调等引用成员按同一实例判定）。");
     }
-
-    /// <summary>
-    /// 两份选项是否等价：标量逐项比，引用成员（委托 / 代理 / 凭据）按同一实例判。
-    /// </summary>
-    private static bool SameOptions(ConnectionPoolOptions a, ConnectionPoolOptions b)
-        => a.MaxConnectionsPerServer == b.MaxConnectionsPerServer
-           && a.PooledConnectionLifetime == b.PooledConnectionLifetime
-           && a.PooledConnectionIdleTimeout == b.PooledConnectionIdleTimeout
-           && a.ConnectTimeout == b.ConnectTimeout
-#if !NETSTANDARD2_0
-           && ReferenceEquals(a.ConnectCallback, b.ConnectCallback)
-#endif
-           && a.MaxResponseHeadersLength == b.MaxResponseHeadersLength
-           && a.IdleHandlerLifetime == b.IdleHandlerLifetime
-           && a.EvictionInterval == b.EvictionInterval
-           && a.AllowAutoRedirect == b.AllowAutoRedirect
-           && a.MaxAutomaticRedirections == b.MaxAutomaticRedirections
-           && a.UseCookies == b.UseCookies
-           && a.CookieCapacity == b.CookieCapacity
-           && a.CookiePerDomainCapacity == b.CookiePerDomainCapacity
-           && a.CookieMaxCookieSize == b.CookieMaxCookieSize
-           && a.AutomaticDecompression == b.AutomaticDecompression
-           && a.Decompression == b.Decompression
-           && a.EnableMultipleHttp2Connections == b.EnableMultipleHttp2Connections
-           && a.KeepAlivePingDelay == b.KeepAlivePingDelay
-           && a.KeepAlivePingTimeout == b.KeepAlivePingTimeout
-#if !NETSTANDARD2_0
-           && a.KeepAlivePingPolicy == b.KeepAlivePingPolicy
-#endif
-           && a.MaxEndpointCount == b.MaxEndpointCount
-           && a.EnabledSslProtocols == b.EnabledSslProtocols
-           && ReferenceEquals(a.Proxy, b.Proxy)
-           && ReferenceEquals(a.Credentials, b.Credentials)
-           && ReferenceEquals(a.ServerCertificateCustomValidationCallback, b.ServerCertificateCustomValidationCallback)
-#if !NETSTANDARD2_0
-           && ReferenceEquals(a.ConfigureSslOptions, b.ConfigureSslOptions)
-#endif
-           && ReferenceEquals(a.HandlerFactory, b.HandlerFactory)
-           && SameTransports(a.Transports, b.Transports);
-
-    /// <summary>
-    /// 传输档表是否等价：档名集合相同，且每个档的字段逐项相等（引用成员按同一实例）。
-    /// </summary>
-    private static bool SameTransports(
-        IReadOnlyDictionary<string, ConnectionTransportOptions> a,
-        IReadOnlyDictionary<string, ConnectionTransportOptions> b)
-    {
-        if (a.Count != b.Count)
-        {
-            return false;
-        }
-
-        foreach (var pair in a)
-        {
-            if (!b.TryGetValue(pair.Key, out var other) || !SameTransport(pair.Value, other))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    // 传输配置是否可视为同一档：代理按引用比较，其余逐项比较；不同就不能共池。
-    private static bool SameTransport(ConnectionTransportOptions a, ConnectionTransportOptions b)
-        => a.UseCookies == b.UseCookies
-           && a.EnabledSslProtocols == b.EnabledSslProtocols
-           && ReferenceEquals(a.Proxy, b.Proxy)
-           && ReferenceEquals(a.Credentials, b.Credentials)
-           && ReferenceEquals(a.ServerCertificateCustomValidationCallback, b.ServerCertificateCustomValidationCallback)
-#if !NETSTANDARD2_0
-           && ReferenceEquals(a.ConfigureSslOptions, b.ConfigureSslOptions)
-           && ReferenceEquals(a.ConnectCallback, b.ConnectCallback)
-#endif
-           && ReferenceEquals(a.HandlerFactory, b.HandlerFactory);
 
     /// <summary>池实际生效的选项（副本；修改它不会影响池）。</summary>
     public ConnectionPoolOptions Options => _options.Clone();

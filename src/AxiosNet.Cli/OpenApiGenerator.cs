@@ -1,8 +1,10 @@
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using AxiosNet.Cli.Diagnostics;
 using AxiosNet.Cli.Generation;
 using AxiosNet.Cli.Model;
+using AxiosNet.Cli.Reading;
 using AxiosNet.Cli.Spec;
 
 namespace AxiosNet.Cli;

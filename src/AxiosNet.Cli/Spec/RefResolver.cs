@@ -1,4 +1,5 @@
 using System.Globalization;
+using AxiosNet.Cli.Diagnostics;
 using AxiosNet.Cli.Model;
 
 namespace AxiosNet.Cli.Spec;

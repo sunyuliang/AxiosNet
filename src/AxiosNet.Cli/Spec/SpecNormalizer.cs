@@ -1,3 +1,4 @@
+using AxiosNet.Cli.Diagnostics;
 using AxiosNet.Cli.Model;
 
 namespace AxiosNet.Cli.Spec;
@@ -50,9 +51,6 @@ internal static class SpecNormalizer
 /// <summary>Swagger 2.0 → OpenAPI 3.0 的最小转换：definitions / parameters / responses / securityDefinitions 与全局 consumes / produces。</summary>
 internal static class Swagger2Converter
 {
-    /// <summary>Swagger 2.0 path item 下的 HTTP 方法键（小写）。</summary>
-    private static readonly string[] Verbs = { "get", "put", "post", "delete", "options", "head", "patch", "trace" };
-
     /// <summary>转换整份文档，返回新的 OpenAPI 3 根节点（不修改入参）。</summary>
     public static SpecNode ToOpenApi3(SpecNode root, WarningCollector warnings)
     {
@@ -105,7 +103,7 @@ internal static class Swagger2Converter
                 var newItem = new Dictionary<string, SpecNode>(StringComparer.Ordinal);
                 foreach (var (key, value) in item.Properties)
                 {
-                    if (key != "parameters" && !Verbs.Contains(key, StringComparer.OrdinalIgnoreCase))
+                    if (key != "parameters" && !HttpVerbs.All.Contains(key, StringComparer.OrdinalIgnoreCase))
                     {
                         newItem[key] = value;
                     }
@@ -117,7 +115,7 @@ internal static class Swagger2Converter
                     newItem["parameters"] = SpecNode.Arr(pathParameters);
                 }
 
-                foreach (var verb in Verbs)
+                foreach (var verb in HttpVerbs.All)
                 {
                     var rawOperation = item[verb];
                     if (rawOperation is not { IsObject: true })

@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.Globalization;
 using System.Text;
 
 namespace AxiosNet.Cache;
@@ -312,18 +311,6 @@ public sealed class CacheControlDirectives
     }
 
     /// <summary>把 <c>max-age</c> 之类的秒数换成时长：非数字或负数返回 null，超出 <see cref="TimeSpan"/> 上限按无限长处理。</summary>
-    private static TimeSpan? ParseSeconds(string? argument)
-    {
-        if (argument is null
-            || !long.TryParse(argument, NumberStyles.None, CultureInfo.InvariantCulture, out var seconds)
-            || seconds < 0)
-        {
-            return null;
-        }
-
-        // 超出 TimeSpan 上限按无限长。
-        return seconds > long.MaxValue / TimeSpan.TicksPerSecond
-            ? TimeSpan.MaxValue
-            : TimeSpan.FromTicks(seconds * TimeSpan.TicksPerSecond);
-    }
+    /// <remarks>与响应侧共用 <see cref="AxiosCache.ParseSeconds"/>：两侧对同一个秒数必须给出同一结论。</remarks>
+    private static TimeSpan? ParseSeconds(string? argument) => AxiosCache.ParseSeconds(argument);
 }

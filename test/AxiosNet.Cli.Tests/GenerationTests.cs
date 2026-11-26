@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AxiosNet.Cli.Diagnostics;
 using AxiosNet.Cli.Model;
 using AxiosNet.Cli.Spec;
 

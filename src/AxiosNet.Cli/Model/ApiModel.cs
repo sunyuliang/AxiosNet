@@ -1,5 +1,7 @@
 namespace AxiosNet.Cli.Model;
 
+using AxiosNet.Cli.Diagnostics;
+
 /// <summary>映射到 C# 的类型引用：名字不含可空标注，可空由 <see cref="Nullable"/> 或调用方的 required 语义决定。</summary>
 /// <param name="Name">类型名（如 <c>int</c>、<c>List&lt;string&gt;</c>），不含 <c>?</c> 标注。</param>
 /// <param name="IsValueType">是否值类型，决定可空要不要写成 <c>Nullable&lt;T&gt;</c>。</param>
@@ -59,39 +61,6 @@ internal enum ApiTypeKind
 
     /// <summary>常量类：枚举值不全是合法标识符时用来保留线上字面量。</summary>
     Constants
-}
-
-/// <summary>一处导入缺口或降级：写进控制台摘要与 <c>--report</c>。</summary>
-/// <param name="Code">缺口编号，用于去重与分类统计。</param>
-/// <param name="Location">出现位置（如 <c>操作.状态码</c>），报告里靠它定位。</param>
-/// <param name="Message">给人看的说明。</param>
-internal sealed record ApiWarning(string Code, string Location, string Message);
-
-/// <summary>警告收集器：去重并设置上限。</summary>
-internal sealed class WarningCollector
-{
-    /// <summary>单次运行的警告上限；超出后静默丢弃，报告与摘要都不会无限膨胀。</summary>
-    private const int MaxWarnings = 500;
-
-    /// <summary>已收集的警告（按加入顺序）。</summary>
-    private readonly List<ApiWarning> _items = new();
-
-    /// <summary>去重键集合（码 + 位置 + 消息），保证同一缺口只报一次。</summary>
-    private readonly HashSet<string> _keys = new(StringComparer.Ordinal);
-
-    /// <summary>对外只读视图，最终会拷进 <see cref="ApiSpec.Warnings"/>。</summary>
-    public IReadOnlyList<ApiWarning> Items => _items;
-
-    /// <summary>追加一条警告；达到上限或已存在同码同位置同消息时忽略。</summary>
-    public void Add(string code, string location, string message)
-    {
-        if (_items.Count >= MaxWarnings || !_keys.Add(code + "\0" + location + "\0" + message))
-        {
-            return;
-        }
-
-        _items.Add(new ApiWarning(code, location, message));
-    }
 }
 
 /// <summary>归一化后的整份 API：分组后的接口、模型与全部警告。</summary>

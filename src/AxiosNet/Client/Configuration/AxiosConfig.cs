@@ -267,20 +267,7 @@ public sealed partial class AxiosConfig
     public AxiosShortCircuit? ShortCircuit
     {
         get => _cacheState?.ShortCircuit;
-        set
-        {
-            if (value is null)
-            {
-                if (_cacheState is not null)
-                {
-                    _cacheState.ShortCircuit = null;
-                }
-
-                return;
-            }
-
-            (_cacheState ??= new CacheState()).ShortCircuit = value;
-        }
+        set => SetOptional(ref _cacheState, value, static (state, v) => state.ShortCircuit = v);
     }
 
     /// <summary>响应缓存：设置后命中的请求不发出去，直接交付缓存里的那份响应（细节见 <see cref="AxiosNet.Cache.AxiosCache"/>）。</summary>
@@ -288,60 +275,21 @@ public sealed partial class AxiosConfig
     public AxiosCache? Caching
     {
         get => _cacheState?.Caching;
-        set
-        {
-            if (value is null)
-            {
-                if (_cacheState is not null)
-                {
-                    _cacheState.Caching = null;
-                }
-
-                return;
-            }
-
-            (_cacheState ??= new CacheState()).Caching = value;
-        }
+        set => SetOptional(ref _cacheState, value, static (state, v) => state.Caching = v);
     }
 
     /// <summary>本次请求是否要留原始响应字节：缓存阶段决定，响应读取据此决定留不留（不留时字节读完即弃）。</summary>
     internal bool CacheCaptureRawBody
     {
         get => _cacheState is { CacheCaptureRawBody: true };
-        set
-        {
-            if (!value)
-            {
-                if (_cacheState is not null)
-                {
-                    _cacheState.CacheCaptureRawBody = false;
-                }
-
-                return;
-            }
-
-            (_cacheState ??= new CacheState()).CacheCaptureRawBody = true;
-        }
+        set => SetFlag(ref _cacheState, value, static (state, v) => state.CacheCaptureRawBody = v);
     }
 
     /// <summary>本次请求要复用的旧缓存条目（条件请求）：管线据此发 <c>If-None-Match</c> / <c>If-Modified-Since</c>，收到 <c>304</c> 时用它交付正文；<see cref="Clone"/> 不复制。</summary>
     internal AxiosShortCircuit? RevalidationEntry
     {
         get => _cacheState?.RevalidationEntry;
-        set
-        {
-            if (value is null)
-            {
-                if (_cacheState is not null)
-                {
-                    _cacheState.RevalidationEntry = null;
-                }
-
-                return;
-            }
-
-            (_cacheState ??= new CacheState()).RevalidationEntry = value;
-        }
+        set => SetOptional(ref _cacheState, value, static (state, v) => state.RevalidationEntry = v);
     }
 
     private TimeSpan _timeout = TimeSpan.FromSeconds(100);
@@ -405,44 +353,18 @@ public sealed partial class AxiosConfig
     }
 
     /// <summary>本次发送收尾不释放模板正文：401 重放要在第二次发送前继续持有调用方给的 <c>HttpContent</c>。</summary>
+    /// <remarks>合并层每次请求都会把它置 <c>false</c>，所以写假值不能创建状态容器。</remarks>
     internal bool RetainBodyContent
     {
         get => _authReplay is { RetainBodyContent: true };
-        set
-        {
-            // 写 false 不得创建状态：合并层每次请求都会把它置 false。
-            if (!value)
-            {
-                if (_authReplay is not null)
-                {
-                    _authReplay.RetainBodyContent = false;
-                }
-
-                return;
-            }
-
-            (_authReplay ??= new AuthReplayState()).RetainBodyContent = true;
-        }
+        set => SetFlag(ref _authReplay, value, static (state, v) => state.RetainBodyContent = v);
     }
 
     /// <summary>被发送管线保留下来、供 401 重放使用的正文，由门面读走后负责释放。</summary>
     internal HttpContent? RetainedReplayContent
     {
         get => _authReplay?.RetainedReplayContent;
-        set
-        {
-            if (value is null)
-            {
-                if (_authReplay is not null)
-                {
-                    _authReplay.RetainedReplayContent = null;
-                }
-
-                return;
-            }
-
-            (_authReplay ??= new AuthReplayState()).RetainedReplayContent = value;
-        }
+        set => SetOptional(ref _authReplay, value, static (state, v) => state.RetainedReplayContent = v);
     }
 
     /// <summary>transform 链里继承自实例默认的前缀长度（库产出的配置才有，调用方 new 的为 0），合并层据此去重；随 <see cref="Clone"/> 继承。</summary>
@@ -458,60 +380,21 @@ public sealed partial class AxiosConfig
     internal string? ResolvedAuthorization
     {
         get => _authReplay?.ResolvedAuthorization;
-        set
-        {
-            if (value is null)
-            {
-                if (_authReplay is not null)
-                {
-                    _authReplay.ResolvedAuthorization = null;
-                }
-
-                return;
-            }
-
-            (_authReplay ??= new AuthReplayState()).ResolvedAuthorization = value;
-        }
+        set => SetOptional(ref _authReplay, value, static (state, v) => state.ResolvedAuthorization = v);
     }
 
     /// <summary>本次请求由托管凭据产生的身份值：落点不是 <c>Authorization</c> 头时用它进缓存身份键。</summary>
     internal string? ResolvedCredentialIdentity
     {
         get => _authReplay?.ResolvedCredentialIdentity;
-        set
-        {
-            if (value is null)
-            {
-                if (_authReplay is not null)
-                {
-                    _authReplay.ResolvedCredentialIdentity = null;
-                }
-
-                return;
-            }
-
-            (_authReplay ??= new AuthReplayState()).ResolvedCredentialIdentity = value;
-        }
+        set => SetOptional(ref _authReplay, value, static (state, v) => state.ResolvedCredentialIdentity = v);
     }
 
     /// <summary>门面（WebAPI）挂进来的凭据提供方：不占 <see cref="TransportSettings.Auth"/> 槽位；显式设置的槽位优先。</summary>
     internal IAxiosCredentialProvider? InternalCredentialProvider
     {
         get => _authReplay?.InternalCredentialProvider;
-        set
-        {
-            if (value is null)
-            {
-                if (_authReplay is not null)
-                {
-                    _authReplay.InternalCredentialProvider = null;
-                }
-
-                return;
-            }
-
-            (_authReplay ??= new AuthReplayState()).InternalCredentialProvider = value;
-        }
+        set => SetOptional(ref _authReplay, value, static (state, v) => state.InternalCredentialProvider = v);
     }
 
     private ResponseType _responseType = ResponseType.Json;
@@ -725,5 +608,57 @@ public sealed partial class AxiosConfig
             IDictionary<string, string> dictionary => new Dictionary<string, string>(dictionary),
             _ => value
         };
+    }
+
+    /// <summary>写引用型懒状态：赋 <c>null</c> 时只清旧值，不创建 holder。</summary>
+    /// <typeparam name="THolder">状态容器类型，必须有无参构造。</typeparam>
+    /// <typeparam name="TValue">被存的值类型。</typeparam>
+    /// <param name="holder">状态容器字段（按引用传入，必要时就地创建）。</param>
+    /// <param name="value">要写入的值；<c>null</c> 表示清除。</param>
+    /// <param name="assign">把值写进容器的动作，由调用方给出静态 lambda。</param>
+    private static void SetOptional<THolder, TValue>(
+        ref THolder? holder,
+        TValue? value,
+        Action<THolder, TValue?> assign)
+        where THolder : class, new()
+        where TValue : class
+    {
+        if (value is null)
+        {
+            if (holder is not null)
+            {
+                assign(holder, null);
+            }
+
+            return;
+        }
+
+        holder ??= new THolder();
+        assign(holder, value);
+    }
+
+    /// <summary>写布尔型懒状态：写「假」时只清旧值，不创建 holder。</summary>
+    /// <typeparam name="THolder">状态容器类型，必须有无参构造。</typeparam>
+    /// <param name="holder">状态容器字段（按引用传入，必要时就地创建）。</param>
+    /// <param name="value">要写入的值；<c>false</c> 表示清除。</param>
+    /// <param name="assign">把值写进容器的动作，由调用方给出静态 lambda。</param>
+    private static void SetFlag<THolder>(
+        ref THolder? holder,
+        bool value,
+        Action<THolder, bool> assign)
+        where THolder : class, new()
+    {
+        if (!value)
+        {
+            if (holder is not null)
+            {
+                assign(holder, false);
+            }
+
+            return;
+        }
+
+        holder ??= new THolder();
+        assign(holder, true);
     }
 }

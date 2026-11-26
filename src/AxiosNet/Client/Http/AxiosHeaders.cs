@@ -519,8 +519,9 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     // 头名只去首尾空白，中间的交给 ValidateName 判非法。
     private static string NormalizeName(string name) => name.Trim();
 
-    /// <summary>写入前的名称校验：RFC 7230 token（RFC 9110 §5.1 同）。</summary>
-    private static string ValidateName(string name)
+    /// <summary>写入前的名称校验：RFC 7230 token（RFC 9110 §5.1 同），返回去首尾空白后的名称。</summary>
+    /// <exception cref="ArgumentException">名称为空、含控制字符或非 token 字符。</exception>
+    internal static string ValidateName(string name)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
@@ -584,8 +585,4 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
             }
         }
     }
-
-    /// <summary>头名校验的共用入口：RFC 7230 token，返回去首尾空白后的名称。</summary>
-    /// <exception cref="ArgumentException">名称为空、含控制字符或非 token 字符。</exception>
-    internal static string ValidateHeaderName(string name) => ValidateName(name);
 }

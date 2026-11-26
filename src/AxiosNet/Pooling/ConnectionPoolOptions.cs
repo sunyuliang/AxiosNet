@@ -229,49 +229,80 @@ public sealed class ConnectionPoolOptions
     /// 复制一份独立实例：池内部持有的是副本（<see cref="HttpConnectionPool.Options"/> 也返回副本）。
     /// 引用型字段（代理、委托）按引用共享。
     /// </summary>
+    /// <remarks>按指针浅拷贝再单独处理命名传输档字典，新增字段无需改动本方法。</remarks>
     public ConnectionPoolOptions Clone()
     {
-        var copy = new ConnectionPoolOptions
-        {
-            MaxConnectionsPerServer = MaxConnectionsPerServer,
-            PooledConnectionLifetime = PooledConnectionLifetime,
-            PooledConnectionIdleTimeout = PooledConnectionIdleTimeout,
-            ConnectTimeout = ConnectTimeout,
-            MaxResponseHeadersLength = MaxResponseHeadersLength,
-            IdleHandlerLifetime = IdleHandlerLifetime,
-            EvictionInterval = EvictionInterval,
-            AllowAutoRedirect = AllowAutoRedirect,
-            MaxAutomaticRedirections = MaxAutomaticRedirections,
-            UseCookies = UseCookies,
-            CookieCapacity = CookieCapacity,
-            CookiePerDomainCapacity = CookiePerDomainCapacity,
-            CookieMaxCookieSize = CookieMaxCookieSize,
-            AutomaticDecompression = AutomaticDecompression,
-            Decompression = Decompression,
-            EnableMultipleHttp2Connections = EnableMultipleHttp2Connections,
-            KeepAlivePingDelay = KeepAlivePingDelay,
-            KeepAlivePingTimeout = KeepAlivePingTimeout,
-            MaxEndpointCount = MaxEndpointCount,
-            Proxy = Proxy,
-            Credentials = Credentials,
-            ServerCertificateCustomValidationCallback = ServerCertificateCustomValidationCallback,
-            EnabledSslProtocols = EnabledSslProtocols,
-            HandlerFactory = HandlerFactory,
-            _transports = CloneTransports(_transports)
-        };
-
-        CopyTfmOnlyOptions(this, copy);
+        var copy = (ConnectionPoolOptions)MemberwiseClone();
+        copy._transports = CloneTransports(_transports);
         return copy;
     }
 
-    /// <summary>复制仅现代资产上存在的选项（netstandard2.0 契约里没有这 3 个属性）。</summary>
-    private static void CopyTfmOnlyOptions(ConnectionPoolOptions source, ConnectionPoolOptions target)
+    /// <summary>
+    /// 两份池配置是否等价：标量逐项比，引用成员按同一实例判定，命名传输档按档名逐档比。
+    /// </summary>
+    /// <remarks>
+    /// 与字段定义同文件维护：新增池字段时在紧邻位置补一行。
+    /// 漏改的后果是静默的——配置已变却复用旧池时不会报错。
+    /// </remarks>
+    internal bool EqualsCore(ConnectionPoolOptions other)
     {
+        var same = MaxConnectionsPerServer == other.MaxConnectionsPerServer
+                   && PooledConnectionLifetime == other.PooledConnectionLifetime
+                   && PooledConnectionIdleTimeout == other.PooledConnectionIdleTimeout
+                   && ConnectTimeout == other.ConnectTimeout
+                   && MaxResponseHeadersLength == other.MaxResponseHeadersLength
+                   && IdleHandlerLifetime == other.IdleHandlerLifetime
+                   && EvictionInterval == other.EvictionInterval
+                   && AllowAutoRedirect == other.AllowAutoRedirect
+                   && MaxAutomaticRedirections == other.MaxAutomaticRedirections
+                   && UseCookies == other.UseCookies
+                   && CookieCapacity == other.CookieCapacity
+                   && CookiePerDomainCapacity == other.CookiePerDomainCapacity
+                   && CookieMaxCookieSize == other.CookieMaxCookieSize
+                   && AutomaticDecompression == other.AutomaticDecompression
+                   && Decompression == other.Decompression
+                   && EnableMultipleHttp2Connections == other.EnableMultipleHttp2Connections
+                   && KeepAlivePingDelay == other.KeepAlivePingDelay
+                   && KeepAlivePingTimeout == other.KeepAlivePingTimeout
+                   && MaxEndpointCount == other.MaxEndpointCount
+                   && ReferenceEquals(Proxy, other.Proxy)
+                   && ReferenceEquals(Credentials, other.Credentials)
+                   && ReferenceEquals(ServerCertificateCustomValidationCallback, other.ServerCertificateCustomValidationCallback)
+                   && EnabledSslProtocols == other.EnabledSslProtocols
+                   && ReferenceEquals(HandlerFactory, other.HandlerFactory);
 #if !NETSTANDARD2_0
-        target.ConnectCallback = source.ConnectCallback;
-        target.KeepAlivePingPolicy = source.KeepAlivePingPolicy;
-        target.ConfigureSslOptions = source.ConfigureSslOptions;
+        same = same
+               && ReferenceEquals(ConnectCallback, other.ConnectCallback)
+               && KeepAlivePingPolicy == other.KeepAlivePingPolicy
+               && ReferenceEquals(ConfigureSslOptions, other.ConfigureSslOptions);
 #endif
+        return same && TransportsEqual(_transports, other._transports);
+    }
+
+    /// <summary>命名传输档表是否等价：档名集合相同，且每个档的设置逐项相等。</summary>
+    private static bool TransportsEqual(
+        Dictionary<string, ConnectionTransportOptions>? left,
+        Dictionary<string, ConnectionTransportOptions>? right)
+    {
+        if (ReferenceEquals(left, right))
+        {
+            return true;
+        }
+
+        if (left is null || right is null || left.Count != right.Count)
+        {
+            return false;
+        }
+
+        foreach (var pair in left)
+        {
+            if (!right.TryGetValue(pair.Key, out var other) || !pair.Value.EqualsCore(other))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>深拷贝命名传输档字典（键区分大小写）。</summary>

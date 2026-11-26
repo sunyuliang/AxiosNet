@@ -1,18 +1,17 @@
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using AxiosNet.Cli.Diagnostics;
 using AxiosNet.Cli.Generation;
+using AxiosNet.Cli.Model;
 using AxiosNet.Cli.Spec;
 using AxiosNet.Internal.Spec;
 
-namespace AxiosNet.Cli.Model;
+namespace AxiosNet.Cli.Reading;
 
 /// <summary>把（已归一化的）OpenAPI 3 文档读成生成器使用的 IR：按 tag 分组、参数/正文/响应/授权全部落成声明式语义。</summary>
 internal sealed class ApiReader
 {
-    /// <summary>OpenAPI path item 下的 HTTP 方法键（小写），同时决定遍历顺序。</summary>
-    private static readonly string[] Verbs = { "get", "put", "post", "delete", "options", "head", "patch", "trace" };
-
     /// <summary>路径模板占位符：文法取自与运行期共用的 <see cref="PathGrammar"/>。</summary>
     private static readonly Regex PathPlaceholderPattern = new(PathGrammar.Placeholder, RegexOptions.CultureInvariant);
 
@@ -148,7 +147,7 @@ internal sealed class ApiReader
                 continue;
             }
 
-            foreach (var verb in Verbs)
+            foreach (var verb in HttpVerbs.All)
             {
                 var rawOperation = pathItem[verb];
                 if (rawOperation is not { IsObject: true })

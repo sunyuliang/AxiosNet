@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using AxiosNet.Cli.Diagnostics;
 using AxiosNet.Cli.Model;
 
 namespace AxiosNet.Cli.Generation;

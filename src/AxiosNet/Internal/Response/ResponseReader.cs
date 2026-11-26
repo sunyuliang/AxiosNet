@@ -735,7 +735,7 @@ internal static class ResponseReader
                         continue;
                     }
 
-                    var name = AxiosHeaders.ValidateHeaderName(header.Key);
+                    var name = AxiosHeaders.ValidateName(header.Key);
                     var values = new List<string>(2);
                     foreach (var value in header.Value)
                     {
@@ -765,7 +765,7 @@ internal static class ResponseReader
                     }
 
                     // 与请求头同一套校验。
-                    var name = AxiosHeaders.ValidateHeaderName(header.Key);
+                    var name = AxiosHeaders.ValidateName(header.Key);
                     AxiosHeaders.ValidateHeaderValue(name, header.Value);
                     headers[name] = new[] { header.Value };
                 }

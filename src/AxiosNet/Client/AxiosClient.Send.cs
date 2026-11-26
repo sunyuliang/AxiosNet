@@ -357,8 +357,7 @@ public sealed partial class AxiosClient
     {
         try
         {
-            var validateStatus = ctx.Config.ValidateStatus ?? DefaultValidateStatus;
-            var statusAccepted = validateStatus((int)responseMessage.StatusCode);
+            var statusAccepted = IsStatusAccepted(ctx.Config, (int)responseMessage.StatusCode);
 
             var response = await ResponseReader.ReadAsync(
                     responseMessage,
@@ -398,6 +397,13 @@ public sealed partial class AxiosClient
     }
 
     /// <summary>默认的成功判定：2xx 才算成功（未配置 <c>ValidateStatus</c> 时用它）。</summary>
+    /// <summary>状态码是否被本次请求接受：<c>validateStatus</c> 优先，未配置时接受 2xx。</summary>
+    /// <param name="config">本次请求的生效配置。</param>
+    /// <param name="status">待判定的 HTTP 状态码。</param>
+    internal static bool IsStatusAccepted(AxiosConfig config, int status)
+        => (config.ValidateStatus ?? DefaultValidateStatus)(status);
+
+    /// <summary>默认接受 2xx。</summary>
     private static bool DefaultValidateStatus(int status) => status is >= 200 and < 300;
 
     /// <summary>沿 <see cref="Exception.InnerException"/> 链找库自己的异常（HttpClient 会把正文序列化异常包成 <see cref="HttpRequestException"/>）。</summary>

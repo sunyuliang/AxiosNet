@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using AxiosNet.Internal.Spec;
 using AxiosNet.WebAPI.Attributes;
 
 namespace AxiosNet.WebAPI.Reflection;
@@ -329,7 +330,7 @@ internal static class InterfaceDeclaration
         return errors;
     }
 
-    /// <summary>接口链同层排序键：定义元数据名 + 各类型实参的元数据名（与生成器的 <c>GetChainSortKey</c> 同规则）。</summary>
+    /// <summary>接口链同层排序键：定义元数据名 + 各类型实参的元数据名；拼装规则与生成器共用 <see cref="InterfaceChainOrdering.SortKey"/>。</summary>
     private static string GetChainSortKey(Type type)
     {
         if (!type.IsGenericType)
@@ -338,7 +339,14 @@ internal static class InterfaceDeclaration
         }
 
         var definition = type.GetGenericTypeDefinition();
-        return (definition.FullName ?? definition.Name) + "|" + string.Join("|", type.GetGenericArguments().Select(GetChainArgumentName));
+        var arguments = type.GetGenericArguments();
+        var names = new string[arguments.Length];
+        for (var i = 0; i < names.Length; i++)
+        {
+            names[i] = GetChainArgumentName(arguments[i]);
+        }
+
+        return InterfaceChainOrdering.SortKey(definition.FullName ?? definition.Name, names);
     }
 
     /// <summary>泛型实参的稳定名字：数组写成 <c>T[]</c>，泛型只取定义名、不带闭合实参，便于不同类型共用同一份声明。</summary>

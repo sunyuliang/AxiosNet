@@ -114,18 +114,66 @@ public sealed partial class AxiosClient
     /// <summary>校验 Timeout / TotalTimeout 非负。</summary>
     private static void ValidateTimeouts(AxiosConfig config)
     {
-        if (config.Timeout < TimeSpan.Zero)
-        {
-            throw AxiosException.InvalidOption($"Timeout 不能为负（当前 {config.Timeout}）：要关闭超时请显式设为 TimeSpan.Zero。", config);
-        }
+        RequireNonNegative(config.Timeout, "Timeout", config, "要关闭超时请显式设为 TimeSpan.Zero。");
 
         // 总预算与 Timeout 同一口径：0 与 null 都表示不设。
-        if (config.TotalTimeoutValue is { } totalTimeout && totalTimeout < TimeSpan.Zero)
+        RequireNonNegative(
+            config.TotalTimeoutValue,
+            "TotalTimeout",
+            config,
+            "不设总预算请设为 null（或 TimeSpan.Zero），要限制整条请求（含重试 / 端点 / 对冲）请给一个正值。");
+    }
+
+    /// <summary>计数字段不得为负：负数一律以 <c>ERR_BAD_OPTION_VALUE</c> 拒绝。</summary>
+    /// <param name="value">待校验值；<c>null</c> 表示未设置，放行。</param>
+    /// <param name="name">设置项全名，写进消息。</param>
+    /// <param name="config">本次请求的生效配置。</param>
+    /// <param name="hint">「怎么改」的提示，接在消息冒号之后。</param>
+    private static void RequireNonNegative(long? value, string name, AxiosConfig config, string hint)
+    {
+        if (value is < 0)
         {
-            throw AxiosException.InvalidOption(
-                $"TotalTimeout 不能为负（当前 {totalTimeout}）：不设总预算请设为 null（或 TimeSpan.Zero），"
-                + "要限制整条请求（含重试 / 端点 / 对冲）请给一个正值。",
-                config);
+            throw AxiosException.InvalidOption($"{name} 不能为负（当前 {value}）：{hint}", config);
+        }
+    }
+
+    /// <summary>时长字段不得为负。</summary>
+    /// <param name="value">待校验值；<c>null</c> 表示未设置，放行。</param>
+    /// <param name="name">设置项全名，写进消息。</param>
+    /// <param name="config">本次请求的生效配置。</param>
+    /// <param name="hint">「怎么改」的提示，接在消息冒号之后。</param>
+    private static void RequireNonNegative(TimeSpan? value, string name, AxiosConfig config, string hint)
+    {
+        if (value is { } duration && duration < TimeSpan.Zero)
+        {
+            throw AxiosException.InvalidOption($"{name} 不能为负（当前 {duration}）：{hint}", config);
+        }
+    }
+
+    /// <summary>计数字段不得小于给定下限。</summary>
+    /// <param name="value">待校验值。</param>
+    /// <param name="minimum">允许的最小值。</param>
+    /// <param name="name">设置项全名，写进消息。</param>
+    /// <param name="config">本次请求的生效配置。</param>
+    /// <param name="hint">「怎么改」的提示，接在消息冒号之后。</param>
+    private static void RequireAtLeast(long value, long minimum, string name, AxiosConfig config, string hint)
+    {
+        if (value < minimum)
+        {
+            throw AxiosException.InvalidOption($"{name} 必须 >= {minimum}（当前 {value}）：{hint}", config);
+        }
+    }
+
+    /// <summary>时长字段必须为正（<c>null</c> 表示未设置，放行）。</summary>
+    /// <param name="value">待校验值。</param>
+    /// <param name="name">设置项全名，写进消息。</param>
+    /// <param name="config">本次请求的生效配置。</param>
+    /// <param name="hint">「怎么改」的提示，接在消息冒号之后。</param>
+    private static void RequirePositive(TimeSpan? value, string name, AxiosConfig config, string hint)
+    {
+        if (value is { } duration && duration <= TimeSpan.Zero)
+        {
+            throw AxiosException.InvalidOption($"{name} 必须 > 0（当前 {duration}）：{hint}", config);
         }
     }
 
@@ -164,28 +212,22 @@ public sealed partial class AxiosClient
     private static void ValidateLimits(AxiosConfig config)
     {
         var limits = config.LimitsOrNull;
-        var maxRate = config.TransportOrNull?.MaxRate;
 
-        if (maxRate is < 0)
-        {
-            throw AxiosException.InvalidOption($"Transport.MaxRate 不能为负（当前 {maxRate}）：要不限速请设为 null（0 等价于不限速）。", config);
-        }
+        RequireNonNegative(
+            config.TransportOrNull?.MaxRate,
+            "Transport.MaxRate",
+            config,
+            "要不限速请设为 null（0 等价于不限速）。");
 
-        if (limits?.MaxResponseBytes is < 0)
-        {
-            throw AxiosException.InvalidOption($"Limits.MaxResponseBytes 不能为负（当前 {limits.MaxResponseBytes}）：不限制请设为 null。", config);
-        }
-
-        if (limits?.MaxRequestBytes is < 0)
-        {
-            throw AxiosException.InvalidOption($"Limits.MaxRequestBytes 不能为负（当前 {limits.MaxRequestBytes}）：不限制请设为 null。", config);
-        }
+        RequireNonNegative(limits?.MaxResponseBytes, "Limits.MaxResponseBytes", config, "不限制请设为 null。");
+        RequireNonNegative(limits?.MaxRequestBytes, "Limits.MaxRequestBytes", config, "不限制请设为 null。");
 
         // 并发上限 / 排队深度在构造期由 AxiosClientOptions 校验，这里只剩排队等待时长。
-        if (config.ResilienceOrNull?.Concurrency.QueueTimeout is { } queueTimeout && queueTimeout < TimeSpan.Zero)
-        {
-            throw AxiosException.InvalidOption($"Resilience.Concurrency.QueueTimeout 不能为负（当前 {queueTimeout}）：要不排队请设为 TimeSpan.Zero，要一直等请设为 null。", config);
-        }
+        RequireNonNegative(
+            config.ResilienceOrNull?.Concurrency.QueueTimeout,
+            "Resilience.Concurrency.QueueTimeout",
+            config,
+            "要不排队请设为 TimeSpan.Zero，要一直等请设为 null。");
 
         // 分帧上限：0 没有「不限制」语义，越界在发送前就报。
         if (limits?.MaxStreamFrameBytes is int frameLength
@@ -207,22 +249,21 @@ public sealed partial class AxiosClient
         // 自定义策略只能校验 MaxRetries，内置实现连等待时间一起校验。
         if (config.RetryOrNull?.Policy is { } retry)
         {
-            if (retry.MaxRetries < 0)
-            {
-                throw AxiosException.InvalidOption($"重试次数 MaxRetries 不能为负（当前 {retry.MaxRetries}）：不重试请设为 0 或不要设置 Resilience.Retry.Policy。", config);
-            }
+            RequireNonNegative(
+                retry.MaxRetries,
+                "重试次数 MaxRetries",
+                config,
+                "不重试请设为 0 或不要设置 Resilience.Retry.Policy。");
 
             if (retry is RetryPolicy policy)
             {
-                if (policy.Delay < TimeSpan.Zero)
-                {
-                    throw AxiosException.InvalidOption($"重试间隔 Delay 不能为负（当前 {policy.Delay}）：要立即重试请设为 TimeSpan.Zero。", config);
-                }
+                RequireNonNegative(policy.Delay, "重试间隔 Delay", config, "要立即重试请设为 TimeSpan.Zero。");
 
-                if (policy.MaxDelay < TimeSpan.Zero)
-                {
-                    throw AxiosException.InvalidOption($"重试间隔上限 MaxDelay 不能为负（当前 {policy.MaxDelay}）：不封顶请设为一个较大的值（上限约 49.7 天）。", config);
-                }
+                RequireNonNegative(
+                    policy.MaxDelay,
+                    "重试间隔上限 MaxDelay",
+                    config,
+                    "不封顶请设为一个较大的值（上限约 49.7 天）。");
 
                 // MaxDelay 超过计时器范围直接报错，不截断。
                 if (policy.MaxDelay > Timeouts.Max)
@@ -243,11 +284,7 @@ public sealed partial class AxiosClient
         // 对冲：分支数与起跑延迟的取值范围。
         if (config.HedgingOrNull is { } hedging)
         {
-            if (hedging.MaxHedges < 0)
-            {
-                throw AxiosException.InvalidOption(
-                    $"对冲分支数 MaxHedges 不能为负（当前 {hedging.MaxHedges}）：不对冲请设为 0。", config);
-            }
+            RequireNonNegative(hedging.MaxHedges, "对冲分支数 MaxHedges", config, "不对冲请设为 0。");
 
             if (hedging.MaxHedges > AxiosConfig.HedgingSettings.MaxHedgesLimit)
             {
@@ -256,11 +293,7 @@ public sealed partial class AxiosClient
                     + "再多分支追不回延迟，只会把下游打满。", config);
             }
 
-            if (hedging.Delay < TimeSpan.Zero)
-            {
-                throw AxiosException.InvalidOption(
-                    $"对冲起跑延迟 Delay 不能为负（当前 {hedging.Delay}）：要同时起跑请设为 TimeSpan.Zero。", config);
-            }
+            RequireNonNegative(hedging.Delay, "对冲起跑延迟 Delay", config, "要同时起跑请设为 TimeSpan.Zero。");
 
             if (hedging.Delay > Timeouts.Max)
             {
@@ -322,12 +355,11 @@ public sealed partial class AxiosClient
         // 备用端点健康记忆的取值范围。
         if (config.FailoverOrNull is { } failoverHealth)
         {
-            if (failoverHealth.FailureThreshold < 0)
-            {
-                throw AxiosException.InvalidOption(
-                    $"备用端点健康阈值 Failover.FailureThreshold 不能为负（当前 {failoverHealth.FailureThreshold}）："
-                    + "0 表示关闭健康记忆，不记忆请设为 0 或把 Cooldown 设为 TimeSpan.Zero。", config);
-            }
+            RequireNonNegative(
+                failoverHealth.FailureThreshold,
+                "备用端点健康阈值 Failover.FailureThreshold",
+                config,
+                "0 表示关闭健康记忆，不记忆请设为 0 或把 Cooldown 设为 TimeSpan.Zero。");
 
             if (failoverHealth.Cooldown < TimeSpan.Zero || failoverHealth.MaxCooldown < TimeSpan.Zero)
             {
@@ -344,37 +376,31 @@ public sealed partial class AxiosClient
         // 熔断策略的取值范围。
         if (config.CircuitOrNull?.Policy is CircuitBreaker breaker)
         {
-            if (breaker.FailureThreshold < 1)
-            {
-                throw AxiosException.InvalidOption(
-                    $"熔断阈值 FailureThreshold 必须 >= 1（当前 {breaker.FailureThreshold}）："
-                    + "它表示「连续多少次下游故障后打开熔断」，不熔断请把 Resilience.Circuit.Policy 设为 null。",
-                    config);
-            }
+            RequireAtLeast(
+                breaker.FailureThreshold,
+                1,
+                "熔断阈值 FailureThreshold",
+                config,
+                "它表示「连续多少次下游故障后打开熔断」，不熔断请把 Resilience.Circuit.Policy 设为 null。");
 
-            if (breaker.HalfOpenAttempts < 1)
-            {
-                throw AxiosException.InvalidOption(
-                    $"半开探测名额 HalfOpenAttempts 必须 >= 1（当前 {breaker.HalfOpenAttempts}）："
-                    + "一个探测都不放行的熔断器永远无法恢复。",
-                    config);
-            }
+            RequireAtLeast(
+                breaker.HalfOpenAttempts,
+                1,
+                "半开探测名额 HalfOpenAttempts",
+                config,
+                "一个探测都不放行的熔断器永远无法恢复。");
 
-            if (breaker.ProbeTimeout is { } probeTimeout && probeTimeout <= TimeSpan.Zero)
-            {
-                throw AxiosException.InvalidOption(
-                    $"半开探测超时 ProbeTimeout 必须 > 0（当前 {probeTimeout}）："
-                    + "不想要看门狗请设为 null，否则探测刚放行就会被判定为卡死。",
-                    config);
-            }
+            RequirePositive(
+                breaker.ProbeTimeout,
+                "半开探测超时 ProbeTimeout",
+                config,
+                "不想要看门狗请设为 null，否则探测刚放行就会被判定为卡死。");
 
-            if (breaker.WindowSize < 0)
-            {
-                throw AxiosException.InvalidOption(
-                    $"熔断窗口容量 WindowSize 不能为负（当前 {breaker.WindowSize}）："
-                    + "关掉失败率判定、只按连续失败熔断请设为 0。",
-                    config);
-            }
+            RequireNonNegative(
+                breaker.WindowSize,
+                "熔断窗口容量 WindowSize",
+                config,
+                "关掉失败率判定、只按连续失败熔断请设为 0。");
 
             if (breaker.WindowSize > 0)
             {
@@ -398,29 +424,24 @@ public sealed partial class AxiosClient
                 }
             }
 
-            if (breaker.RecoverySuccesses < 0)
-            {
-                throw AxiosException.InvalidOption(
-                    $"慢启动恢复次数 RecoverySuccesses 不能为负（当前 {breaker.RecoverySuccesses}）："
-                    + "不要慢启动（探测一次成功即闭合）请设为 0 或 1。",
-                    config);
-            }
+            RequireNonNegative(
+                breaker.RecoverySuccesses,
+                "慢启动恢复次数 RecoverySuccesses",
+                config,
+                "不要慢启动（探测一次成功即闭合）请设为 0 或 1。");
 
-            if (breaker.MaxTrackedHosts < 1)
-            {
-                throw AxiosException.InvalidOption(
-                    $"熔断跟踪维度上限 MaxTrackedHosts 必须 >= 1（当前 {breaker.MaxTrackedHosts}）："
-                    + "上限为 0 会让每个请求都新建一条状态、记不住任何失败。",
-                    config);
-            }
+            RequireAtLeast(
+                breaker.MaxTrackedHosts,
+                1,
+                "熔断跟踪维度上限 MaxTrackedHosts",
+                config,
+                "上限为 0 会让每个请求都新建一条状态、记不住任何失败。");
 
-            if (breaker.BreakDuration <= TimeSpan.Zero)
-            {
-                throw AxiosException.InvalidOption(
-                    $"熔断冷却时长 BreakDuration 必须 > 0（当前 {breaker.BreakDuration}）："
-                    + "零冷却等价于「一打开就立刻探测」，熔断形同虚设；不熔断请把 Resilience.Circuit.Policy 设为 null。",
-                    config);
-            }
+            RequirePositive(
+                breaker.BreakDuration,
+                "熔断冷却时长 BreakDuration",
+                config,
+                "零冷却等价于「一打开就立刻探测」，熔断形同虚设；不熔断请把 Resilience.Circuit.Policy 设为 null。");
         }
     }
 

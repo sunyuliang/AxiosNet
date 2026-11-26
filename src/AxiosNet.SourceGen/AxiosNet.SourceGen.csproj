@@ -25,6 +25,7 @@
   <ItemGroup>
     <!-- 路径占位符文法与运行期 / 源生成器 / CLI 共用同一份源文件，避免三处各写一份文法。 -->
     <Compile Include="../Shared/PathGrammar.cs" Link="Shared/PathGrammar.cs" />
+    <Compile Include="../Shared/InterfaceChainOrdering.cs" Link="Shared/InterfaceChainOrdering.cs" />
   </ItemGroup>
 
 </Project>

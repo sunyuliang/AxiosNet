@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Text;
+using AxiosNet.Internal.Spec;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -751,13 +752,27 @@ namespace AxiosNet.SourceGen
 
         /// <summary>
         /// 接口链同层排序键：定义元数据名 + 各类型实参的元数据名。
-        /// 两侧不能用各自的「显示名」比较——生成器的 <c>global::Ns.IFoo&lt;string&gt;</c> 与反射的
-        /// <c>Ns.IFoo`1[[...]]</c> 在泛型接口上先后顺序不同（<c>&lt;</c> 与 <c>`</c> 的码位相反）。
+        /// 拼装规则与反射期共用 <see cref="InterfaceChainOrdering.SortKey"/>，两侧不再各自维护。
         /// </summary>
         private static string GetChainSortKey(INamedTypeSymbol type)
-            => type.TypeArguments.Length == 0
-                ? GetMetadataName(type.OriginalDefinition)
-                : GetMetadataName(type.OriginalDefinition) + "|" + string.Join("|", type.TypeArguments.Select(GetChainArgumentName));
+            => InterfaceChainOrdering.SortKey(GetMetadataName(type.OriginalDefinition), GetChainArgumentNames(type));
+
+        // 泛型实参的元数据名列表；非泛型返回空集合（排序键随之退化为定义名）。
+        private static string[] GetChainArgumentNames(INamedTypeSymbol type)
+        {
+            if (type.TypeArguments.Length == 0)
+            {
+                return Array.Empty<string>();
+            }
+
+            var names = new string[type.TypeArguments.Length];
+            for (var i = 0; i < names.Length; i++)
+            {
+                names[i] = GetChainArgumentName(type.TypeArguments[i]);
+            }
+
+            return names;
+        }
 
         // 拼泛型实参的链式名字：数组加 []、泛型递归展开，用于区分同一接口的不同闭合形态。
         private static string GetChainArgumentName(ITypeSymbol type)

@@ -150,26 +150,36 @@ public static class AxiosTelemetry
     /// <exception cref="ArgumentNullException">赋值为 <c>null</c>（要关掉请用 <see cref="AxiosTelemetrySink.Off"/>）。</exception>
     public static IAxiosTelemetrySink Sink
     {
-        get => _sink;
+        get => _current.Sink;
         set
         {
-            var installed = value ?? throw new ArgumentNullException(nameof(value));
-
-            _dispatch = new GuardedTelemetrySink(installed);
-            _sink = installed;
+            // 实现与护栏包装必须同时切换：整体替换快照，读线程不会看到半新半旧的一对。
+            _current = new TelemetryRuntime(value ?? throw new ArgumentNullException(nameof(value)));
         }
     }
 
-    /// <summary>当前实现（默认 <see cref="BuiltInTelemetrySink"/>）。</summary>
-    /// <remarks>热路径每次都读它，<c>volatile</c> 保证换了之后立刻可见。</remarks>
-    private static volatile IAxiosTelemetrySink _sink = BuiltInTelemetrySink.Instance;
+    /// <summary>当前装好的实现与派发层，整体替换，读一次即得一致的一对。</summary>
+    private sealed class TelemetryRuntime
+    {
+        internal TelemetryRuntime(IAxiosTelemetrySink sink)
+        {
+            Sink = sink;
+            Dispatch = new GuardedTelemetrySink(sink);
+        }
+
+        /// <summary>公开的实现（<see cref="Sink"/> 的返回值）。</summary>
+        internal IAxiosTelemetrySink Sink { get; }
+
+        /// <summary>护栏包装，库内派发用。</summary>
+        internal GuardedTelemetrySink Dispatch { get; }
+    }
+
+    /// <summary>当前快照（默认内置实现）。热路径每次都读它，<c>volatile</c> 保证换了之后立刻可见。</summary>
+    private static volatile TelemetryRuntime _current = new(BuiltInTelemetrySink.Instance);
 
     /// <summary>库内派发入口：<see cref="Sink"/> 的护栏包装。</summary>
     /// <remarks>调用点用它而不是 <see cref="Sink"/>，观测实现的异常不会外溢到请求路径；强类型返回让「进 / 出」配对在同一快照上判定。</remarks>
-    internal static GuardedTelemetrySink Dispatch => _dispatch;
-
-    /// <summary>派发层（随 <see cref="Sink"/> 一起替换，与 <see cref="_sink"/> 一一对应）。</summary>
-    private static volatile GuardedTelemetrySink _dispatch = new(BuiltInTelemetrySink.Instance);
+    internal static GuardedTelemetrySink Dispatch => _current.Dispatch;
 
     internal static readonly ActivitySource Source;
 
