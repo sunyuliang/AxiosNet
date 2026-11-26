@@ -11,7 +11,8 @@ namespace AxiosNet.Telemetry;
 /// <summary>库的观测点：链路（<see cref="ActivitySource"/>）、指标（<see cref="Meter"/>）与事件（<see cref="DiagnosticListener"/>）。</summary>
 /// <remarks>
 /// 前两者共用「AxiosNet」名，监听器名不同（见 <see cref="DiagnosticListenerName"/>）；量的是 URL 拼好到响应读完，
-/// 观测异常一律不影响请求结果。
+/// 观测异常一律不影响请求结果。异常边界只有派发层一处（<see cref="Sink"/> 的包装），本类型的方法不吞异常；
+/// 唯一例外是 <see cref="StartRequest"/>，那里的 catch 只负责收掉已开的 span。
 /// </remarks>
 public static class AxiosTelemetry
 {
@@ -301,14 +302,7 @@ public static class AxiosTelemetry
             return;
         }
 
-        try
-        {
-            PoolLeases.Add(1, LeaseTags(reused));
-        }
-        catch
-        {
-            // 观测异常不影响租用。
-        }
+        PoolLeases.Add(1, LeaseTags(reused));
     }
 
     /// <summary>新建了一个 origin 节点：<c>pool.endpoints.created</c> +1（不带 host，理由见 <see cref="RecordLease"/>）。</summary>
@@ -319,13 +313,7 @@ public static class AxiosTelemetry
             return;
         }
 
-        try
-        {
-            PoolEndpointsCreated.Add(1);
-        }
-        catch
-        {
-        }
+        PoolEndpointsCreated.Add(1);
     }
 
     /// <summary>驱逐了一个 origin 节点：<c>pool.endpoints.evicted</c> +1，带原因（不带 host）。</summary>
@@ -336,13 +324,7 @@ public static class AxiosTelemetry
             return;
         }
 
-        try
-        {
-            PoolEndpointsEvicted.Add(1, new KeyValuePair<string, object?>(TagEvictionReason, reason));
-        }
-        catch
-        {
-        }
+        PoolEndpointsEvicted.Add(1, new KeyValuePair<string, object?>(TagEvictionReason, reason));
     }
 
     /// <summary>把「这次租约是否复用了已有节点」写到当前 span 上（只写本库的 span）。</summary>
@@ -354,19 +336,13 @@ public static class AxiosTelemetry
             return;
         }
 
-        try
+        // 已是 "true" 则保留；新的 "false" 覆盖。
+        if (reused && activity.GetTagItem(TagEndpointReused) is not null)
         {
-            // 已是 "true" 则保留；新的 "false" 覆盖。
-            if (reused && activity.GetTagItem(TagEndpointReused) is not null)
-            {
-                return;
-            }
+            return;
+        }
 
-            activity.SetTag(TagEndpointReused, reused ? "true" : "false");
-        }
-        catch
-        {
-        }
+        activity.SetTag(TagEndpointReused, reused ? "true" : "false");
     }
 
     /// <summary>连接复用事件的标签集：复用与新建出口各一个取值。</summary>
@@ -412,6 +388,7 @@ public static class AxiosTelemetry
 
         Activity? activity = null;
 
+        // span 所有权的边界：本方法只交出「收尾由调用方负责」的 span，异常路径上已开的那一个必须就地收掉。
         try
         {
             if (Source.HasListeners())
@@ -430,15 +407,16 @@ public static class AxiosTelemetry
                 Emit(RequestStartEventName, new AxiosRequestStartEvent(config.Method, uri, config));
             }
         }
-        catch
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            // 开 span 失败即当无遥测，请求照发。
+            activity?.Dispose();
+            return null;
         }
 
         return activity;
     }
 
-    /// <summary>收掉 span（等价于 <see cref="Activity.Stop"/>），吞掉监听者抛出的异常。</summary>
+    /// <summary>收掉 span（等价于 <see cref="Activity.Stop"/>）；监听者抛出的异常不经这里处理。</summary>
     internal static void StopRequest(Activity? activity)
     {
         if (activity is null)
@@ -446,13 +424,7 @@ public static class AxiosTelemetry
             return;
         }
 
-        try
-        {
-            activity.Dispose();
-        }
-        catch
-        {
-        }
+        activity.Dispose();
     }
 
     /// <summary>请求体字节数（长度未知的流式正文不写这个标签，不猜）。</summary>
@@ -463,13 +435,7 @@ public static class AxiosTelemetry
             return;
         }
 
-        try
-        {
-            activity.SetTag(TagRequestBodySize, value);
-        }
-        catch
-        {
-        }
+        activity.SetTag(TagRequestBodySize, value);
     }
 
     /// <summary>请求成功结束：补状态码 / 协议版本 / 响应字节数，记录耗时指标，发出 <see cref="RequestStopEventName"/>。</summary>
@@ -480,43 +446,37 @@ public static class AxiosTelemetry
         long startTimestamp,
         Activity? activity)
     {
-        try
+        var elapsed = ElapsedSeconds(startTimestamp);
+
+        // 4xx / 5xx 即使被 validateStatus 接受也算 HTTP 层错误。
+        var errorType = response.Status >= 400 ? response.Status.ToString(CultureInfo.InvariantCulture) : null;
+
+        if (activity is not null)
         {
-            var elapsed = ElapsedSeconds(startTimestamp);
+            activity.SetTag(TagStatusCode, response.Status);
 
-            // 4xx / 5xx 即使被 validateStatus 接受也算 HTTP 层错误。
-            var errorType = response.Status >= 400 ? response.Status.ToString(CultureInfo.InvariantCulture) : null;
-
-            if (activity is not null)
+            if (response.ProtocolVersion is { } protocolVersion)
             {
-                activity.SetTag(TagStatusCode, response.Status);
-
-                if (response.ProtocolVersion is { } protocolVersion)
-                {
-                    activity.SetTag(TagProtocolVersion, ProtocolVersionTag(protocolVersion));
-                }
-
-                if (response.BodyBytes is long bodyBytes)
-                {
-                    activity.SetTag(TagResponseBodySize, bodyBytes);
-                }
-
-                if (errorType is not null)
-                {
-                    activity.SetTag(TagErrorType, errorType);
-                    activity.SetStatus(ActivityStatusCode.Error, $"HTTP {response.Status}");
-                }
+                activity.SetTag(TagProtocolVersion, ProtocolVersionTag(protocolVersion));
             }
 
-            RecordDuration(config, uri, response.Status, errorType, elapsed);
-
-            if (Listener.IsEnabled(RequestStopEventName))
+            if (response.BodyBytes is long bodyBytes)
             {
-                Emit(RequestStopEventName, new AxiosRequestStopEvent(config.Method, uri, response, TimeSpan.FromSeconds(elapsed)));
+                activity.SetTag(TagResponseBodySize, bodyBytes);
+            }
+
+            if (errorType is not null)
+            {
+                activity.SetTag(TagErrorType, errorType);
+                activity.SetStatus(ActivityStatusCode.Error, $"HTTP {response.Status}");
             }
         }
-        catch
+
+        RecordDuration(config, uri, response.Status, errorType, elapsed);
+
+        if (Listener.IsEnabled(RequestStopEventName))
         {
+            Emit(RequestStopEventName, new AxiosRequestStopEvent(config.Method, uri, response, TimeSpan.FromSeconds(elapsed)));
         }
     }
 
@@ -533,171 +493,147 @@ public static class AxiosTelemetry
             return;
         }
 
-        try
+        var elapsed = ElapsedSeconds(startTimestamp);
+        var axiosException = exception as AxiosException;
+        var statusCode = axiosException?.Status;
+        var errorType = ErrorTypeOf(exception, statusCode);
+
+        if (activity is not null)
         {
-            var elapsed = ElapsedSeconds(startTimestamp);
-            var axiosException = exception as AxiosException;
-            var statusCode = axiosException?.Status;
-            var errorType = ErrorTypeOf(exception, statusCode);
-
-            if (activity is not null)
+            if (statusCode is int status)
             {
-                if (statusCode is int status)
-                {
-                    activity.SetTag(TagStatusCode, status);
-                }
-
-                // 失败也可能带响应（4xx / 5xx）：协议版本与正文大小照样记。
-                if (axiosException?.Response is { } failedResponse)
-                {
-                    if (failedResponse.ProtocolVersion is { } protocolVersion)
-                    {
-                        activity.SetTag(TagProtocolVersion, ProtocolVersionTag(protocolVersion));
-                    }
-
-                    if (failedResponse.BodyBytes is long bodyBytes)
-                    {
-                        activity.SetTag(TagResponseBodySize, bodyBytes);
-                    }
-                }
-
-                activity.SetTag(TagErrorType, errorType);
-
-                // 库错误码另写 axiosnet.error.code。
-                if (axiosException?.Code is string code)
-                {
-                    activity.SetTag(TagErrorCode, code);
-                }
-
-                activity.SetStatus(ActivityStatusCode.Error, exception.Message);
-
-                // net6.0 无 Activity.AddException，手工记 exception 事件。
-                activity.AddEvent(new ActivityEvent(
-                    "exception",
-                    tags: new ActivityTagsCollection
-                    {
-                        { "exception.type", exception.GetType().FullName },
-                        { "exception.message", exception.Message },
-                        { "exception.stacktrace", exception.StackTrace }
-                    }));
+                activity.SetTag(TagStatusCode, status);
             }
 
-            RecordDuration(config, uri, statusCode, errorType, elapsed);
-
-            if (Listener.IsEnabled(RequestFailedEventName))
+            // 失败也可能带响应（4xx / 5xx）：协议版本与正文大小照样记。
+            if (axiosException?.Response is { } failedResponse)
             {
-                Emit(RequestFailedEventName, new AxiosRequestFailedEvent(config.Method, uri, exception, axiosException?.Code, statusCode, TimeSpan.FromSeconds(elapsed)));
+                if (failedResponse.ProtocolVersion is { } protocolVersion)
+                {
+                    activity.SetTag(TagProtocolVersion, ProtocolVersionTag(protocolVersion));
+                }
+
+                if (failedResponse.BodyBytes is long bodyBytes)
+                {
+                    activity.SetTag(TagResponseBodySize, bodyBytes);
+                }
             }
+
+            activity.SetTag(TagErrorType, errorType);
+
+            // 库错误码另写 axiosnet.error.code。
+            if (axiosException?.Code is string code)
+            {
+                activity.SetTag(TagErrorCode, code);
+            }
+
+            activity.SetStatus(ActivityStatusCode.Error, exception.Message);
+
+            // net6.0 无 Activity.AddException，手工记 exception 事件。
+            activity.AddEvent(new ActivityEvent(
+                "exception",
+                tags: new ActivityTagsCollection
+                {
+                    { "exception.type", exception.GetType().FullName },
+                    { "exception.message", exception.Message },
+                    { "exception.stacktrace", exception.StackTrace }
+                }));
         }
-        catch
+
+        RecordDuration(config, uri, statusCode, errorType, elapsed);
+
+        if (Listener.IsEnabled(RequestFailedEventName))
         {
+            Emit(RequestFailedEventName, new AxiosRequestFailedEvent(config.Method, uri, exception, axiosException?.Code, statusCode, TimeSpan.FromSeconds(elapsed)));
         }
     }
 
     /// <summary>闸门拒绝了这次尝试（队列满 / 排队超时）：只记一条低基数计数，不写 span、不发事件。</summary>
     internal static void GateRejected(AxiosConfig config, string reason)
     {
-        try
+        // 不在主路径的开关分支内，自己判一次。
+        if (!IsEnabled(config) || !GateRejections.Enabled)
         {
-            // 不在主路径的开关分支内，自己判一次。
-            if (!IsEnabled(config) || !GateRejections.Enabled)
-            {
-                return;
-            }
+            return;
+        }
 
-            var tags = new TagList { { TagGateReason, reason } };
-            GateRejections.Add(1, tags);
-        }
-        catch
-        {
-        }
+        var tags = new TagList { { TagGateReason, reason } };
+        GateRejections.Add(1, tags);
     }
 
     /// <summary>一次尝试失败后决定重试：重试计数 +1，在 span 上写 <c>http.request.resend_count</c> 与 <c>retry</c> 事件，并发出 <see cref="RetryEventName"/>。</summary>
     internal static void RequestRetried(in AxiosRetryContext context, Uri uri)
     {
-        try
+        // 不在主路径的开关分支内，自己判一次。
+        if (!IsEnabled(context.Config))
         {
-            // 不在主路径的开关分支内，自己判一次。
-            if (!IsEnabled(context.Config))
-            {
-                return;
-            }
-
-            var activity = Activity.Current;
-            var hasSpan = activity is not null && ReferenceEquals(activity.Source, Source);
-            var hasEvent = Listener.IsEnabled(RetryEventName);
-            var hasMetric = Retries.Enabled;
-
-            if (!hasSpan && !hasEvent && !hasMetric)
-            {
-                return;
-            }
-
-            var method = context.Method?.Method ?? "GET";
-
-            // 有状态码用状态码，否则用库错误码。
-            var errorType = ErrorTypeOf(context.Exception, context.StatusCode);
-
-            var retryReason = RetryReasonOf(context.Exception, context.StatusCode);
-
-            if (hasMetric)
-            {
-                var tags = new TagList
-                {
-                    { TagMethod, method },
-                    { TagServerAddress, HostOf(uri) },
-                    { TagServerPort, uri.Port },
-                    { TagErrorType, errorType },
-                    { TagRetryReason, retryReason }
-                };
-                Retries.Add(1, tags);
-            }
-
-            if (hasSpan)
-            {
-                activity!.SetTag(TagResendCount, context.Attempt);
-                activity.AddEvent(new ActivityEvent(
-                    "retry",
-                    tags: new ActivityTagsCollection
-                    {
-                        { "http.request.resend_count", context.Attempt },
-                        { "axiosnet.retry.delay_ms", context.Delay.TotalMilliseconds },
-                        { "axiosnet.retry.reason", retryReason },
-                        { TagStatusCode, context.StatusCode },
-                        { TagErrorType, errorType },
-                        // 事件自带主机标签。
-                        { TagServerAddress, HostOf(uri) },
-                        { TagServerPort, uri.Port }
-                    }));
-            }
-
-            if (hasEvent)
-            {
-                Emit(RetryEventName, context);
-            }
+            return;
         }
-        catch
+
+        var activity = Activity.Current;
+        var hasSpan = activity is not null && ReferenceEquals(activity.Source, Source);
+        var hasEvent = Listener.IsEnabled(RetryEventName);
+        var hasMetric = Retries.Enabled;
+
+        if (!hasSpan && !hasEvent && !hasMetric)
         {
+            return;
+        }
+
+        var method = context.Method?.Method ?? "GET";
+
+        // 有状态码用状态码，否则用库错误码。
+        var errorType = ErrorTypeOf(context.Exception, context.StatusCode);
+
+        var retryReason = RetryReasonOf(context.Exception, context.StatusCode);
+
+        if (hasMetric)
+        {
+            var tags = new TagList
+            {
+                { TagMethod, method },
+                { TagServerAddress, HostOf(uri) },
+                { TagServerPort, uri.Port },
+                { TagErrorType, errorType },
+                { TagRetryReason, retryReason }
+            };
+            Retries.Add(1, tags);
+        }
+
+        if (hasSpan)
+        {
+            activity!.SetTag(TagResendCount, context.Attempt);
+            activity.AddEvent(new ActivityEvent(
+                "retry",
+                tags: new ActivityTagsCollection
+                {
+                    { "http.request.resend_count", context.Attempt },
+                    { "axiosnet.retry.delay_ms", context.Delay.TotalMilliseconds },
+                    { "axiosnet.retry.reason", retryReason },
+                    { TagStatusCode, context.StatusCode },
+                    { TagErrorType, errorType },
+                    // 事件自带主机标签。
+                    { TagServerAddress, HostOf(uri) },
+                    { TagServerPort, uri.Port }
+                }));
+        }
+
+        if (hasEvent)
+        {
+            Emit(RetryEventName, context);
         }
     }
 
     /// <summary>共享重试预算拒绝了这次重试：<c>retry.budget_exhausted</c> +1，无标签，不写 span / 不发事件。</summary>
     internal static void RetryBudgetRefused(AxiosConfig? config)
     {
-        try
+        // 本次请求关了遥测就不记。
+        if (!IsEnabled(config) || !RetryBudgetExhausted.Enabled)
         {
-            // 本次请求关了遥测就不记。
-            if (!IsEnabled(config) || !RetryBudgetExhausted.Enabled)
-            {
-                return;
-            }
+            return;
+        }
 
-            RetryBudgetExhausted.Add(1);
-        }
-        catch
-        {
-        }
+        RetryBudgetExhausted.Add(1);
     }
 
     /// <summary>缓存命中：直接交付存储里的条目，或单飞跟随者拿到了领导者的结果（这次请求都没发出）。</summary>
@@ -722,30 +658,18 @@ public static class AxiosTelemetry
             return;
         }
 
-        try
-        {
-            activity.SetTag(TagCacheRevalidated, "true");
-        }
-        catch
-        {
-        }
+        activity.SetTag(TagCacheRevalidated, "true");
     }
 
     /// <summary>累加缓存计数：自行判一次观测开关与计数器启用状态。</summary>
     private static void AddCacheCount(Counter<long> counter, AxiosConfig? config)
     {
-        try
+        if (!IsEnabled(config) || !counter.Enabled)
         {
-            if (!IsEnabled(config) || !counter.Enabled)
-            {
-                return;
-            }
+            return;
+        }
 
-            counter.Add(1);
-        }
-        catch
-        {
-        }
+        counter.Add(1);
     }
 
     /// <summary>尝试审计是否值得运行：本次未关遥测，且至少有一个尝试事件订阅者；<c>false</c> 时 <see cref="Attempt.Audit"/> 直接走下一环。</summary>
@@ -761,21 +685,15 @@ public static class AxiosTelemetry
             return;
         }
 
-        try
-        {
-            Emit(AttemptStopEventName, new AxiosAttemptEvent(
-                context.AttemptNumber,
-                context.EndpointIndex,
-                context.Config.Method,
-                context.Uri,
-                TimeSpan.FromSeconds(ElapsedSeconds(startTimestamp)),
-                status,
-                errorCode: null,
-                exception: null));
-        }
-        catch
-        {
-        }
+        Emit(AttemptStopEventName, new AxiosAttemptEvent(
+            context.AttemptNumber,
+            context.EndpointIndex,
+            context.Config.Method,
+            context.Uri,
+            TimeSpan.FromSeconds(ElapsedSeconds(startTimestamp)),
+            status,
+            errorCode: null,
+            exception: null));
     }
 
     /// <summary>一次尝试失败：发出 <see cref="AttemptFailedEventName"/>（带错误码 / 状态码与本次尝试耗时）。</summary>
@@ -786,22 +704,16 @@ public static class AxiosTelemetry
             return;
         }
 
-        try
-        {
-            var axiosException = exception as AxiosException;
-            Emit(AttemptFailedEventName, new AxiosAttemptEvent(
-                context.AttemptNumber,
-                context.EndpointIndex,
-                context.Config.Method,
-                context.Uri,
-                TimeSpan.FromSeconds(ElapsedSeconds(startTimestamp)),
-                axiosException?.Status,
-                axiosException?.Code,
-                exception));
-        }
-        catch
-        {
-        }
+        var axiosException = exception as AxiosException;
+        Emit(AttemptFailedEventName, new AxiosAttemptEvent(
+            context.AttemptNumber,
+            context.EndpointIndex,
+            context.Config.Method,
+            context.Uri,
+            TimeSpan.FromSeconds(ElapsedSeconds(startTimestamp)),
+            axiosException?.Status,
+            axiosException?.Code,
+            exception));
     }
 
     /// <summary>发一条诊断事件；调用前必须先用 <see cref="DiagnosticListener.IsEnabled(string)"/> 判定（载荷有分配）。</summary>
@@ -813,14 +725,7 @@ public static class AxiosTelemetry
             + "DiagnosticSource.Write 要求「载荷类型静态可发现」是针对反射式订阅方的约束，此处不适用。")]
     private static void Emit(string name, object payload)
     {
-        try
-        {
-            Listener.Write(name, payload);
-        }
-        catch
-        {
-            // 订阅方异常不影响请求。
-        }
+        Listener.Write(name, payload);
     }
 
     /// <summary>span 的静态标签：方法 / 协议 / 主机 / 端口 / 路径（+ 完整 URL）。</summary>

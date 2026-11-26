@@ -249,7 +249,7 @@ public sealed class TelemetrySinkTests
         Assert.True(sink.EventsSeen > 0);
     }
 
-    /// <summary>句柄绕过派发层直连实现：开观测抛异常时退化成「本次没有观测」，请求照常发。</summary>
+    /// <summary>开观测抛异常时退化成「本次没有观测」，请求照常发。</summary>
     [Fact]
     public async Task SinkThrowingOnStartRequest_DoesNotAffectTheRequest()
     {
@@ -273,6 +273,40 @@ public sealed class TelemetrySinkTests
         Assert.Equal(200, status);
         Assert.Equal(1, sink.Starts);
         Assert.Equal(0, sink.Stops);
+    }
+
+    /// <summary>
+    /// 句柄上的两个投递口（<see cref="AxiosRequestTrace.SetRequestBodySize"/> / <see cref="AxiosRequestTrace.Stop"/>）
+    /// 同样受派发层护栏：实现在这两处抛异常，请求照常是 200，且两处各被调到一次。
+    /// </summary>
+    /// <remarks>
+    /// 句柄在派发层被改绑到护栏上再交出去；改回「句柄直连实现」，正文大小那一步就没有兜底，
+    /// 异常会当场把这条请求换成 <see cref="InvalidOperationException"/>。
+    /// </remarks>
+    [Fact]
+    public async Task SinkThrowingOnTraceCalls_DoesNotAffectTheRequest()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+
+        var original = AxiosTelemetry.Sink;
+        var sink = new ThrowingTraceSink();
+        using var client = new AxiosClient();
+        int status;
+        try
+        {
+            AxiosTelemetry.Sink = sink;
+
+            // 带正文才有 Content-Length，SetRequestBodySize 才会被调。
+            status = (await client.PostAsync(server.Url + "x", new StringContent("{}"))).Status;
+        }
+        finally
+        {
+            AxiosTelemetry.Sink = original;
+        }
+
+        Assert.Equal(200, status);
+        Assert.Equal(1, sink.Sizes);
+        Assert.Equal(1, sink.Stops);
     }
 
     /// <summary>读实例私有 <see cref="int"/> 字段（护栏用例钉的是「库自己怎么记数」，只能这么看）。</summary>
@@ -494,7 +528,7 @@ public sealed class TelemetrySinkTests
         }
     }
 
-    /// <summary>违约实现：开观测那一步抛异常（句柄路径绕过派发层，靠调用点的 try/catch 兜）。</summary>
+    /// <summary>违约实现：开观测那一步抛异常。</summary>
     private sealed class ThrowingStartSink : AxiosTelemetrySink
     {
         private int _starts;
@@ -518,6 +552,39 @@ public sealed class TelemetrySinkTests
 
         /// <inheritdoc />
         public override void StopRequest(in AxiosRequestTrace trace) => Interlocked.Increment(ref _stops);
+    }
+
+    /// <summary>违约实现：句柄上的两个投递口都抛异常。</summary>
+    private sealed class ThrowingTraceSink : AxiosTelemetrySink
+    {
+        private int _sizes;
+        private int _stops;
+
+        /// <summary><see cref="SetRequestBodySize"/> 被调用几次。</summary>
+        public int Sizes => Volatile.Read(ref _sizes);
+
+        /// <summary><see cref="StopRequest"/> 被调用几次。</summary>
+        public int Stops => Volatile.Read(ref _stops);
+
+        /// <inheritdoc />
+        public override bool IsEnabled(AxiosConfig? config) => true;
+
+        /// <inheritdoc />
+        public override AxiosRequestTrace StartRequest(AxiosConfig config, Uri uri) => new(this, state: null);
+
+        /// <inheritdoc />
+        public override void StopRequest(in AxiosRequestTrace trace)
+        {
+            Interlocked.Increment(ref _stops);
+            throw new InvalidOperationException("观测实现违约");
+        }
+
+        /// <inheritdoc />
+        public override void SetRequestBodySize(in AxiosRequestTrace trace, long? size)
+        {
+            Interlocked.Increment(ref _sizes);
+            throw new InvalidOperationException("观测实现违约");
+        }
     }
 
     /// <summary>轮询等待某个条件成立；超时即失败（带上在等什么）。</summary>

@@ -33,6 +33,7 @@ internal sealed class GuardedTelemetrySink : IAxiosTelemetrySink
     }
 
     /// <summary>开观测；违约实现抛异常时退化成「本次没有观测」。</summary>
+    /// <remarks>交出的句柄绑在护栏上，调用方直接走 <see cref="AxiosRequestTrace.Stop"/> / <see cref="AxiosRequestTrace.SetRequestBodySize"/> 也不绕过异常边界。</remarks>
     /// <param name="config">本次请求的生效配置。</param>
     /// <param name="uri">最终 URL。</param>
     /// <returns>观测句柄；抛异常时为 <c>default</c>。</returns>
@@ -40,7 +41,10 @@ internal sealed class GuardedTelemetrySink : IAxiosTelemetrySink
     {
         try
         {
-            return _inner.StartRequest(config, uri);
+            var trace = _inner.StartRequest(config, uri);
+
+            // 句柄里的实现换成护栏自己：收尾与正文大小同样走本类。
+            return trace.IsActive ? new AxiosRequestTrace(this, trace.State) : default;
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {

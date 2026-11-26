@@ -434,16 +434,10 @@ public sealed partial class AxiosClient
 
                 template.Content = content;
 
-                // 长度已知时写进 span；句柄绕过派发层，要兜异常。
+                // 长度已知时写进 span（句柄经派发层转发，异常边界在护栏）。
                 if (telemetryTrace.IsActive)
                 {
-                    try
-                    {
-                        telemetryTrace.SetRequestBodySize(content.Headers.ContentLength);
-                    }
-                    catch (Exception ex) when (ex is not OutOfMemoryException)
-                    {
-                    }
+                    telemetryTrace.SetRequestBodySize(content.Headers.ContentLength);
                 }
             }
 
@@ -589,7 +583,7 @@ public sealed partial class AxiosClient
         /// <returns>带上句柄的副本。</returns>
         public TelemetryScope WithTrace(AxiosRequestTrace trace) => new(_sink, _entered, trace);
 
-        /// <summary>先退出观测、再收 span；span 收尾的异常被吞掉，退出观测的异常照常上抛。</summary>
+        /// <summary>先退出观测、再收 span；两者的异常都由派发层吞掉。</summary>
         public void Dispose()
         {
             try
@@ -601,14 +595,7 @@ public sealed partial class AxiosClient
             }
             finally
             {
-                try
-                {
-                    _trace.Stop();
-                }
-                catch (Exception ex) when (ex is not OutOfMemoryException)
-                {
-                    // 吞掉 span 收尾异常。
-                }
+                _trace.Stop();
             }
         }
     }
