@@ -501,9 +501,6 @@ public sealed class StreamingTests
 
         // Data 的真身就是分帧器本身，溢写缓冲的存留只能从这里看（枚举器由它自己创建）。
         var frames = response.Data!;
-        var spill = typeof(JsonStreamEnumerable<object>).GetField(
-            "_elementSpill",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
 
         await using var enumerator = frames.GetAsyncEnumerator();
 
@@ -512,7 +509,7 @@ public sealed class StreamingTests
         Assert.True(first.GetRawText().Length > 512 * 1024, "首个元素应当足够大，才能压到溢写缓冲。");
 
         // 该元素收尾后，峰值缓冲不该继续挂在分帧器上（后面还有整条流要读）。
-        var retained = (byte[]?)spill.GetValue(frames);
+        var retained = FrameField<byte[]?>(frames, "_elementSpill");
         var withinBound = retained is null || retained.Length <= 64 * 1024;
         Assert.True(
             withinBound,
@@ -539,16 +536,13 @@ public sealed class StreamingTests
         var response = await client.RequestStreamAsync(new AnyRequest_StreamFrameLimit(), AxiosStreamFormat.ServerSentEvents);
 
         var frames = response.Data!;
-        var frameBuffer = typeof(JsonStreamEnumerable<string>).GetField(
-            "_frameBuffer",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
 
         await using var enumerator = frames.GetAsyncEnumerator();
 
         Assert.True(await enumerator.MoveNextAsync());
         Assert.Equal(big.Length, enumerator.Current.Length);
 
-        var buffer = (byte[])frameBuffer.GetValue(frames)!;
+        var buffer = FrameField<byte[]>(frames, "_frameBuffer");
         Assert.True(
             buffer.Length <= 64 * 1024,
             $"超大帧读完后帧缓冲仍保留 {buffer.Length:N0} 字节容量——整条流会一直拖着它。");
@@ -557,6 +551,18 @@ public sealed class StreamingTests
         Assert.True(await enumerator.MoveNextAsync());
         Assert.Equal("small", enumerator.Current);
         Assert.False(await enumerator.MoveNextAsync());
+    }
+
+    /// <summary>读分帧器的私有状态：状态机已拆到 <c>_reader</c> 指的那个实现里，先顺着它找到那一层。</summary>
+    /// <param name="frames">分帧器（即 <c>Response.Data</c>）。</param>
+    /// <param name="name">字段名。</param>
+    private static T FrameField<T>(object frames, string name)
+    {
+        const System.Reflection.BindingFlags Flags =
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+
+        var reader = frames.GetType().GetField("_reader", Flags)!.GetValue(frames)!;
+        return (T)reader.GetType().GetField(name, Flags)!.GetValue(reader)!;
     }
 
     [Fact]
