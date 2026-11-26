@@ -55,20 +55,7 @@ public sealed partial class AxiosConfig
         public Func<object?, string>? QueryEncoder
         {
             get => _valueTextState?.QueryEncoder;
-            set
-            {
-                if (value is null)
-                {
-                    if (_valueTextState is not null)
-                    {
-                        _valueTextState.QueryEncoder = null;
-                    }
-
-                    return;
-                }
-
-                (_valueTextState ??= new ValueTextState()).QueryEncoder = value;
-            }
+            set => SetOptional(ref _valueTextState, value, static (state, v) => state.QueryEncoder = v);
         }
 
         /// <summary>表单 / multipart 字段名生成规则：参数为（父级前缀，键名），默认 <c>prefix[key]</c>；表单不走序列化器，这是字段命名的唯一入口。</summary>
@@ -76,20 +63,7 @@ public sealed partial class AxiosConfig
         public Func<string?, string, string>? FormFieldName
         {
             get => _valueTextState?.FormFieldName;
-            set
-            {
-                if (value is null)
-                {
-                    if (_valueTextState is not null)
-                    {
-                        _valueTextState.FormFieldName = null;
-                    }
-
-                    return;
-                }
-
-                (_valueTextState ??= new ValueTextState()).FormFieldName = value;
-            }
+            set => SetOptional(ref _valueTextState, value, static (state, v) => state.FormFieldName = v);
         }
 
         private AxiosCollectionFormat _collectionFormat = AxiosCollectionFormat.Brackets;

@@ -90,6 +90,13 @@ internal static class RequestContentType
     private static Encoding? ParseCharset(string mediaType, out string? unresolvedName)
     {
         unresolvedName = null;
+
+        // 不含 "charset" 字样（含 null）时不可能声明字符集：不进 BCL 解析。
+        if (mediaType is null || !SpanComparisons.ContainsIgnoreCase(mediaType, "charset"))
+        {
+            return null;
+        }
+
         if (!MediaTypeHeaderValue.TryParse(mediaType, out var parsed))
         {
             return null;
