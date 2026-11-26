@@ -186,7 +186,14 @@ internal sealed class RequestModelMetadata
         var queryCollectionFormat = ResolveQueryCollectionFormat(declaration, owner);
         var (hasStream, streamFormat) = ResolveStream(declaration, owner);
 
-        var accumulator = new BindingAccumulator(owner, "属性");
+        var memberKind = "属性";
+        var accumulator = new BindingAccumulator(owner, memberKind);
+        var context = new BindingWalkContext(
+            owner,
+            memberKind,
+            $"{modelName}.",
+            "模型没有 [Multipart]：请在类上声明 [Multipart]。",
+            "模型的请求体由全部属性装配");
 
         var parts = new List<PartBinding>();
         var seenPartNames = new HashSet<string>(StringComparer.Ordinal);
@@ -204,116 +211,10 @@ internal sealed class RequestModelMetadata
 
         foreach (var member in declaration.Members)
         {
-            if (member.Ignore)
-            {
-                if (member.HasAnyBinding)
-                {
-                    throw new InvalidOperationException(
-                        $"属性 {modelName}.{member.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / HeaderCollection / Part / Body）："
-                        + "[ApiIgnore] 的语义是「完全不绑定」，两者同用是二义性。");
-                }
-
-                // 完全排除：不进任何绑定，也不算「未标注」（不参与默认通道判定）
-                continue;
-            }
-
-            if (member.GetValue is null)
-            {
-                throw new InvalidOperationException(
-                    $"请求模型 {modelName}.{member.Name} 缺少取值实现：生成元数据不完整，请检查源生成器版本与包是否匹配。");
-            }
-
-            // 同一属性可同时绑定多处（路径 + 头 + 查询 + 请求体），按各处的 null 规则分别应用。
-            var source = new DelegateValueSource(
-                member.Name,
-                member.ValueType,
-                member.GetValue,
-                member.Description ?? $"{modelName}.{member.Name}",
-                member.Format);
-
-            if (member.Path)
-            {
-                accumulator.AddPath(source, member.PathName ?? string.Empty);
-            }
-
-            if (member.Header)
-            {
-                accumulator.AddHeader(source, member.HeaderName ?? string.Empty);
-            }
-
-            if (member.HeaderCollection)
-            {
-                accumulator.AddHeaderCollection(source);
-            }
-
-            if (member.Part)
-            {
-                if (!isMultipart)
-                {
-                    throw new InvalidOperationException(
-                        $"属性 {modelName}.{member.Name} 标注了 [Part]，但模型没有 [Multipart]：请在类上声明 [Multipart]。");
-                }
-
-                accumulator.ValidatePartFormat(source);
-
-                var display = $"{owner}.{member.Name}";
-                var explicitName = DeclarationNormalization.OptionalPartValue(member.PartName, display, nameof(PartAttribute.Name));
-
-                var name = explicitName ?? DefaultPartName(member);
-                if (!seenPartNames.Add(name))
-                {
-                    throw DuplicateBinding(declaration.ModelType, name, "Part");
-                }
-
-                parts.Add(new PartBinding(
-                    name,
-                    source,
-                    explicitName is not null,
-                    DeclarationNormalization.OptionalPartValue(member.PartFileName, display, nameof(PartAttribute.FileName)),
-                    DeclarationNormalization.OptionalPartValue(member.PartContentType, display, nameof(PartAttribute.ContentType))));
-            }
-
-            if (member.Body)
-            {
-                // 键名优先级：[Body("名")] > [JsonPropertyName] > 属性名；无参 [Body] 的 BodyName 为 null，表示整份正文。
-                accumulator.AddBody(
-                    source,
-                    member.FieldName,
-                    member.BodyName,
-                    nameFromAttribute: !string.IsNullOrWhiteSpace(member.BodyName) || member.NameFromAttribute);
-            }
-
-            if (!member.HasAnyBinding)
-            {
-                if (isMultipart)
-                {
-                    // multipart 模型：无标注属性默认按部件绑定（名字 = [JsonPropertyName] 或属性名），不参与默认通道判定
-                    var partName = DefaultPartName(member);
-                    if (!seenPartNames.Add(partName))
-                    {
-                        throw DuplicateBinding(declaration.ModelType, partName, "Part");
-                    }
-
-                    parts.Add(new PartBinding(partName, source, false, null, null));
-                    continue;
-                }
-
-                // 无标注：默认通道由 HTTP 方法决定（body 方法 → 按键名聚合；其余 → Query），键名优先 [JsonPropertyName]。
-                accumulator.AddUnannotated(source, member.FieldName, member.NameFromAttribute);
-            }
-            else if (member.Query)
-            {
-                // 已有其他绑定的属性再显式 [Query]：追加一处查询绑定
-                accumulator.AddQuery(source, member.QueryName ?? string.Empty);
-            }
+            BindingDeclarationWalker.BindMember(context, accumulator, member, parts, seenPartNames, isMultipart);
         }
 
-        if (isMultipart && accumulator.HasBody)
-        {
-            throw new InvalidOperationException(
-                $"请求模型 {modelName} 同时声明了 [Multipart] 与 [Body]（{accumulator.BodyName}）："
-                + "multipart 模型的请求体由全部属性装配，两者互斥。");
-        }
+        BindingDeclarationWalker.ValidateMultipartBody(context, accumulator, isMultipart);
 
         var plan = accumulator.Build(method, path, allowDefaultBody: !isMultipart, contentType);
 
@@ -329,10 +230,6 @@ internal sealed class RequestModelMetadata
             FailureMapper = error => RequestBindingErrors.Create(error.Config, request: null, modelName, error.Cause ?? error)
         };
     }
-
-    /// <summary>部件的默认名：<c>[JsonPropertyName]</c> / 字段名，空白时回退属性名（部件名不能为空）。</summary>
-    private static string DefaultPartName(RequestModelMemberDeclaration member)
-        => string.IsNullOrWhiteSpace(member.FieldName) ? member.Name : member.FieldName;
 
     // 类 / 属性两层编码声明的解析：属性级优先；两层都显式声明且取值不同 → ERR_BAD_OPTION_VALUE
 
@@ -478,8 +375,4 @@ internal sealed class RequestModelMetadata
                 + "只能是 NewlineDelimitedJson / ServerSentEvents / JsonArray。");
         }
     }
-
-    /// <summary>同名绑定冲突的错误：说明同名参数要合并成同一个属性。</summary>
-    private static InvalidOperationException DuplicateBinding(Type requestType, string name, string kind)
-        => new($"请求模型 {requestType.Name} 有多个 {kind} 绑定使用了同名 \"{name}\"：同名参数请合并为一个属性（集合值走 AxiosNet 的数组规则）。");
 }

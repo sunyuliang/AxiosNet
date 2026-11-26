@@ -48,26 +48,17 @@ internal sealed class RequestModelDeclaration
     public List<RequestModelMemberDeclaration> Members { get; } = new();
 }
 
-/// <summary>请求模型成员（属性）上的绑定声明。</summary>
-internal sealed class RequestModelMemberDeclaration
+/// <summary>请求模型成员（属性）上的绑定声明；绑定通道字段见 <see cref="BindingMemberDeclaration"/>。</summary>
+internal sealed class RequestModelMemberDeclaration : BindingMemberDeclaration
 {
-    public string Name { get; set; } = string.Empty;
-
     /// <summary>表单 / multipart 的默认字段名（[JsonPropertyName] 或属性名）；[Part] 未显式命名时用它。</summary>
     public string FieldName { get; set; } = string.Empty;
 
     /// <summary><see cref="FieldName"/> 是否来自 <c>[JsonPropertyName]</c>（是则不套 JSON 命名策略）。</summary>
     public bool NameFromAttribute { get; set; }
 
-    // 类型与取值委托：构建期从属性元数据填好，绑定时只按位置取值。
-    public Type ValueType { get; set; } = typeof(object);
-
+    /// <summary>取值委托：构建期从属性元数据填好，绑定时只按位置取值；<c>null</c> 表示生成元数据不完整。</summary>
     public Func<object, object?>? GetValue { get; set; }
-
-    /// <summary>错误消息里的定位文本（如 <c>UserRequest.Id</c>）。</summary>
-    public string? Description { get; set; }
-
-    public bool Ignore { get; set; }
 
     /// <summary>属性级 <c>[BodyContentType]</c> 原文；null 表示属性上没有声明。</summary>
     public string? ContentType { get; set; }
@@ -80,39 +71,23 @@ internal sealed class RequestModelMemberDeclaration
 
     public AxiosStreamFormat StreamFormat { get; set; }
 
-    /// <summary>成员级格式化（<c>[Format]</c>）；null 表示走通道默认规则。</summary>
-    public ValueFormat? Format { get; set; }
+    /// <summary><see cref="FieldName"/>，空白时回退属性名（部件名不能为空）。</summary>
+    public override string DefaultName => string.IsNullOrWhiteSpace(FieldName) ? Name : FieldName;
 
-    public bool Path { get; set; }
+    /// <inheritdoc />
+    public override bool DefaultNameFromAttribute => NameFromAttribute;
 
-    public string? PathName { get; set; }
+    internal override IValueSource CreateSource(string fallbackDescription)
+        => new DelegateValueSource(Name, ValueType, GetValue!, Description ?? fallbackDescription, Format);
 
-    public bool Query { get; set; }
-
-    public string? QueryName { get; set; }
-
-    public bool Header { get; set; }
-
-    public string? HeaderName { get; set; }
-
-    public bool HeaderCollection { get; set; }
-
-    /// <summary>是否标注了 <c>[Body]</c>；键名与形态看 <see cref="BodyName"/>。</summary>
-    public bool Body { get; set; }
-
-    /// <summary><c>[Body]</c> 的键名；<c>null</c> 表示无参构造（整份正文），非 null（含空串）表示正文里的一个键。</summary>
-    public string? BodyName { get; set; }
-
-    public bool Part { get; set; }
-
-    public string? PartName { get; set; }
-
-    public string? PartFileName { get; set; }
-
-    public string? PartContentType { get; set; }
-
-    /// <summary>是否至少命中一个绑定目标；一个都没有说明是误标，构建期报错。</summary>
-    public bool HasAnyBinding => Path || Query || Header || HeaderCollection || Body || Part;
+    internal override void EnsureSourceAvailable(string memberPath)
+    {
+        if (GetValue is null)
+        {
+            throw new InvalidOperationException(
+                $"请求模型 {memberPath} 缺少取值实现：生成元数据不完整，请检查源生成器版本与包是否匹配。");
+        }
+    }
 }
 
 /// <summary>接口级声明的声明数据（全部方法的声明 + 接口级授权 / 静态头）。</summary>
@@ -178,51 +153,11 @@ internal sealed class InterfaceMethodDeclaration
     public AxiosStreamFormat StreamFormat { get; set; }
 }
 
-/// <summary>接口方法参数的绑定声明。</summary>
-internal sealed class InterfaceParameterDeclaration
+/// <summary>接口方法参数的绑定声明；绑定通道字段见 <see cref="BindingMemberDeclaration"/>。</summary>
+internal sealed class InterfaceParameterDeclaration : BindingMemberDeclaration
 {
     public int Index { get; set; }
 
-    public string Name { get; set; } = string.Empty;
-
-    // 类型与取值委托：构建期从参数元数据填好，绑定时只按位置取值。
-    public Type ValueType { get; set; } = typeof(object);
-
-    public string? Description { get; set; }
-
-    public bool Ignore { get; set; }
-
-    /// <summary>参数级格式化（<c>[Format]</c>）；null 表示走通道默认规则。</summary>
-    public ValueFormat? Format { get; set; }
-
-    public bool Path { get; set; }
-
-    public string? PathName { get; set; }
-
-    public bool Query { get; set; }
-
-    public string? QueryName { get; set; }
-
-    public bool Header { get; set; }
-
-    public string? HeaderName { get; set; }
-
-    public bool HeaderCollection { get; set; }
-
-    /// <summary>是否标注了 <c>[Body]</c>；键名与形态看 <see cref="BodyName"/>。</summary>
-    public bool Body { get; set; }
-
-    /// <summary><c>[Body]</c> 的键名；<c>null</c> 表示无参构造（整份正文），非 null（含空串）表示正文里的一个键。</summary>
-    public string? BodyName { get; set; }
-
-    public bool Part { get; set; }
-
-    public string? PartName { get; set; }
-
-    public string? PartFileName { get; set; }
-
-    public string? PartContentType { get; set; }
-
-    /// <summary>是否至少命中一个绑定目标；一个都没有说明是误标，构建期报错。</summary>
-    public bool HasAnyBinding => Path || Query || Header || HeaderCollection || Body || Part;
+    internal override IValueSource CreateSource(string fallbackDescription)
+        => new ArgumentValueSource(Index, Name, ValueType, Description ?? fallbackDescription, Format);
 }

@@ -1,5 +1,3 @@
-using AxiosNet.WebAPI.Attributes;
-
 namespace AxiosNet.WebAPI.Internal.Metadata;
 
 /// <summary>
@@ -49,7 +47,14 @@ internal sealed partial class InterfaceMethodMetadata
         var method = DeclarationNormalization.HttpMethodFrom(declaration.MethodName);
         var path = DeclarationNormalization.Path(declaration.Path);
         var ownerText = $"接口 {interfaceType.Name}.{methodName}";
-        var accumulator = new BindingAccumulator(ownerText, "参数");
+        var memberKind = "参数";
+        var accumulator = new BindingAccumulator(ownerText, memberKind);
+        var context = new BindingWalkContext(
+            ownerText,
+            memberKind,
+            $"{interfaceType.Name}.{methodName}.",
+            "方法没有 [Multipart]：请在方法上声明 [Multipart]。",
+            "方法的请求体由全部参数装配");
 
         // 接口级声明在前、方法级在后（同名后者覆盖）。
         accumulator.AddStaticHeaders(owner.StaticHeaders);
@@ -83,124 +88,29 @@ internal sealed partial class InterfaceMethodMetadata
                 continue;
             }
 
-            if (parameter.Ignore)
-            {
-                if (parameter.HasAnyBinding)
-                {
-                    throw new InvalidOperationException(
-                        $"参数 {interfaceType.Name}.{methodName}.{parameter.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / HeaderCollection / Part / Body）："
-                        + "[ApiIgnore] 的语义是「完全不绑定」，两者同用是二义性。");
-                }
-
-                // 被忽略的参数不参与绑定，但它的实参仍按原值进入调用载荷（凭据提供方 / 错误工厂会读）。
-                // 快路只传正文与取消令牌，还原不出这个位置，因此这种形状不判快路。
-                argsRebuildable = false;
-                continue;
-            }
-
-            var source = new ArgumentValueSource(
-                parameter.Index,
-                parameter.Name,
-                parameter.ValueType,
-                parameter.Description ?? $"{interfaceType.Name}.{methodName}.{parameter.Name}",
-                parameter.Format);
-
-            // 任何「整份正文以外」的绑定都让快路失效：生成代理在那种形状下仍然传参数数组。
-            if (parameter.Path
+            // 任何「整份正文以外」的绑定、以及被忽略的参数，都让快路失效：生成代理在那种形状下仍然传参数数组
+            // （被忽略参数的实参仍按原值进入调用载荷，凭据提供方 / 错误工厂会读）。
+            if (parameter.Ignore
+                || parameter.Path
                 || parameter.Query
                 || parameter.Header
                 || parameter.HeaderCollection
                 || parameter.Part
-                || (!parameter.HasAnyBinding && !parameter.Ignore)
+                || !parameter.HasAnyBinding
                 || (parameter.Body && (!string.IsNullOrWhiteSpace(parameter.BodyName) || parameter.Format is not null)))
             {
                 argsRebuildable = false;
             }
 
-            if (parameter.Body && string.IsNullOrWhiteSpace(parameter.BodyName))
+            if (!parameter.Ignore && parameter.Body && string.IsNullOrWhiteSpace(parameter.BodyName))
             {
                 rootBodyIndex = parameter.Index;
             }
 
-            if (parameter.Path)
-            {
-                accumulator.AddPath(source, parameter.PathName ?? string.Empty);
-            }
-
-            if (parameter.Header)
-            {
-                accumulator.AddHeader(source, parameter.HeaderName ?? string.Empty);
-            }
-
-            if (parameter.HeaderCollection)
-            {
-                accumulator.AddHeaderCollection(source);
-            }
-
-            if (parameter.Part)
-            {
-                if (!isMultipart)
-                {
-                    throw new InvalidOperationException(
-                        $"参数 {interfaceType.Name}.{methodName}.{parameter.Name} 标注了 [Part]，但方法没有 [Multipart]：请在方法上声明 [Multipart]。");
-                }
-
-                accumulator.ValidatePartFormat(source);
-
-                var display = $"参数 {source.Description}";
-                var explicitName = DeclarationNormalization.OptionalPartValue(parameter.PartName, display, nameof(PartAttribute.Name));
-                var partName = explicitName ?? parameter.Name;
-                if (!seenPartNames.Add(partName))
-                {
-                    throw DuplicatePart(ownerText, partName);
-                }
-
-                parts.Add(new PartBinding(
-                    partName,
-                    source,
-                    explicitName is not null,
-                    DeclarationNormalization.OptionalPartValue(parameter.PartFileName, display, nameof(PartAttribute.FileName)),
-                    DeclarationNormalization.OptionalPartValue(parameter.PartContentType, display, nameof(PartAttribute.ContentType))));
-            }
-
-            if (parameter.Body)
-            {
-                // 接口参数没有 [JsonPropertyName]：键名只取 [Body("名")] 或参数名；无参 [Body] 的 BodyName 为 null，表示整份正文。
-                accumulator.AddBody(
-                    source,
-                    parameter.Name,
-                    parameter.BodyName,
-                    nameFromAttribute: !string.IsNullOrWhiteSpace(parameter.BodyName));
-            }
-
-            if (!parameter.HasAnyBinding)
-            {
-                if (isMultipart)
-                {
-                    if (!seenPartNames.Add(parameter.Name))
-                    {
-                        throw DuplicatePart(ownerText, parameter.Name);
-                    }
-
-                    parts.Add(new PartBinding(parameter.Name, source, false, null, null));
-                    continue;
-                }
-
-                // 无标注：默认通道由 HTTP 方法决定；聚合正文的键名即参数名（接口参数没有 [JsonPropertyName]）。
-                accumulator.AddUnannotated(source, parameter.Name, nameFromAttribute: false);
-            }
-            else if (parameter.Query)
-            {
-                accumulator.AddQuery(source, parameter.QueryName ?? string.Empty);
-            }
+            BindingDeclarationWalker.BindMember(context, accumulator, parameter, parts, seenPartNames, isMultipart);
         }
 
-        if (isMultipart && accumulator.HasBody)
-        {
-            throw new InvalidOperationException(
-                $"接口 {interfaceType.Name} 的 {methodName} 同时声明了 [Multipart] 与 [Body]（{accumulator.BodyName}）："
-                + "multipart 方法的请求体由全部参数装配，两者互斥。");
-        }
+        BindingDeclarationWalker.ValidateMultipartBody(context, accumulator, isMultipart);
 
         if (isMultipart && declaration.ContentType is not null)
         {

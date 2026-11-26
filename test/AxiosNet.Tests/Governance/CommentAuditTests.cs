@@ -142,6 +142,7 @@ internal static class CommentAudit
     private static readonly HashSet<string> ExemptFiles = new(StringComparer.Ordinal)
     {
         "src/AxiosNet/WebAPI/Internal/Metadata/MetadataDeclarations.cs",
+        "src/AxiosNet/WebAPI/Internal/Binding/BindingMemberDeclaration.cs",
     };
 
     private static readonly HashSet<string> ModifierWords = new(StringComparer.Ordinal)

@@ -481,8 +481,4 @@ internal sealed partial class InterfaceMethodMetadata
             _parameterCount,
             _literalRootBody,
             _argsRebuildable);
-
-    /// <summary>同名 Part 绑定的错误：说明同名参数要合并成一项。</summary>
-    private static InvalidOperationException DuplicatePart(string owner, string name)
-        => new($"{owner} 有多个 Part 绑定使用了同名 \"{name}\"：同名参数请合并为一项（集合值走 AxiosNet 的数组规则）。");
 }
