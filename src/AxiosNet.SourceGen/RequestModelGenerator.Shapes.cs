@@ -4,7 +4,6 @@ using System.Collections.Immutable;
 using System.Linq;
 using System.Threading;
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace AxiosNet.SourceGen
@@ -568,7 +567,7 @@ namespace AxiosNet.SourceGen
                         fieldName,
                         IsIgnored(property),
                         "static x => (object)((" + TypeFormats.Display(property.ContainingType) + ")x)."
-                            + EscapeIdentifier(property.Name),
+                            + GeneratedNames.EscapeIdentifier(property.Name),
                         BuildFormatExpression(
                             FindInOverrideChain(property, _wellKnown.Format),
                             $"属性 {type.Name}.{property.Name}",
@@ -668,7 +667,7 @@ namespace AxiosNet.SourceGen
                         property.Name,
                         property.Name,
                         false,
-                        "static x => (object)x." + EscapeIdentifier(property.Name),
+                        "static x => (object)x." + GeneratedNames.EscapeIdentifier(property.Name),
                         null));
                     keyParts.Add(property.Name + ":" + TypeFormats.Display(property.Type));
 
@@ -742,7 +741,7 @@ namespace AxiosNet.SourceGen
                         return null;
                     }
 
-                    parts.Add(EscapeIdentifier(property.Name) + " = " + sample);
+                    parts.Add(GeneratedNames.EscapeIdentifier(property.Name) + " = " + sample);
                 }
 
                 return "new { " + string.Join(", ", parts) + " }";
@@ -810,22 +809,9 @@ namespace AxiosNet.SourceGen
                 return false;
             }
 
-            // 由形状 key 拼合法类名：只留字母数字、前缀截到 MaxShapeClassNamePrefix，尾部拼 64 位哈希。
+            // 由形状 key 拼合法类名：净化与哈希都取 key，主体截到 MaxShapeClassNamePrefix。
             private static string BuildShapeClassName(string key)
-            {
-                var builder = new System.Text.StringBuilder();
-                foreach (var character in key)
-                {
-                    if (builder.Length >= MaxShapeClassNamePrefix)
-                    {
-                        break;
-                    }
-
-                    builder.Append(char.IsLetterOrDigit(character) || character == '_' ? character : '_');
-                }
-
-                return "__AxiosShape_" + builder + "_" + Fnv1a(key).ToString("x16");
-            }
+                => GeneratedNames.Make("__AxiosShape_", key, key, MaxShapeClassNamePrefix);
         }
 
         // 拆掉 Nullable 取内层类型；不是可空值类型时返回 null。

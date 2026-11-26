@@ -274,7 +274,7 @@ namespace AxiosNet.SourceGen
 
             InterfaceModelInfo Rejected(DiagnosticDescriptor descriptor, params string[] args)
             {
-                diagnostics.Add(new DiagnosticInfo(descriptor, ToEquatable(args), location));
+                Report(diagnostics, descriptor, location, args);
                 return Blocked();
             }
 
@@ -308,10 +308,7 @@ namespace AxiosNet.SourceGen
             if (interfaceAuth.Conflict)
             {
                 // 只记诊断、不置 blocked：契约照常产出。
-                diagnostics.Add(new DiagnosticInfo(
-                    Diagnostics.AuthorizationConflict,
-                    ToEquatable(["接口 " + symbol.Name]),
-                    location));
+                Report(diagnostics, Diagnostics.AuthorizationConflict, location, "接口 " + symbol.Name);
             }
 
             var methods = ImmutableArray.CreateBuilder<InterfaceMethodInfo>();
@@ -375,19 +372,13 @@ namespace AxiosNet.SourceGen
                 {
                     if (member is IPropertySymbol or IEventSymbol)
                     {
-                        diagnostics.Add(new DiagnosticInfo(
-                            Diagnostics.InterfaceMemberNotSupported,
-                            ToEquatable([symbol.Name, member.Name]),
-                            location));
+                        Report(diagnostics, Diagnostics.InterfaceMemberNotSupported, location, symbol.Name, member.Name);
                         return true;
                     }
 
                     if (member is IMethodSymbol { IsStatic: true, IsAbstract: true } staticMethod)
                     {
-                        diagnostics.Add(new DiagnosticInfo(
-                            Diagnostics.InterfaceMemberNotSupported,
-                            ToEquatable([symbol.Name, staticMethod.Name]),
-                            location));
+                        Report(diagnostics, Diagnostics.InterfaceMemberNotSupported, location, symbol.Name, staticMethod.Name);
                         return true;
                     }
 
@@ -396,10 +387,13 @@ namespace AxiosNet.SourceGen
                     if (member is IMethodSymbol { IsAbstract: true } nonPublicMethod
                         && nonPublicMethod.DeclaredAccessibility != Accessibility.Public)
                     {
-                        diagnostics.Add(new DiagnosticInfo(
+                        Report(
+                            diagnostics,
                             Diagnostics.InterfaceShapeUnsupported,
-                            ToEquatable([symbol.Name, nonPublicMethod.Name, "是非 public 的抽象成员：生成的代理无法在消费程序集实现"]),
-                            location));
+                            location,
+                            symbol.Name,
+                            nonPublicMethod.Name,
+                            "是非 public 的抽象成员：生成的代理无法在消费程序集实现");
                         return true;
                     }
                 }
@@ -462,10 +456,7 @@ namespace AxiosNet.SourceGen
             var methodAuth = ReadMethodAuthorization(method, wellKnown);
             if (methodAuth.Conflict)
             {
-                diagnostics.Add(new DiagnosticInfo(
-                    Diagnostics.AuthorizationConflict,
-                    ToEquatable([subject]),
-                    methodLocation));
+                Report(diagnostics, Diagnostics.AuthorizationConflict, methodLocation, subject);
             }
 
             // 显式实现写在「声明该成员的接口」上：菱形继承里两个基接口的同名同签名成员
@@ -524,38 +515,26 @@ namespace AxiosNet.SourceGen
 
             if (routes.Count == 0)
             {
-                diagnostics.Add(new DiagnosticInfo(
-                    Diagnostics.RouteCountInvalid,
-                    ToEquatable([subject, "缺少路由特性"]),
-                    methodLocation));
+                Report(diagnostics, Diagnostics.RouteCountInvalid, methodLocation, subject, "缺少路由特性");
                 return false;
             }
 
             if (routes.Count > 1)
             {
                 var names = string.Join("、", routes.Select(static route => route.AttributeClass!.Name));
-                diagnostics.Add(new DiagnosticInfo(
-                    Diagnostics.RouteCountInvalid,
-                    ToEquatable([subject, $"标注了多个路由特性（{names}）"]),
-                    methodLocation));
+                Report(diagnostics, Diagnostics.RouteCountInvalid, methodLocation, subject, $"标注了多个路由特性（{names}）");
                 return false;
             }
 
             if (!TryReadRoute(routes[0], wellKnown, out routeMethod, out routePath))
             {
-                diagnostics.Add(new DiagnosticInfo(
-                    Diagnostics.CustomRouteAttribute,
-                    ToEquatable([subject, routes[0].AttributeClass!.Name]),
-                    methodLocation));
+                Report(diagnostics, Diagnostics.CustomRouteAttribute, methodLocation, subject, routes[0].AttributeClass!.Name);
                 return false;
             }
 
             if (string.IsNullOrWhiteSpace(routeMethod) || string.IsNullOrWhiteSpace(routePath))
             {
-                diagnostics.Add(new DiagnosticInfo(
-                    Diagnostics.RouteValueInvalid,
-                    ToEquatable([subject]),
-                    methodLocation));
+                Report(diagnostics, Diagnostics.RouteValueInvalid, methodLocation, subject);
                 return false;
             }
 
@@ -596,19 +575,13 @@ namespace AxiosNet.SourceGen
             // 泛型方法的返回形态随类型实参而变，代理无法烘焙成具体契约。
             if (method.IsGenericMethod)
             {
-                diagnostics.Add(new DiagnosticInfo(
-                    Diagnostics.InterfaceShapeUnsupported,
-                    ToEquatable([symbol.Name, methodDisplay, "泛型方法无法代理"]),
-                    methodLocation));
+                Report(diagnostics, Diagnostics.InterfaceShapeUnsupported, methodLocation, symbol.Name, methodDisplay, "泛型方法无法代理");
                 return false;
             }
 
             if (!TryGetReturnShape(method, wellKnown, out returnKind, out bodyType, out streaming, out var shapeError))
             {
-                diagnostics.Add(new DiagnosticInfo(
-                    Diagnostics.InterfaceReturnUnsupported,
-                    ToEquatable([symbol.Name, methodDisplay, shapeError!]),
-                    methodLocation));
+                Report(diagnostics, Diagnostics.InterfaceReturnUnsupported, methodLocation, symbol.Name, methodDisplay, shapeError!);
                 return false;
             }
 
@@ -617,10 +590,13 @@ namespace AxiosNet.SourceGen
             {
                 if (!streaming)
                 {
-                    diagnostics.Add(new DiagnosticInfo(
+                    Report(
+                        diagnostics,
                         Diagnostics.InterfaceStreamInvalid,
-                        ToEquatable([symbol.Name, methodDisplay, "[Stream] 只用于返回 Task<AxiosResponse<IAsyncEnumerable<T>>> 的方法"]),
-                        methodLocation));
+                        methodLocation,
+                        symbol.Name,
+                        methodDisplay,
+                        "[Stream] 只用于返回 Task<AxiosResponse<IAsyncEnumerable<T>>> 的方法");
                     return false;
                 }
 
@@ -632,20 +608,25 @@ namespace AxiosNet.SourceGen
 
                 if (!IsDefinedStreamFormat(streamFormat, wellKnown))
                 {
-                    diagnostics.Add(new DiagnosticInfo(
+                    Report(
+                        diagnostics,
                         Diagnostics.InterfaceStreamInvalid,
-                        ToEquatable([symbol.Name, methodDisplay, $"帧格式值 {streamFormat} 无效"]),
-                        methodLocation));
+                        methodLocation,
+                        symbol.Name,
+                        methodDisplay,
+                        $"帧格式值 {streamFormat} 无效");
                     return false;
                 }
             }
 
             if (bodyType is not null && !IsTypeAccessible(bodyType, compilation.Assembly))
             {
-                diagnostics.Add(new DiagnosticInfo(
+                Report(
+                    diagnostics,
                     Diagnostics.UnsupportedType,
-                    ToEquatable(["接口 " + symbol.Name, $"返回类型 {bodyType.ToDisplayString()} 对生成代码不可见"]),
-                    methodLocation));
+                    methodLocation,
+                    "接口 " + symbol.Name,
+                    $"返回类型 {bodyType.ToDisplayString()} 对生成代码不可见");
                 return false;
             }
 
@@ -683,19 +664,25 @@ namespace AxiosNet.SourceGen
                 contentType = GetStringArgument(contentTypeAttribute, 0)?.Trim();
                 if (contentType is null || contentType.Length == 0 || HasHeaderControlCharacter(contentType))
                 {
-                    diagnostics.Add(new DiagnosticInfo(
+                    Report(
+                        diagnostics,
                         Diagnostics.InterfaceEncodingInvalid,
-                        ToEquatable([symbol.Name, methodDisplay, "[BodyContentType] 的媒体类型不能为空白或包含控制字符"]),
-                        methodLocation));
+                        methodLocation,
+                        symbol.Name,
+                        methodDisplay,
+                        "[BodyContentType] 的媒体类型不能为空白或包含控制字符");
                     return false;
                 }
 
                 if (isMultipart)
                 {
-                    diagnostics.Add(new DiagnosticInfo(
+                    Report(
+                        diagnostics,
                         Diagnostics.InterfaceEncodingInvalid,
-                        ToEquatable([symbol.Name, methodDisplay, "[Multipart] 与 [BodyContentType] 互斥：multipart 的媒体类型固定为 multipart/form-data"]),
-                        methodLocation));
+                        methodLocation,
+                        symbol.Name,
+                        methodDisplay,
+                        "[Multipart] 与 [BodyContentType] 互斥：multipart 的媒体类型固定为 multipart/form-data");
                     return false;
                 }
             }
@@ -710,10 +697,13 @@ namespace AxiosNet.SourceGen
 
                 if (!IsDefinedCollectionFormat(value, wellKnown))
                 {
-                    diagnostics.Add(new DiagnosticInfo(
+                    Report(
+                        diagnostics,
                         Diagnostics.InterfaceEncodingInvalid,
-                        ToEquatable([symbol.Name, methodDisplay, $"查询集合格式值 {value} 无效"]),
-                        methodLocation));
+                        methodLocation,
+                        symbol.Name,
+                        methodDisplay,
+                        $"查询集合格式值 {value} 无效");
                     return false;
                 }
 
@@ -752,10 +742,13 @@ namespace AxiosNet.SourceGen
             {
                 if (parameter.RefKind != RefKind.None)
                 {
-                    diagnostics.Add(new DiagnosticInfo(
+                    Report(
+                        diagnostics,
                         Diagnostics.InterfaceShapeUnsupported,
-                        ToEquatable([symbol.Name, methodDisplay, $"参数 {parameter.Name} 是 ref / out / in：接口级声明不支持按引用传递"]),
-                        methodLocation));
+                        methodLocation,
+                        symbol.Name,
+                        methodDisplay,
+                        $"参数 {parameter.Name} 是 ref / out / in：接口级声明不支持按引用传递");
                     blocked = true;
                     continue;
                 }
@@ -764,20 +757,25 @@ namespace AxiosNet.SourceGen
                     || parameter.Type.TypeKind == TypeKind.Pointer
                     || parameter.Type.TypeKind == TypeKind.FunctionPointer)
                 {
-                    diagnostics.Add(new DiagnosticInfo(
+                    Report(
+                        diagnostics,
                         Diagnostics.InterfaceShapeUnsupported,
-                        ToEquatable([symbol.Name, methodDisplay, $"参数 {parameter.Name} 的类型 {parameter.Type.ToDisplayString()} 无法装箱"]),
-                        methodLocation));
+                        methodLocation,
+                        symbol.Name,
+                        methodDisplay,
+                        $"参数 {parameter.Name} 的类型 {parameter.Type.ToDisplayString()} 无法装箱");
                     blocked = true;
                     continue;
                 }
 
                 if (!IsTypeAccessible(parameter.Type, compilation.Assembly))
                 {
-                    diagnostics.Add(new DiagnosticInfo(
+                    Report(
+                        diagnostics,
                         Diagnostics.UnsupportedType,
-                        ToEquatable(["接口 " + symbol.Name, $"参数类型 {parameter.Type.ToDisplayString()} 对生成代码不可见"]),
-                        methodLocation));
+                        methodLocation,
+                        "接口 " + symbol.Name,
+                        $"参数类型 {parameter.Type.ToDisplayString()} 对生成代码不可见");
                     blocked = true;
                     continue;
                 }
@@ -786,20 +784,26 @@ namespace AxiosNet.SourceGen
                 {
                     if (HasBindingAttribute(parameter, wellKnown))
                     {
-                        diagnostics.Add(new DiagnosticInfo(
+                        Report(
+                            diagnostics,
                             Diagnostics.InterfaceShapeUnsupported,
-                            ToEquatable([symbol.Name, methodDisplay, $"参数 {parameter.Name} 是 CancellationToken，不能同时标注 Path / Query / Header / HeaderCollection / Part / Body"]),
-                            methodLocation));
+                            methodLocation,
+                            symbol.Name,
+                            methodDisplay,
+                            $"参数 {parameter.Name} 是 CancellationToken，不能同时标注 Path / Query / Header / HeaderCollection / Part / Body");
                         blocked = true;
                         continue;
                     }
 
                     if (cancellationTokenIndex >= 0)
                     {
-                        diagnostics.Add(new DiagnosticInfo(
+                        Report(
+                            diagnostics,
                             Diagnostics.InterfaceShapeUnsupported,
-                            ToEquatable([symbol.Name, methodDisplay, "声明了多个 CancellationToken 参数：最多一个"]),
-                            methodLocation));
+                            methodLocation,
+                            symbol.Name,
+                            methodDisplay,
+                            "声明了多个 CancellationToken 参数：最多一个");
                         blocked = true;
                         continue;
                     }
@@ -1230,23 +1234,15 @@ namespace AxiosNet.SourceGen
         private static AttributeData? FindAttribute(IMethodSymbol method, INamedTypeSymbol? attributeType)
             => FindAttribute(method.GetAttributes(), attributeType);
 
-        // 接口全名 → 代理类名：把命名空间分隔符与泛型符号都换成下划线，前缀截到固定长度，尾部拼 64 位哈希区分同前缀类型。
+        // 接口全名 → 代理类名：按显示名净化（泛型符号也换成下划线），哈希取全限定名，主体截到 MaxClassNamePrefix。
         private static string BuildInterfaceClassName(INamedTypeSymbol symbol)
         {
             var display = symbol.ToDisplayString();
-            var builder = new StringBuilder(display.Length);
-            foreach (var character in display)
-            {
-                if (builder.Length >= MaxClassNamePrefix)
-                {
-                    break;
-                }
-
-                builder.Append(char.IsLetterOrDigit(character) || character == '_' ? character : '_');
-            }
-
-            var hash = Fnv1a(symbol.ToDisplayString(TypeFormats.FullyQualified));
-            return "__AxiosProxy_" + builder + "_" + hash.ToString("x16");
+            return GeneratedNames.Make(
+                "__AxiosProxy_",
+                display,
+                symbol.ToDisplayString(TypeFormats.FullyQualified),
+                MaxClassNamePrefix);
         }
 
         /// <summary>接口（含闭合泛型的类型实参）是否仍含未替换的类型参数。</summary>

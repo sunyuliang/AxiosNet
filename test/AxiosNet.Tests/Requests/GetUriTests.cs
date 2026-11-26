@@ -204,12 +204,16 @@ public sealed class GetUriTests
             UrlBuilder.Build("https://api.example.com", "/items/" + i.ToString(CultureInfo.InvariantCulture), null);
         }
 
-        var cache = (System.Collections.IDictionary)typeof(UrlBuilder)
+        var cache = typeof(UrlBuilder)
             .GetField("UriCache", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
             .GetValue(null)!;
 
+        var count = (int)cache.GetType()
+            .GetProperty("Count", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(cache)!;
+
         // 并发用例可能同时写入、冲到软上限附近，留一档余量即可证明没有无限增长。
-        Assert.True(cache.Count <= 512, $"URI 缓存已增长到 {cache.Count} 条——应在上限处整表清空。");
+        Assert.True(count <= 512, $"URI 缓存已增长到 {count} 条——应在上限处整表清空。");
     }
 
     [Fact]

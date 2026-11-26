@@ -1,9 +1,7 @@
 using System.Buffers;
-using System.Collections.Concurrent;
 using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
-using System.Text;
 using AxiosNet.Metadata;
 
 namespace AxiosNet.Internal.Url;
@@ -75,7 +73,7 @@ internal static class UrlBuilder
                 : SpanStringConcat.Concat(target, "?".AsSpan(), query.AsSpan(), fragment);
         }
 
-        if (UriCache.TryGetValue(pathAndQuery, out var cached))
+        if (UriCache.TryGet(pathAndQuery, out var cached))
         {
             return cached;
         }
@@ -96,7 +94,7 @@ internal static class UrlBuilder
                 throw AxiosException.InvalidUrl(pathAndQuery, config);
             }
 
-            CacheUri(pathAndQuery, uri);
+            UriCache.Add(pathAndQuery, uri);
             return uri;
         }
         catch (UriFormatException ex)
@@ -112,27 +110,7 @@ internal static class UrlBuilder
     private const int UriCacheLimit = 256;
 
     /// <summary>已校验的绝对地址缓存（<see cref="Uri"/> 不可变，可安全共享）。</summary>
-    private static readonly ConcurrentDictionary<string, Uri> UriCache = new(StringComparer.Ordinal);
-
-    /// <summary>缓存条目计数（<c>Count</c> 要遍历全部桶，未命中路径不可用）。</summary>
-    private static int _uriCacheCount;
-
-    /// <summary>缓存已校验的绝对地址；达到上限时整表清空。</summary>
-    /// <remarks>软上限：并发下可能短暂略超 256 条。</remarks>
-    private static void CacheUri(string key, Uri uri)
-    {
-        if (Volatile.Read(ref _uriCacheCount) >= UriCacheLimit)
-        {
-            UriCache.Clear();
-            Volatile.Write(ref _uriCacheCount, 0);
-        }
-
-        // 只有真的插进去才计数。
-        if (UriCache.TryAdd(key, uri))
-        {
-            Interlocked.Increment(ref _uriCacheCount);
-        }
-    }
+    private static readonly BoundedCache<Uri> UriCache = new(UriCacheLimit);
 
     /// <summary>axios 的路径合并（base 当作目录前缀）；base 的 query / fragment 按 RFC 3986 §5.2.2 解析。</summary>
     /// <remarks>非空相对路径不继承 base 的 query；base 的 fragment 永不继承。</remarks>
@@ -187,20 +165,20 @@ internal static class UrlBuilder
     /// <param name="Query">原始查询串（不含 <c>?</c>），可能为 <c>null</c>。</param>
     private readonly record struct BaseComponents(string Root, string Path, string? Query);
 
-    private static readonly ConcurrentDictionary<string, BaseComponents> BaseComponentCache = new(StringComparer.Ordinal);
-
-    private static int _baseComponentCount;
+    private static readonly BoundedCache<BaseComponents> BaseComponentCache = new(UriCacheLimit);
 
     /// <summary>把 baseAddress 拆成 authority / path / query（fragment 丢弃），按字符串缓存。</summary>
     private static bool TryGetBaseComponents(string baseAddress, out BaseComponents components)
     {
-        if (BaseComponentCache.TryGetValue(baseAddress, out components))
+        if (BaseComponentCache.TryGet(baseAddress, out var cached))
         {
+            components = cached;
             return true;
         }
 
         if (!Uri.TryCreate(baseAddress, UriKind.Absolute, out var uri) || uri.IsFile || !IsHttpScheme(uri))
         {
+            components = default;
             return false;
         }
 
@@ -209,16 +187,7 @@ internal static class UrlBuilder
             uri.AbsolutePath,
             uri.Query.Length > 0 ? uri.Query.Substring(1) : null);
 
-        if (Volatile.Read(ref _baseComponentCount) >= UriCacheLimit)
-        {
-            BaseComponentCache.Clear();
-            Volatile.Write(ref _baseComponentCount, 0);
-        }
-
-        if (BaseComponentCache.TryAdd(baseAddress, components))
-        {
-            Interlocked.Increment(ref _baseComponentCount);
-        }
+        BaseComponentCache.Add(baseAddress, components);
 
         return true;
     }

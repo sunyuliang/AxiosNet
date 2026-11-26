@@ -82,7 +82,7 @@ internal sealed class RefResolver
 
         if (!reference.StartsWith("#/", StringComparison.Ordinal))
         {
-            _warnings.Add("EXTERNAL_REF", location, $"不支持外部引用 {reference}，按缺失处理。");
+            _warnings.Add(WarningCodes.EXTERNAL_REF, location, $"不支持外部引用 {reference}，按缺失处理。");
             return null;
         }
 
@@ -90,14 +90,14 @@ internal sealed class RefResolver
         visited ??= new HashSet<string>(StringComparer.Ordinal);
         if (depth > 32 || !visited.Add(reference))
         {
-            _warnings.Add("REF_CYCLE", location, $"引用链存在循环：{reference}。");
+            _warnings.Add(WarningCodes.REF_CYCLE, location, $"引用链存在循环：{reference}。");
             return null;
         }
 
         var target = ResolvePointer(reference);
         if (target is null)
         {
-            _warnings.Add("BROKEN_REF", location, $"引用不存在：{reference}。");
+            _warnings.Add(WarningCodes.BROKEN_REF, location, $"引用不存在：{reference}。");
             return null;
         }
 

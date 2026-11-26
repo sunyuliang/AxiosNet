@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Runtime.CompilerServices;
-using System.Text;
 using AxiosNet.Internal.Spec;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -329,10 +328,7 @@ namespace AxiosNet.SourceGen
             {
                 if (!HasPathBinding(members, token))
                 {
-                    diagnostics.Add(new DiagnosticInfo(
-                        Diagnostics.MissingPathBinding,
-                        ToEquatable(new[] { "请求模型 " + symbol.Name, routePath, token }),
-                        location));
+                    Report(diagnostics, Diagnostics.MissingPathBinding, location, "请求模型 " + symbol.Name, routePath, token);
                 }
             }
 
@@ -377,10 +373,7 @@ namespace AxiosNet.SourceGen
 
             if (conflict is not null)
             {
-                diagnostics.Add(new DiagnosticInfo(
-                    Diagnostics.MultipleBodyMembers,
-                    ToEquatable(new[] { "请求模型 " + symbol.Name, conflict }),
-                    location));
+                Report(diagnostics, Diagnostics.MultipleBodyMembers, location, "请求模型 " + symbol.Name, conflict);
             }
         }
 
@@ -527,10 +520,7 @@ namespace AxiosNet.SourceGen
                     $"属性 {model.Name}.{property.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / HeaderCollection / Part / Body）："
                     + "[ApiIgnore] 的语义是「完全不绑定」，两者同用是二义性。";
 
-                diagnostics.Add(new DiagnosticInfo(
-                    Diagnostics.IgnoreConflict,
-                    new EquatableArray<string>(ImmutableArray.Create(message)),
-                    GetLocation(property)));
+                Report(diagnostics, Diagnostics.IgnoreConflict, GetLocation(property), message);
             }
 
             // 字段名与「是否显式命名」必须同时得出：空串名字也原样使用，不能靠事后字符串比较反推。
@@ -557,7 +547,7 @@ namespace AxiosNet.SourceGen
                 // 与反射的 DeclaringType.Name 一致：泛型类型带 arity（Base`1），非泛型就是简单名。
                 $"{property.ContainingType.MetadataName}.{property.Name}",
                 "typeof(" + TypeFormats.Display(property.Type) + ")",
-                "static o => ((" + TypeFormats.Display(property.ContainingType) + ")o)." + EscapeIdentifier(property.Name),
+                "static o => ((" + TypeFormats.Display(property.ContainingType) + ")o)." + GeneratedNames.EscapeIdentifier(property.Name),
                 ignored,
                 formatExpression,
                 new EquatableArray<MemberBindingInfo>(bindings.ToImmutable()),
@@ -654,10 +644,7 @@ namespace AxiosNet.SourceGen
                 if (anonymous && authorize is not null)
                 {
                     // 两条声明都写进构建器：共享构建器抛出的错误文本与反射路径完全一致。
-                    diagnostics.Add(new DiagnosticInfo(
-                        Diagnostics.AuthorizationConflict,
-                        new EquatableArray<string>(ImmutableArray.Create("请求模型 " + symbol.Name)),
-                        modelLocation));
+                    Report(diagnostics, Diagnostics.AuthorizationConflict, modelLocation, "请求模型 " + symbol.Name);
                 }
 
                 allowAnonymous = anonymous;
@@ -1198,6 +1185,15 @@ namespace AxiosNet.SourceGen
         // 数组转可结构比较的快照：增量管线的相等性判断靠它。
         private static EquatableArray<string> ToEquatable(string[] values) => new EquatableArray<string>(values.ToImmutableArray());
 
+        // 记一条诊断：参数快照化后交给收集器。这里不去重——同一个符号只走一次构建；
+        // 需要跨语法种子累计的那一处（形状收集）自带 ID|args 去重表。
+        private static void Report(
+            ImmutableArray<DiagnosticInfo>.Builder diagnostics,
+            DiagnosticDescriptor descriptor,
+            Location location,
+            params string[] args)
+            => diagnostics.Add(new DiagnosticInfo(descriptor, ToEquatable(args), location));
+
         // 往 builder 里追加一条诊断并返回快照：构建过程要多次拼装同一份数据。
         private static EquatableArray<DiagnosticInfo> AddDiagnostic(ImmutableArray<DiagnosticInfo>.Builder diagnostics, DiagnosticInfo diagnostic)
         {
@@ -1205,43 +1201,12 @@ namespace AxiosNet.SourceGen
             return new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable());
         }
 
-        // 类型显示名 → 合法类名：非字母数字一律换成下划线，前缀截到固定长度控制文件名长度，尾部拼 64 位哈希区分同前缀类型。
+        // 类型显示名 → 合法类名：净化与哈希都取显示名，主体截到 MaxClassNamePrefix 控制文件名长度。
         private static string BuildClassName(INamedTypeSymbol symbol)
         {
             var display = symbol.ToDisplayString();
-            var builder = new StringBuilder(display.Length);
-            foreach (var character in display)
-            {
-                if (builder.Length >= MaxClassNamePrefix)
-                {
-                    break;
-                }
-
-                builder.Append(char.IsLetterOrDigit(character) || character == '_' ? character : '_');
-            }
-
-            var hash = Fnv1a(display);
-            return "__AxiosRequestModel_" + builder + "_" + hash.ToString("x16");
+            return GeneratedNames.Make("__AxiosRequestModel_", display, display, MaxClassNamePrefix);
         }
-
-        // FNV-1a 64 位哈希：给类名拼稳定后缀，同名不同命名空间不会撞车。
-        private static ulong Fnv1a(string value)
-        {
-            var hash = 14695981039346656037UL;
-            foreach (var character in value)
-            {
-                hash ^= character;
-                hash *= 1099511628211UL;
-            }
-
-            return hash;
-        }
-
-        // 关键字标识符加 @ 前缀，非关键字原样返回。
-        private static string EscapeIdentifier(string name)
-            => SyntaxFacts.GetKeywordKind(name) != SyntaxKind.None || SyntaxFacts.GetContextualKeywordKind(name) != SyntaxKind.None
-                ? "@" + name
-                : name;
     }
 
     /// <summary>编译期解析到的 AxiosNet / STJ 类型符号；缺失时为 null（对应特性根本没出现）。</summary>

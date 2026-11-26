@@ -117,7 +117,7 @@ internal static class OutputWriter
         foreach (var name in stale)
         {
             warnings.Add(new ApiWarning(
-                "STALE_FILE",
+                WarningCodes.STALE_FILE,
                 name,
                 "上次生成的文件本次不再生成；加 --force 可删除。"));
         }
@@ -236,7 +236,7 @@ internal static class OutputWriter
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
             // 清单损坏或读不出来时不能按首次生成处理。
-            warnings.Add(new ApiWarning("MANIFEST_INVALID", ManifestName, $"无法读取上次生成的清单：{ex.Message}"));
+            warnings.Add(new ApiWarning(WarningCodes.MANIFEST_INVALID, ManifestName, $"无法读取上次生成的清单：{ex.Message}"));
             return (new List<string>(), true);
         }
     }

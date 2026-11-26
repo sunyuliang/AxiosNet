@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Text;
-using Microsoft.CodeAnalysis.CSharp;
 
 namespace AxiosNet.SourceGen
 {
@@ -76,7 +75,7 @@ namespace AxiosNet.SourceGen
         {
             var parameters = BuildParameterList(method);
             builder.Append("        ").Append(GetReturnType(method)).Append(' ')
-                .Append(method.DeclaringInterfaceExpression).Append('.').Append(EscapeIdentifier(method.Name))
+                .Append(method.DeclaringInterfaceExpression).Append('.').Append(GeneratedNames.EscapeIdentifier(method.Name))
                 .Append('(').Append(parameters).AppendLine(")");
             builder.Append("            => __method").Append(method.Index).Append('.').Append(BuildCall(model, method)).AppendLine(";");
         }
@@ -441,11 +440,5 @@ namespace AxiosNet.SourceGen
                 builder.Append(CodeLiteral.Of(values[i]));
             }
         }
-
-        // 关键字标识符加 @ 前缀（接口方法名可能是关键字）。
-        private static string EscapeIdentifier(string name)
-            => SyntaxFacts.GetKeywordKind(name) != SyntaxKind.None || SyntaxFacts.GetContextualKeywordKind(name) != SyntaxKind.None
-                ? "@" + name
-                : name;
     }
 }

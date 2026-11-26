@@ -310,7 +310,7 @@ public sealed partial class AxiosClient
         DateTimeOffset receivedAt)
     {
         var body = response.RawBodyBuffer!;
-        var headers = BuildResponseHeaderValues(response);
+        var (single, multi) = ToHeaderViews(BuildResponseHeaderValues(response));
 
         return new AxiosShortCircuit
         {
@@ -318,15 +318,8 @@ public sealed partial class AxiosClient
             StatusText = response.StatusText,
             ProtocolVersion = response.ProtocolVersion,
 
-            // 单值字典保留，多值字典供交付时回放全部值。
-            Headers = headers.ToDictionary(
-                entry => entry.Key,
-                entry => entry.Value[0],
-                StringComparer.OrdinalIgnoreCase),
-            MultiValueHeaders = headers.ToDictionary(
-                entry => entry.Key,
-                entry => (IEnumerable<string>)entry.Value,
-                StringComparer.OrdinalIgnoreCase),
+            Headers = single,
+            MultiValueHeaders = multi,
 
             Body = CanShareBody(response) ? body : (byte[])body.Clone(),
 
@@ -335,6 +328,22 @@ public sealed partial class AxiosClient
             StoredAge = policy.Age
         };
     }
+
+    /// <summary>把「全部值」字典拆成契约要求的两个头视图：<see cref="AxiosShortCircuit.Headers"/> 存首值，多值视图供命中时回放全部值。</summary>
+    /// <remarks>两个视图都按大小写不敏感建键；多值视图直接引用传入的 <see cref="List{T}"/>（不复制），单值视图取当时的第一条。</remarks>
+    /// <param name="headers">每个头的全部值；每个头至少一条（空列表会让取首值抛出）。</param>
+    /// <returns>单值视图与多值视图。</returns>
+    private static (Dictionary<string, string> Single, Dictionary<string, IEnumerable<string>> Multi) ToHeaderViews(
+        Dictionary<string, List<string>> headers)
+        => (
+            headers.ToDictionary(
+                entry => entry.Key,
+                entry => entry.Value[0],
+                StringComparer.OrdinalIgnoreCase),
+            headers.ToDictionary(
+                entry => entry.Key,
+                entry => (IEnumerable<string>)entry.Value,
+                StringComparer.OrdinalIgnoreCase));
 
     /// <summary>条目能否直接与响应共用正文：<c>Data</c> 不是这块数组，且没有 transformResponse。</summary>
     private static bool CanShareBody(AxiosResponse response)
@@ -404,21 +413,15 @@ public sealed partial class AxiosClient
             return null;
         }
 
-        var headers = BuildResponseHeaderValues(response);
+        var (single, multi) = ToHeaderViews(BuildResponseHeaderValues(response));
 
         return new AxiosShortCircuit
         {
             Status = response.Status,
             StatusText = response.StatusText,
             ProtocolVersion = response.ProtocolVersion,
-            Headers = headers.ToDictionary(
-                entry => entry.Key,
-                entry => entry.Value[0],
-                StringComparer.OrdinalIgnoreCase),
-            MultiValueHeaders = headers.ToDictionary(
-                entry => entry.Key,
-                entry => (IEnumerable<string>)entry.Value,
-                StringComparer.OrdinalIgnoreCase),
+            Headers = single,
+            MultiValueHeaders = multi,
 
             // 复制一次，与领导者的 Data 脱钩。
             Body = (byte[])body.Clone()
@@ -526,20 +529,15 @@ public sealed partial class AxiosClient
             }
         }
 
+        // 单值字典也要填：外部存储契约里 Headers 是每个头的首值。
+        var (single, multi) = ToHeaderViews(headers);
+
         return new AxiosShortCircuit
         {
             Status = stored.Status,
             StatusText = stored.StatusText,
-
-            // 单值字典也要填：外部存储契约里 Headers 是每个头的首值。
-            Headers = headers.ToDictionary(
-                entry => entry.Key,
-                entry => entry.Value[0],
-                StringComparer.OrdinalIgnoreCase),
-            MultiValueHeaders = headers.ToDictionary(
-                entry => entry.Key,
-                entry => (IEnumerable<string>)entry.Value,
-                StringComparer.OrdinalIgnoreCase),
+            Headers = single,
+            MultiValueHeaders = multi,
             Body = stored.Body,
 
             // 协商结果取这次真正发出的那一次。

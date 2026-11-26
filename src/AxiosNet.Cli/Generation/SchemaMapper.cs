@@ -69,7 +69,7 @@ internal sealed class SchemaMapper
 
         if (_depth >= MaxDepth)
         {
-            _warnings.Add("SCHEMA_DEPTH", location, "schema 嵌套过深，按 JsonElement 处理。");
+            _warnings.Add(WarningCodes.SCHEMA_DEPTH, location, "schema 嵌套过深，按 JsonElement 处理。");
             return TypeRef.JsonElement;
         }
 
@@ -168,7 +168,7 @@ internal sealed class SchemaMapper
         {
             RegisterUnionMembers(oneOf, suggestedName, location);
             _warnings.Add(
-                "ONEOF_FALLBACK",
+                WarningCodes.ONEOF_FALLBACK,
                 location,
                 $"oneOf 无法用声明式接口表达：类型按 JsonElement 生成，成员类型一并生成供调用方自行判别。");
             return new TypeRef("JsonElement", true, nullable);
@@ -176,7 +176,7 @@ internal sealed class SchemaMapper
 
         RegisterUnionMembers(schema["anyOf"]!, suggestedName, location);
         _warnings.Add(
-            "ANYOF_FALLBACK",
+            WarningCodes.ANYOF_FALLBACK,
             location,
             $"anyOf 无法用声明式接口表达：类型按 JsonElement 生成，成员类型一并生成供调用方自行判别。");
         return new TypeRef("JsonElement", true, nullable);
@@ -193,7 +193,7 @@ internal sealed class SchemaMapper
         if (shape.ConflictingTypes is { } types)
         {
             _warnings.Add(
-                "MULTIPLE_TYPES",
+                WarningCodes.MULTIPLE_TYPES,
                 location,
                 $"type 同时声明了 {string.Join(" / ", types)}，按 JsonElement 处理。");
             return new TypeRef("JsonElement", true, nullable);
@@ -213,7 +213,7 @@ internal sealed class SchemaMapper
                 return new TypeRef("JsonElement", true, true);
 
             default:
-                _warnings.Add("UNKNOWN_SCHEMA_TYPE", location, $"未知 schema 类型 {shape.Type}，按 JsonElement 处理。");
+                _warnings.Add(WarningCodes.UNKNOWN_SCHEMA_TYPE, location, $"未知 schema 类型 {shape.Type}，按 JsonElement 处理。");
                 return new TypeRef("JsonElement", true, nullable);
         }
     }
@@ -244,14 +244,14 @@ internal sealed class SchemaMapper
 
         if (!reference.StartsWith("#/", StringComparison.Ordinal))
         {
-            _warnings.Add("EXTERNAL_REF", location, $"不支持外部引用 {reference}，按 JsonElement 处理。");
+            _warnings.Add(WarningCodes.EXTERNAL_REF, location, $"不支持外部引用 {reference}，按 JsonElement 处理。");
             return TypeRef.JsonElement;
         }
 
         var target = _refs.ResolvePointer(reference);
         if (target is not { IsObject: true })
         {
-            _warnings.Add("BROKEN_REF", location, $"引用不存在：{reference}。");
+            _warnings.Add(WarningCodes.BROKEN_REF, location, $"引用不存在：{reference}。");
             return TypeRef.JsonElement;
         }
 
@@ -279,7 +279,7 @@ internal sealed class SchemaMapper
         // 别名环（A → B → A）在「解析中」集合处打断并告警。
         if (!_resolvingAliases.Add(reference))
         {
-            _warnings.Add("REF_CYCLE", location, $"别名循环引用 {reference}，按 JsonElement 处理。");
+            _warnings.Add(WarningCodes.REF_CYCLE, location, $"别名循环引用 {reference}，按 JsonElement 处理。");
             return TypeRef.JsonElement;
         }
 
@@ -409,7 +409,7 @@ internal sealed class SchemaMapper
 
             _types.Add(constants);
             _warnings.Add(
-                "ENUM_AS_STRING",
+                WarningCodes.ENUM_AS_STRING,
                 location,
                 $"枚举值不能直接作为 C# 成员名：已生成常量类 {constantsName}，属性类型使用 string。");
             return new TypeRef("string", false, nullable);
@@ -417,7 +417,7 @@ internal sealed class SchemaMapper
 
         if (typeName is "integer" or "number")
         {
-            _warnings.Add("NUMERIC_ENUM", location, "数字枚举按数值类型生成。");
+            _warnings.Add(WarningCodes.NUMERIC_ENUM, location, "数字枚举按数值类型生成。");
 
             // 没有 type 或 type=number 且未写浮点 format、值全为整数时落成整数。
             if (typeName == "number" && schema["format"]?.AsString() is not ("float" or "double" or "decimal"))
@@ -429,7 +429,7 @@ internal sealed class SchemaMapper
                 }
 
                 _warnings.Add(
-                    "NUMERIC_ENUM_FRACTION",
+                    WarningCodes.NUMERIC_ENUM_FRACTION,
                     location,
                     "数字枚举含非整数或超出 64 位整数范围的值，按 double 生成。");
             }
@@ -437,7 +437,7 @@ internal sealed class SchemaMapper
             return MapPrimitive(typeName, schema["format"]?.AsString(), nullable);
         }
 
-        _warnings.Add("ENUM_IGNORED", location, $"类型 {typeName} 上的 enum 未处理，按 {typeName} 生成。");
+        _warnings.Add(WarningCodes.ENUM_IGNORED, location, $"类型 {typeName} 上的 enum 未处理，按 {typeName} 生成。");
         return MapPrimitive(typeName, schema["format"]?.AsString(), nullable);
     }
 
@@ -468,14 +468,14 @@ internal sealed class SchemaMapper
     {
         if (schema["prefixItems"] is { IsArray: true } prefix && prefix.Items.Count > 0)
         {
-            _warnings.Add("TUPLE_ARRAY", location, "元组数组（prefixItems）按 JsonElement[] 生成。");
+            _warnings.Add(WarningCodes.TUPLE_ARRAY, location, "元组数组（prefixItems）按 JsonElement[] 生成。");
             return new TypeRef("JsonElement[]", false, nullable);
         }
 
         var items = schema["items"];
         if (items is not { IsObject: true })
         {
-            _warnings.Add("ARRAY_WITHOUT_ITEMS", location, "数组缺少对象形式的 items，按 JsonElement[] 生成。");
+            _warnings.Add(WarningCodes.ARRAY_WITHOUT_ITEMS, location, "数组缺少对象形式的 items，按 JsonElement[] 生成。");
             return new TypeRef("JsonElement[]", false, nullable);
         }
 
@@ -605,7 +605,7 @@ internal sealed class SchemaMapper
 
         if (type.Properties.Count == 0)
         {
-            _warnings.Add("EMPTY_MODEL", $"schema {type.Name}", $"类型 {type.Name} 没有任何属性，生成空类。");
+            _warnings.Add(WarningCodes.EMPTY_MODEL, $"schema {type.Name}", $"类型 {type.Name} 没有任何属性，生成空类。");
         }
     }
 
@@ -624,7 +624,7 @@ internal sealed class SchemaMapper
         // allOf 可以无限嵌套，这里单独限深。
         if (depth >= MaxDepth)
         {
-            _warnings.Add("SCHEMA_DEPTH", location, "allOf / $ref 展开过深，已停止收集属性。");
+            _warnings.Add(WarningCodes.SCHEMA_DEPTH, location, "allOf / $ref 展开过深，已停止收集属性。");
             return;
         }
 
@@ -632,13 +632,13 @@ internal sealed class SchemaMapper
         {
             if (!reference.StartsWith("#/", StringComparison.Ordinal))
             {
-                _warnings.Add("EXTERNAL_REF", location, $"不支持外部引用 {reference}，已跳过。");
+                _warnings.Add(WarningCodes.EXTERNAL_REF, location, $"不支持外部引用 {reference}，已跳过。");
                 return;
             }
 
             if (active.Contains(reference))
             {
-                _warnings.Add("ALLOF_CYCLE", location, $"allOf 引用成环：{reference}。");
+                _warnings.Add(WarningCodes.ALLOF_CYCLE, location, $"allOf 引用成环：{reference}。");
                 return;
             }
 
@@ -650,7 +650,7 @@ internal sealed class SchemaMapper
             var target = _refs.ResolvePointer(reference);
             if (target is not { IsObject: true })
             {
-                _warnings.Add("BROKEN_REF", location, $"引用不存在：{reference}。");
+                _warnings.Add(WarningCodes.BROKEN_REF, location, $"引用不存在：{reference}。");
                 return;
             }
 

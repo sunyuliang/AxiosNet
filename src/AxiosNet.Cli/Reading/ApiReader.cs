@@ -294,8 +294,8 @@ internal sealed class ApiReader
         // 路径模板先于参数读取校验：占位符不合规时运行时会直接抛异常，整条操作必须先跳过。
         if (!TryExtractPlaceholders(model.Path, out var placeholders, out var templateProblem))
         {
-            _warnings.Add("INVALID_PATH_TEMPLATE", location, templateProblem!);
-            _warnings.Add("OPERATION_SKIPPED", location, "路径模板含无法识别的占位符，已跳过该操作。");
+            _warnings.Add(WarningCodes.INVALID_PATH_TEMPLATE, location, templateProblem!);
+            _warnings.Add(WarningCodes.OPERATION_SKIPPED, location, "路径模板含无法识别的占位符，已跳过该操作。");
             return;
         }
 
@@ -316,7 +316,7 @@ internal sealed class ApiReader
             var wireName = parameter["name"]?.AsString();
             if (string.IsNullOrEmpty(wireName))
             {
-                _warnings.Add("PARAMETER_WITHOUT_NAME", location, "参数缺少 name，已跳过。");
+                _warnings.Add(WarningCodes.PARAMETER_WITHOUT_NAME, location, "参数缺少 name，已跳过。");
                 continue;
             }
 
@@ -335,12 +335,12 @@ internal sealed class ApiReader
                     break;
 
                 case "cookie":
-                    _warnings.Add("COOKIE_PARAMETER", location, $"cookie 参数 {wireName} 无法在 AxiosNet 的接口声明中表达，已跳过。");
+                    _warnings.Add(WarningCodes.COOKIE_PARAMETER, location, $"cookie 参数 {wireName} 无法在 AxiosNet 的接口声明中表达，已跳过。");
                     break;
 
                 default:
                     _warnings.Add(
-                        "UNKNOWN_PARAMETER_LOCATION",
+                        WarningCodes.UNKNOWN_PARAMETER_LOCATION,
                         location,
                         $"参数 {wireName} 的 in={parameter["in"]?.AsString()} 不受支持，已跳过。");
                     break;
@@ -349,13 +349,13 @@ internal sealed class ApiReader
 
         if (unsupportedParameter)
         {
-            _warnings.Add("OPERATION_SKIPPED", location, "路径 / 请求头参数无法用标量绑定表达，已跳过该操作。");
+            _warnings.Add(WarningCodes.OPERATION_SKIPPED, location, "路径 / 请求头参数无法用标量绑定表达，已跳过该操作。");
             return;
         }
 
         if (!ValidatePathParameters(model, placeholderSet))
         {
-            _warnings.Add("OPERATION_SKIPPED", location, "路径模板与路径参数不一致，已跳过该操作。");
+            _warnings.Add(WarningCodes.OPERATION_SKIPPED, location, "路径模板与路径参数不一致，已跳过该操作。");
             return;
         }
 
@@ -365,14 +365,14 @@ internal sealed class ApiReader
             var requestBody = _refs.Resolve(requestBodyNode, location);
             if (requestBody is not { IsObject: true })
             {
-                _warnings.Add("BROKEN_REQUEST_BODY", location, "requestBody 无法解析，已跳过该操作。");
+                _warnings.Add(WarningCodes.BROKEN_REQUEST_BODY, location, "requestBody 无法解析，已跳过该操作。");
                 return;
             }
 
             var body = ReadRequestBody(requestBody, model, usedNames, location, out var unsupported);
             if (unsupported)
             {
-                _warnings.Add("OPERATION_SKIPPED", location, "请求体结构无法用声明式接口表达，已跳过该操作。");
+                _warnings.Add(WarningCodes.OPERATION_SKIPPED, location, "请求体结构无法用声明式接口表达，已跳过该操作。");
                 return;
             }
 
@@ -388,7 +388,7 @@ internal sealed class ApiReader
             if (distinct.Count > 1)
             {
                 _warnings.Add(
-                    "MIXED_COLLECTION_FORMATS",
+                    WarningCodes.MIXED_COLLECTION_FORMATS,
                     location,
                     $"查询集合格式不一致（{string.Join(", ", distinct)}），统一按 {distinct[0]} 生成。");
             }
@@ -464,7 +464,7 @@ internal sealed class ApiReader
         if (andSchemes is not null && scheme is not null && !anonymous)
         {
             _warnings.Add(
-                "MULTI_SCHEME_SECURITY",
+                WarningCodes.MULTI_SCHEME_SECURITY,
                 location,
                 $"security 要求同时满足多个方案（{andSchemes}），[Authorize] 只能表达一个，按 {scheme} 生成；"
                 + "其余方案请在客户端补充凭据。");
@@ -496,7 +496,7 @@ internal sealed class ApiReader
                 }
 
                 _warnings.Add(
-                    "UNSUPPORTED_HTTP_SECURITY",
+                    WarningCodes.UNSUPPORTED_HTTP_SECURITY,
                     location,
                     $"安全方案 {name} 是 http {scheme}：AxiosNet 的 [Authorize] 只覆盖 bearer / basic，"
                     + "未生成授权声明，请在客户端自行设置 Authorization 头。");
@@ -504,7 +504,7 @@ internal sealed class ApiReader
 
             case "apiKey":
                 _warnings.Add(
-                    "APIKEY_SECURITY",
+                    WarningCodes.APIKEY_SECURITY,
                     location,
                     $"安全方案 {name} 是 apiKey（{definition?["in"]?.AsString()} {definition?["name"]?.AsString()}）："
                     + "[Authorize] 只写 Authorization 头，无法表达 apiKey，未生成授权声明；"
@@ -514,7 +514,7 @@ internal sealed class ApiReader
             case "oauth2":
             case "openIdConnect":
                 _warnings.Add(
-                    "OAUTH_SECURITY",
+                    WarningCodes.OAUTH_SECURITY,
                     location,
                     $"安全方案 {name} 是 {type}：[Authorize] 只覆盖 http bearer / basic，未生成授权声明；"
                     + "请在客户端设置 Authorization（Bearer 令牌）。");
@@ -522,7 +522,7 @@ internal sealed class ApiReader
 
             default:
                 _warnings.Add(
-                    "UNKNOWN_SECURITY",
+                    WarningCodes.UNKNOWN_SECURITY,
                     location,
                     $"安全方案 {name} 的类型 {type} 无法用 [Authorize] 表达，未生成授权声明，请在客户端自行设置凭据。");
                 return null;
@@ -586,7 +586,7 @@ internal sealed class ApiReader
             && !style.Equals("simple", StringComparison.OrdinalIgnoreCase))
         {
             _warnings.Add(
-                "UNSUPPORTED_PATH_STYLE",
+                WarningCodes.UNSUPPORTED_PATH_STYLE,
                 location,
                 $"路径参数 {wireName} 使用 style={style}，AxiosNet 的 [Path] 只支持 simple 风格，已跳过该操作。");
             return false;
@@ -610,7 +610,7 @@ internal sealed class ApiReader
 
         if (parameter["required"]?.AsBool() == false)
         {
-            _warnings.Add("OPTIONAL_PATH_PARAMETER", location, $"路径参数 {wireName} 声明为可选，仍按必填生成。");
+            _warnings.Add(WarningCodes.OPTIONAL_PATH_PARAMETER, location, $"路径参数 {wireName} 声明为可选，仍按必填生成。");
         }
 
         model.Parameters.Add(new ApiParameter
@@ -646,7 +646,7 @@ internal sealed class ApiReader
         else if (style is not null && style.Equals("deepObject", StringComparison.OrdinalIgnoreCase))
         {
             _warnings.Add(
-                "UNSUPPORTED_QUERY_STYLE",
+                WarningCodes.UNSUPPORTED_QUERY_STYLE,
                 location,
                 $"查询参数 {wireName} 使用 deepObject 编码（<名字>[prop]=value 形式的多个键），"
                 + "AxiosNet 的 [Query] 只按单个键序列化对象，服务端可能无法解析。");
@@ -654,7 +654,7 @@ internal sealed class ApiReader
         else if (!IsScalarQueryType(type))
         {
             _warnings.Add(
-                "UNSUPPORTED_QUERY_STYLE",
+                WarningCodes.UNSUPPORTED_QUERY_STYLE,
                 location,
                 $"查询参数 {wireName} 的类型 {type.Name} 是复杂对象，AxiosNet 的 [Query] 不会展开成多个键，"
                 + "按整体值序列化。");
@@ -681,7 +681,7 @@ internal sealed class ApiReader
     {
         if (ManagedHeaders.Contains(wireName))
         {
-            _warnings.Add("MANAGED_HEADER_PARAMETER", location, $"请求头参数 {wireName} 由框架管理，已跳过。");
+            _warnings.Add(WarningCodes.MANAGED_HEADER_PARAMETER, location, $"请求头参数 {wireName} 由框架管理，已跳过。");
             return true;
         }
 
@@ -805,7 +805,7 @@ internal sealed class ApiReader
             }
 
             _warnings.Add(
-                "UNKNOWN_COLLECTION_FORMAT",
+                WarningCodes.UNKNOWN_COLLECTION_FORMAT,
                 location,
                 $"查询参数 {wireName} 的 collectionFormat={explicitFormat} 未知，按 Multi 生成。");
             return "Multi";
@@ -829,16 +829,16 @@ internal sealed class ApiReader
                 return "Pipes";
             case "deepObject":
                 _warnings.Add(
-                    "DEEP_OBJECT_ARRAY",
+                    WarningCodes.DEEP_OBJECT_ARRAY,
                     location,
                     $"查询参数 {wireName} 对数组使用 deepObject，AxiosNet 无对应格式，按 Multi 生成。");
                 return "Multi";
             case "simple":
-                _warnings.Add("SIMPLE_QUERY_STYLE", location, $"查询参数 {wireName} 使用 simple 风格，按 Csv 生成。");
+                _warnings.Add(WarningCodes.SIMPLE_QUERY_STYLE, location, $"查询参数 {wireName} 使用 simple 风格，按 Csv 生成。");
                 return "Csv";
             default:
                 _warnings.Add(
-                    "UNKNOWN_QUERY_STYLE",
+                    WarningCodes.UNKNOWN_QUERY_STYLE,
                     location,
                     $"查询参数 {wireName} 的 style={style} 未知，按 Multi 生成。");
                 return "Multi";
@@ -858,7 +858,7 @@ internal sealed class ApiReader
         if (missing.Count > 0)
         {
             _warnings.Add(
-                "MISSING_PATH_PARAMETER",
+                WarningCodes.MISSING_PATH_PARAMETER,
                 model.Location,
                 $"路径模板占位符 {string.Join(", ", missing)} 没有对应参数。");
             return false;
@@ -868,7 +868,7 @@ internal sealed class ApiReader
         if (extra.Count > 0)
         {
             _warnings.Add(
-                "UNUSED_PATH_PARAMETER",
+                WarningCodes.UNUSED_PATH_PARAMETER,
                 model.Location,
                 $"路径参数 {string.Join(", ", extra)} 不在路径模板中，已移除。");
             model.Parameters.RemoveAll(parameter =>
@@ -898,7 +898,7 @@ internal sealed class ApiReader
         if (content.Object.Count > 1)
         {
             _warnings.Add(
-                "MULTIPLE_REQUEST_CONTENT",
+                WarningCodes.MULTIPLE_REQUEST_CONTENT,
                 location,
                 $"请求体声明了多个媒体类型（{string.Join(", ", content.Object.Keys)}），取 {media}。");
         }
@@ -918,7 +918,7 @@ internal sealed class ApiReader
                 result.MediaType = "multipart/form-data";
                 if (!Mapper.TryDescribeObject(schema, $"{location} multipart", out var properties, out var hasAdditional))
                 {
-                    _warnings.Add("MULTIPART_UNSUPPORTED", location, "multipart 请求体不是对象 schema，无法展开为部件。");
+                    _warnings.Add(WarningCodes.MULTIPART_UNSUPPORTED, location, "multipart 请求体不是对象 schema，无法展开为部件。");
                     unsupported = true;
                     return null;
                 }
@@ -927,7 +927,7 @@ internal sealed class ApiReader
                 if (hasAdditional)
                 {
                     _warnings.Add(
-                        "MULTIPART_ADDITIONAL_PROPERTIES",
+                        WarningCodes.MULTIPART_ADDITIONAL_PROPERTIES,
                         location,
                         "multipart 请求体声明了 additionalProperties，未知字段无法展开为部件，已忽略。");
                 }
@@ -943,7 +943,7 @@ internal sealed class ApiReader
                     if (IsComplexPart(type))
                     {
                         _warnings.Add(
-                            "MULTIPART_OBJECT_PART",
+                            WarningCodes.MULTIPART_OBJECT_PART,
                             location,
                             $"部件 {property.WireName} 是复杂对象，表单编码结果可能与服务端预期不一致。");
                     }
@@ -961,7 +961,7 @@ internal sealed class ApiReader
 
                 if (result.Parts.Count == 0)
                 {
-                    _warnings.Add("MULTIPART_UNSUPPORTED", location, "multipart 请求体没有任何属性。");
+                    _warnings.Add(WarningCodes.MULTIPART_UNSUPPORTED, location, "multipart 请求体没有任何属性。");
                     unsupported = true;
                     return null;
                 }
@@ -1097,7 +1097,7 @@ internal sealed class ApiReader
         if (responses is not { IsObject: true } || responses.Object.Count == 0)
         {
             model.ResponseVoid = true;
-            _warnings.Add("MISSING_RESPONSES", location, "操作缺少 responses，按无返回值生成。");
+            _warnings.Add(WarningCodes.MISSING_RESPONSES, location, "操作缺少 responses，按无返回值生成。");
             return;
         }
 
@@ -1139,21 +1139,21 @@ internal sealed class ApiReader
         if (chosen is null)
         {
             model.ResponseVoid = true;
-            _warnings.Add("NO_SUCCESS_RESPONSE", location, "没有 2xx / 2XX / default 响应，按无返回值生成。");
+            _warnings.Add(WarningCodes.NO_SUCCESS_RESPONSE, location, "没有 2xx / 2XX / default 响应，按无返回值生成。");
             return;
         }
 
         if (exact.Count > 1)
         {
             _warnings.Add(
-                "MULTIPLE_SUCCESS_RESPONSES",
+                WarningCodes.MULTIPLE_SUCCESS_RESPONSES,
                 location,
                 $"存在多个 2xx 响应（{string.Join(", ", exact.Select(item => item.Key))}），取 {chosen}。");
         }
 
         if (chosen == fallback)
         {
-            _warnings.Add("DEFAULT_RESPONSE", location, "没有 2xx 响应，按 default 生成。");
+            _warnings.Add(WarningCodes.DEFAULT_RESPONSE, location, "没有 2xx 响应，按 default 生成。");
         }
 
         // 响应本身可能也是组件 $ref（如 #/components/responses/Xxx）。
@@ -1176,7 +1176,7 @@ internal sealed class ApiReader
         if (content.Object.Count > 1)
         {
             _warnings.Add(
-                "MULTIPLE_RESPONSE_CONTENT",
+                WarningCodes.MULTIPLE_RESPONSE_CONTENT,
                 location,
                 $"响应 {chosen} 声明了多个媒体类型（{string.Join(", ", content.Object.Keys)}），取 {media}。");
         }
@@ -1194,7 +1194,7 @@ internal sealed class ApiReader
             if (!_options.UseResponseWrapper)
             {
                 _warnings.Add(
-                    "STREAM_REQUIRES_WRAPPER",
+                    WarningCodes.STREAM_REQUIRES_WRAPPER,
                     location,
                     "流式响应只支持 Task<AxiosResponse<IAsyncEnumerable<T>>>，--response-wrapper none 对该方法不生效。");
             }
@@ -1204,7 +1204,7 @@ internal sealed class ApiReader
                 // 显式声明 x-axios-stream: array 时按数组就是契约，不再提示。
                 if (!explicitArrayStream)
                 {
-                    _warnings.Add("STREAM_ARRAY_FRAME", location, "流式响应的 schema 是数组，按元素类型逐帧生成。");
+                    _warnings.Add(WarningCodes.STREAM_ARRAY_FRAME, location, "流式响应的 schema 是数组，按元素类型逐帧生成。");
                 }
 
                 schema = itemSchema;
@@ -1223,7 +1223,7 @@ internal sealed class ApiReader
                 if (schema is null)
                 {
                     _warnings.Add(
-                        "RESPONSE_WITHOUT_SCHEMA",
+                        WarningCodes.RESPONSE_WITHOUT_SCHEMA,
                         location,
                         $"响应 {chosen} 的 {media} 没有 schema，按 JsonElement 生成。");
                     model.ReturnType = TypeRef.JsonElement;

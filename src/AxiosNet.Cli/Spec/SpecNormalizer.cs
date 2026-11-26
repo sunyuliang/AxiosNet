@@ -41,7 +41,7 @@ internal static class SpecNormalizer
 
         if (root["webhooks"] is { IsObject: true } webhooks && webhooks.Object.Count > 0)
         {
-            warnings.Add("WEBHOOKS_IGNORED", "webhooks", "OpenAPI webhooks 不会被生成为客户端接口方法。");
+            warnings.Add(WarningCodes.WEBHOOKS_IGNORED, "webhooks", "OpenAPI webhooks 不会被生成为客户端接口方法。");
         }
 
         return root;
@@ -333,7 +333,7 @@ internal static class Swagger2Converter
 
             if (parameter["in"]?.AsString() is "body" or "formData")
             {
-                warnings.Add("PATH_BODY_PARAMETER", location, "路径级 body / formData 参数不受支持，已忽略。");
+                warnings.Add(WarningCodes.PATH_BODY_PARAMETER, location, "路径级 body / formData 参数不受支持，已忽略。");
                 continue;
             }
 
@@ -413,7 +413,7 @@ internal static class Swagger2Converter
 
         if (consumes.Length > 1)
         {
-            warnings.Add("MULTIPLE_REQUEST_CONTENT", location, $"body 参数声明了多个 consumes，取 {mediaType}。");
+            warnings.Add(WarningCodes.MULTIPLE_REQUEST_CONTENT, location, $"body 参数声明了多个 consumes，取 {mediaType}。");
         }
 
         return SpecNode.Obj(result);
@@ -446,7 +446,7 @@ internal static class Swagger2Converter
             var name = parameter["name"]?.AsString();
             if (string.IsNullOrWhiteSpace(name))
             {
-                warnings.Add("FORM_PARAMETER_WITHOUT_NAME", location, "formData 参数缺少 name，已忽略。");
+                warnings.Add(WarningCodes.FORM_PARAMETER_WITHOUT_NAME, location, "formData 参数缺少 name，已忽略。");
                 continue;
             }
 
@@ -505,7 +505,7 @@ internal static class Swagger2Converter
 
         if (consumes.Length > 1)
         {
-            warnings.Add("MULTIPLE_REQUEST_CONTENT", location, $"formData 声明了多个 consumes，取 {mediaType}。");
+            warnings.Add(WarningCodes.MULTIPLE_REQUEST_CONTENT, location, $"formData 声明了多个 consumes，取 {mediaType}。");
         }
 
         return SpecNode.Obj(result);
@@ -568,7 +568,7 @@ internal static class Swagger2Converter
 
         if (result.Count == 0)
         {
-            warnings.Add("MISSING_RESPONSES", location, "响应没有声明任何状态码。");
+            warnings.Add(WarningCodes.MISSING_RESPONSES, location, "响应没有声明任何状态码。");
         }
 
         return SpecNode.Obj(result);
