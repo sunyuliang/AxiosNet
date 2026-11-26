@@ -88,6 +88,7 @@ internal sealed class TimeoutStream : DelegatingStream
     /// <summary>读一块：内层同步完成时原样透传，异步或故障才走异步路径。</summary>
     protected override ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken callerToken)
     {
+        ThrowIfReleased();
         ThrowIfBudgetExhausted(callerToken);
 
         var token = Link(callerToken);
@@ -127,6 +128,7 @@ internal sealed class TimeoutStream : DelegatingStream
     /// <summary>写：查预算后把调用方令牌并进预算令牌再写。</summary>
     protected override async ValueTask WriteCoreAsync(ReadOnlyMemory<byte> buffer, CancellationToken callerToken)
     {
+        ThrowIfReleased();
         ThrowIfBudgetExhausted(callerToken);
 
         var token = Link(callerToken);
@@ -143,6 +145,7 @@ internal sealed class TimeoutStream : DelegatingStream
     /// <summary>刷新：查预算后同样翻译取消 / IO 失败。</summary>
     protected override async ValueTask FlushCoreAsync(CancellationToken callerToken)
     {
+        ThrowIfReleased();
         ThrowIfBudgetExhausted(callerToken);
 
         var token = Link(callerToken);
@@ -186,6 +189,23 @@ internal sealed class TimeoutStream : DelegatingStream
         return cts.Token;
     }
 
+    /// <summary>本包装是否已释放；释放后读 / 写 / Flush 一律按「流已关闭」失败。</summary>
+    private bool _released;
+
+    /// <summary>核心方法的第一步：已释放就按 <see cref="Stream"/> 约定失败。</summary>
+    /// <remarks>
+    /// <see cref="OnReleased"/> 会释放全部链接源与计时源，之后取 <see cref="CancellationTokenSource.Token"/>
+    /// 只会抛出内部实现细节。预算判定也要排在它后面，否则预算耗尽的流会把「已关闭」报成超时。
+    /// </remarks>
+    /// <exception cref="ObjectDisposedException">包装流已释放。</exception>
+    private void ThrowIfReleased()
+    {
+        if (Volatile.Read(ref _released))
+        {
+            throw new ObjectDisposedException(null, "响应流已释放：流式正文只能读一次，释放后不能再读 / 写 / Flush。");
+        }
+    }
+
     /// <summary>预算在构造时即耗尽：按 <c>Caller → Canceled → Timeout</c> 判定归属，确定性失败。</summary>
     private void ThrowIfBudgetExhausted(CancellationToken callerToken)
     {
@@ -222,8 +242,14 @@ internal sealed class TimeoutStream : DelegatingStream
     }
 
     /// <summary>释放链接源与超时计时器；内层流由基类释放。</summary>
+    /// <remarks>
+    /// 先置释放位：释放返回之后的读 / 写 / Flush 直接按「流已关闭」失败，不会再去取已释放的令牌。
+    /// 基类先关内层流再回调这里，与释放并发的读由内层流自身的释放状态决定。
+    /// </remarks>
     protected override void OnReleased()
     {
+        Volatile.Write(ref _released, true);
+
         _cachedCallerCts?.Dispose();
         _linkedCts?.Dispose();
         _timeoutCts?.Dispose();

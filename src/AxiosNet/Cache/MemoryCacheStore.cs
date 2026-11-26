@@ -4,7 +4,8 @@ namespace AxiosNet.Cache;
 
 /// <summary>内置的内存存储：进程内字典 + 到期时间 + 条目 / 字节上限，<see cref="AxiosCache"/> 默认用它。</summary>
 /// <remarks>
-/// 读时顺手摘掉过期项；容量满先清过期项，仍放不下就不再接收新键（已有键照常覆盖并续期，不做随机淘汰）。
+/// 读时顺手摘掉过期项；容量满先清过期项，仍放不下就不写入（不做随机淘汰）。
+/// 覆盖已有键同样受 <c>MaxBytes</c> 约束：新正文放不下时保留旧条目，占用不会越过上限。
 /// 带校验器的过期条目留给条件请求复用，直到被覆盖、清掉或 <see cref="ClearAsync"/>。进程重启即清空。
 /// </remarks>
 public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidationStore
@@ -93,7 +94,7 @@ public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidation
     public ValueTask SetAsync(string key, AxiosShortCircuit entry, AxiosCacheEntryPolicy policy, CancellationToken cancellationToken)
         => SetCore(key, entry, policy.TimeToLive);
 
-    /// <summary>写入条目：算尺寸与过期时刻，腾出空间后替换同键旧条目。</summary>
+    /// <summary>写入条目：算尺寸与过期时刻；容量允许时写入或替换同键旧条目，放不下就放弃这次写入。</summary>
     private ValueTask SetCore(string key, AxiosShortCircuit entry, TimeSpan timeToLive)
     {
         var size = EstimateSize(entry);
@@ -104,17 +105,26 @@ public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidation
 
         lock (_writeLock)
         {
-            // 覆盖已有键不增加条目数：满了也放行。
             var exists = _entries.TryGetValue(key, out var existing);
 
-            if (!exists && !HasRoom(size))
+            // 覆盖已有键时旧条目的字节先退回，再按新尺寸重新判容量：否则「同一个键换成超大正文」会绕过 MaxBytes。
+            var baseBytes = Interlocked.Read(ref _bytes) - (existing?.Size ?? 0);
+
+            if (!HasRoom(exists, size, baseBytes))
             {
                 PurgeExpiredLocked();
 
-                if (!HasRoom(size))
+                // 清过期条目后按同一口径重算（PurgeExpiredLocked 已更新 _bytes；键本身也可能刚被清掉）。
+                var purgedExists = _entries.TryGetValue(key, out var purgedExisting);
+                var purgedBase = Interlocked.Read(ref _bytes) - (purgedExisting?.Size ?? 0);
+
+                if (!HasRoom(purgedExists, size, purgedBase))
                 {
+                    // 放不下就不接收：旧条目原样保留（不清空、不半途替换）。
                     return default;
                 }
+
+                existing = purgedExisting;
             }
 
             _entries[key] = new Entry(entry, expiresAt, size);
@@ -153,9 +163,13 @@ public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidation
     }
 
     /// <summary>容量判定：条目数与字节预算（0 表示不限字节）都还有余量。</summary>
-    private bool HasRoom(long size)
-        => _entries.Count < _maxEntries
-           && (_maxBytes == 0 || Interlocked.Read(ref _bytes) + size <= _maxBytes);
+    /// <param name="exists">该键是否已有条目：覆盖不占新槽位，但同样要过字节闸。</param>
+    /// <param name="size">待写入条目的近似尺寸。</param>
+    /// <param name="bytesBefore">写入前的占用字节（覆盖已有键时已扣掉旧条目）。</param>
+    /// <remarks>两侧都按「写入后不超过上限」判。</remarks>
+    private bool HasRoom(bool exists, long size, long bytesBefore)
+        => (exists ? _entries.Count : _entries.Count + 1) <= _maxEntries
+           && (_maxBytes == 0 || bytesBefore + size <= _maxBytes);
 
     /// <summary>在写锁内清掉全部过期条目（含带校验器的：容量压力下它们同样要让位）；清完由调用方重新判容量。</summary>
     private void PurgeExpiredLocked()

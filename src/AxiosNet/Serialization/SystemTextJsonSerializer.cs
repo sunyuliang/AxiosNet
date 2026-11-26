@@ -194,6 +194,11 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
     }
 
     /// <summary>按声明类型写入聚合正文的成员值：AOT 走 <c>JsonTypeInfo</c>，JIT 回退反射重载。</summary>
+    /// <remarks>
+    /// net6.0 目标上 <c>DateOnly</c> / <c>TimeOnly</c> 一律报错：该目标的 System.Text.Json 没有这两个类型的转换器，
+    /// 结论取决于消费方实际加载的 STJ 版本（6.x 报错、7.x 起静默写成 ISO 字符串），库不能把结果留给运气。
+    /// net8.0 目标照常写出。
+    /// </remarks>
     private static void SerializeAggregateMember(Utf8JsonWriter writer, object? value, Type type, JsonSerializerOptions options)
     {
         if (value is null)
@@ -201,6 +206,16 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
             writer.WriteNullValue();
             return;
         }
+
+#if !NETSTANDARD2_0 && !NET8_0_OR_GREATER
+        // netstandard2.0 没有这两个类型；net6.0 上显式拒绝，避免静默写出。
+        var underlying = Nullable.GetUnderlyingType(type) ?? type;
+        if (underlying == typeof(DateOnly) || underlying == typeof(TimeOnly))
+        {
+            throw new NotSupportedException(
+                $"net6.0 的 System.Text.Json 不支持 {underlying.Name}：请把成员改成 string / DateTime，或把目标框架提升到 net8.0。");
+        }
+#endif
 
 #if NET8_0_OR_GREATER
         if (options.TypeInfoResolver is not null)

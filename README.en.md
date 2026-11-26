@@ -3,8 +3,8 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2928%20passed-success)](#build-and-test)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2771%20passed-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2948%20passed-success)](#build-and-test)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2852%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-92.2%25_(branch_87.5%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -2293,7 +2293,7 @@ var again = await client.GetAsync<User>("users/1");   // hit: nothing was sent
 | `ConditionalRequests` | `true` | Revalidate stale entries with `ETag` / `Last-Modified`; a 304 serves the cached body (see below) |
 | `Store` | `null` | Entry storage; `null` = the built-in `MemoryCacheStore`. Implement `IAxiosCacheStore` for Redis or a shared cache |
 | `MaxEntries` | 1024 | Entry cap of the built-in store: expired entries are purged first, then new entries are refused (ignored when `Store` is set) |
-| `MaxBytes` | 64 MB | Approximate byte cap of the built-in store (body + header lengths, `0` = unlimited): same policy as the entry cap — an entry that does not fit is not accepted (ignored when `Store` is set) |
+| `MaxBytes` | 64 MB | Approximate byte cap of the built-in store (body + header lengths, `0` = unlimited): same policy as the entry cap — an entry that does not fit is not accepted; **overwriting an existing key is capped the same way**, so a new body that does not fit leaves the old entry in place and usage never crosses the cap (ignored when `Store` is set) |
 | `StoreTimeout` | 2s | Per-write timeout: a hanging store is treated as "not cached this time" instead of holding the response (`null` / non-positive = no limit; custom stores only; the wait is also capped by the remaining `Resilience.TotalTimeout`) |
 | `KeySelector` | `null` | Custom key (gets the effective config and the final URL); defaults to `AxiosCache.CreateKey` |
 | `ShouldCache` | built-in rule | Which requests take part; defaults to `AxiosCache.IsCacheable` (GET / HEAD, no short circuit, not streaming, no body, not a range request), and can be composed on top of it |
@@ -2321,6 +2321,8 @@ An entry is only stored when all of these hold: status is 2xx, the raw bytes wer
 | `Intersection` | Same as above (both server and request vetoes win) | `min(TimeToLive, remaining freshness, request max-age)`; falls back to `TimeToLive` when no freshness is declared |
 
 Remaining freshness = `max-age` (or `Expires - Date` when absent) minus the current age (the larger of the `Age` header and "received at − `Date`"). A `max-age` that is present but invalid or negative counts as zero (RFC 9111 §4.2.1: invalid freshness information is treated as stale) — `Expires` does not rescue it. Neither mode attempts a `Last-Modified` heuristic.
+
+**Tolerance for malformed header values**: when a quote in `Cache-Control` is left unterminated, the parser does not swallow the directives that follow — it falls back to splitting on every comma and recognising each directive, so `no-store` inside `x="a,b, no-store` still takes effect (otherwise a response that must not be cached would be). Freshness directives (`max-age` / `s-maxage` / `stale-*`) that fall inside or after the unterminated quote are not trusted, so a malformed value cannot extend a cache lifetime; directives before the quote are trusted and apply as usual (the `Expires` rule is unchanged). Commas inside well-formed quotes stay exempt, and `quoted-pair` (`\"` / `\\`) is treated as an escape and unescaped when the value is read.
 
 `Server` / `Intersection` also parse the **request's** `Cache-Control` / `Pragma` and intersect them with the response side:
 
@@ -2727,11 +2729,11 @@ Sources compile as **C# 12**: every project declares `<LangVersion>12.0</LangVer
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2722 / 2709 | `net8.0` / `net6.0` | 5431 |
+| `AxiosNet.Tests` (core + declarative) | 2742 / 2731 | `net8.0` / `net6.0` | 5473 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests` (OpenAPI generation) | 80 | `net8.0` | 80 |
 | `AxiosNet.Compat.Tests` (netstandard2.0 compat asset) | 57 / 52 | `net8.0` / `net472` | 109 |
-| **Total** | **2928 / 2830** | | **5758** |
+| **Total** | **2948 / 2852** | | **5800** |
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed".
 

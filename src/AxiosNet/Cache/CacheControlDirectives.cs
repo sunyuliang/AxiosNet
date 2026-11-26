@@ -95,7 +95,10 @@ public sealed class CacheControlDirectives
 
             raw.Append(value);
 
-            foreach (var directive in SplitDirectives(value))
+            // 引号不成对说明头值畸形：切分退回「按所有逗号切开」，落在未闭合引号之后的内容不作为新鲜期来源。
+            var quotes = QuoteScan.Of(value);
+
+            foreach (var (directive, trusted) in SplitDirectives(value, quotes))
             {
                 var equals = directive.IndexOf('=');
                 var name = (equals < 0 ? directive : directive[..equals]).Trim();
@@ -105,8 +108,15 @@ public sealed class CacheControlDirectives
                 }
 
                 var argument = equals < 0 ? null : Unquote(directive[(equals + 1)..].Trim());
+                var lowered = name.ToLowerInvariant();
 
-                switch (name.ToLowerInvariant())
+                // 未闭合引号之后（含其内）的指令只接受收紧缓存的标志：放宽类（新鲜期 / stale-*）来自畸形头值，不采信。
+                if (!trusted && ExtendsCacheLifetime(lowered))
+                {
+                    continue;
+                }
+
+                switch (lowered)
                 {
                     case "no-store":
                         noStore = true;
@@ -173,9 +183,17 @@ public sealed class CacheControlDirectives
         };
     }
 
-    /// <summary>按逗号切开指令，引号内的逗号不算分隔符（扩展指令的值可能是带逗号的引号串）。</summary>
-    private static IEnumerable<string> SplitDirectives(string value)
+    /// <summary>按逗号切开指令，合法引号内的逗号不算分隔符（扩展指令的值可能是带逗号的引号串）。</summary>
+    /// <param name="value">头值。</param>
+    /// <param name="quotes">这条头值的引号扫描结果。</param>
+    /// <returns>指令文本，以及它是否可采信（见 <see cref="QuoteScan.IsTrusted"/>）。</returns>
+    /// <remarks>
+    /// 引号不成对时退回「按所有逗号切分」：后续的 <c>no-store</c> 不会被整段当成引号内容吞掉。
+    /// <c>quoted-pair</c>（<c>\"</c> / <c>\\</c>）里的引号不参与状态翻转，也不参与分隔。
+    /// </remarks>
+    private static IEnumerable<(string Text, bool Trusted)> SplitDirectives(string value, QuoteScan quotes)
     {
+        var quoteSensitive = quotes.Balanced;
         var start = 0;
         var quoted = false;
 
@@ -183,7 +201,14 @@ public sealed class CacheControlDirectives
         {
             var c = value[i];
 
-            if (c == '"')
+            if (quoteSensitive && c == '\\' && quoted && i + 1 < value.Length)
+            {
+                // 被转义的字符原样留在指令里，不参与分隔与状态判定。
+                i++;
+                continue;
+            }
+
+            if (quoteSensitive && c == '"')
             {
                 quoted = !quoted;
             }
@@ -192,7 +217,7 @@ public sealed class CacheControlDirectives
                 var part = value.AsSpan(start, i - start).Trim();
                 if (!part.IsEmpty)
                 {
-                    yield return part.ToString();
+                    yield return (part.ToString(), quotes.IsTrusted(i));
                 }
 
                 start = i + 1;
@@ -202,11 +227,56 @@ public sealed class CacheControlDirectives
         var tail = value.AsSpan(start).Trim();
         if (!tail.IsEmpty)
         {
-            yield return tail.ToString();
+            yield return (tail.ToString(), quotes.IsTrusted(value.Length));
         }
     }
 
-    /// <summary>去掉指令值两侧的双引号；空值返回 null。</summary>
+    /// <summary>一条头值的引号扫描结果：是否成对，以及第一个未闭合引号的起点。</summary>
+    private readonly struct QuoteScan
+    {
+        private QuoteScan(int brokenAt) => BrokenAt = brokenAt;
+
+        /// <summary>第一个未闭合引号的起点；引号成对时为 <c>-1</c>。</summary>
+        private int BrokenAt { get; }
+
+        /// <summary>引号是否成对；成对时引号内的逗号才享有豁免。</summary>
+        internal bool Balanced => BrokenAt < 0;
+
+        /// <summary>扫一遍引号；<c>quoted-pair</c>（<c>\"</c> / <c>\\</c>）里的引号不计入。</summary>
+        internal static QuoteScan Of(string value)
+        {
+            var open = -1;
+
+            for (var i = 0; i < value.Length; i++)
+            {
+                var c = value[i];
+
+                if (c == '\\' && open >= 0 && i + 1 < value.Length)
+                {
+                    // 跳过被转义的字符，它不改变引号状态。
+                    i++;
+                    continue;
+                }
+
+                if (c == '"')
+                {
+                    open = open < 0 ? i : -1;
+                }
+            }
+
+            return new QuoteScan(open);
+        }
+
+        /// <summary>这一段（终点不越过未闭合引号的起点）是否落在畸形引号之外，因而可以采信。</summary>
+        internal bool IsTrusted(int segmentEnd) => BrokenAt < 0 || segmentEnd <= BrokenAt;
+    }
+
+    /// <summary>这条指令会不会延长缓存寿命（给出新鲜期，或允许在过期后继续交旧内容）。</summary>
+    private static bool ExtendsCacheLifetime(string name)
+        => name is "max-age" or "s-maxage" or "stale-while-revalidate" or "stale-if-error";
+
+    /// <summary>去掉指令值两侧的双引号并解开 <c>quoted-pair</c>；空值返回 null。</summary>
+    /// <remarks>与 <see cref="SplitDirectives"/> 共用同一套转义规则，避免「切分认转义、取值不认」的不一致。</remarks>
     private static string? Unquote(string value)
     {
         if (value.Length == 0)
@@ -214,12 +284,31 @@ public sealed class CacheControlDirectives
             return null;
         }
 
-        if (value.Length >= 2 && value[0] == '"' && value[^1] == '"')
+        if (value.Length < 2 || value[0] != '"' || value[^1] != '"')
         {
-            return value[1..^1];
+            return value;
         }
 
-        return value;
+        var inner = value.AsSpan(1, value.Length - 2);
+
+        // 没有转义就直出，省掉一次分配。
+        if (inner.IndexOf('\\') < 0)
+        {
+            return inner.ToString();
+        }
+
+        var builder = new StringBuilder(inner.Length);
+        for (var i = 0; i < inner.Length; i++)
+        {
+            if (inner[i] == '\\' && i + 1 < inner.Length)
+            {
+                i++;
+            }
+
+            builder.Append(inner[i]);
+        }
+
+        return builder.ToString();
     }
 
     /// <summary>把 <c>max-age</c> 之类的秒数换成时长：非数字或负数返回 null，超出 <see cref="TimeSpan"/> 上限按无限长处理。</summary>

@@ -57,6 +57,10 @@
 
 ### Fixed
 
+- `Cache-Control` 的引号状态机不再让畸形头值吞掉后续指令：此前遇到未闭合引号会把后面的内容整段当成引号内的值，`max-age=60, x="a,b, no-store` 里的 `no-store` 因此被丢掉，本不该落库的响应被缓存了下来（`Server` / `Intersection` 模式下可复现）。现在引号不成对时退回「按所有逗号切分」逐条识别；未闭合引号之后（含其内）的新鲜期指令（`max-age` / `s-maxage` / `stale-*`）一律不采信，引号之前的指令本身可信、照常生效，因此畸形头值既吞不掉 `no-store`，也延长不了缓存寿命。合法引号内的逗号照旧豁免，`quoted-pair`（`\"` / `\\`）按转义处理并在取值时解开（取值含反斜杠的扩展指令会看到差异）。
+- `MemoryCacheStore` 覆盖同一个键时同样受 `MaxBytes` 约束：此前「覆盖已有键不增加条目数，满了也放行」让同一个键换成超大正文直接把占用推过上限（`ApproximateBytes` 可达上限的数倍），此后新键因容量不足被静默拒收、缓存退化成只读。现在覆盖前先退回旧条目的字节再按新尺寸重新判容量，放不下就保留旧条目。
+- 流式响应的包装流被释放后，读 / 写 / Flush 一律抛 `ObjectDisposedException`（消息为「响应流已释放」）：此前用同一个调用方令牌读第二次会命中已释放的链接源，抛出「The CancellationTokenSource has been disposed」这类内部实现细节（`TimeoutStream` 把链接源缓存了下来，`OnReleased` 已释放它）；预算在构造时即耗尽的流此前报成 `ECONNABORTED`，普通路径则可能静默读回 0。现在释放位在 `OnReleased` 里先置位，三条入口都先判释放态。
+- net6.0 上聚合正文里的 `DateOnly` / `TimeOnly` 成员改由库直接报错（`NotSupportedException`，消息指出改法与升级路径），请求不发出：此前结局取决于消费方实际加载的 System.Text.Json 版本——6.x 报错、7.x 起静默写成 `2026-10-22` 一类的字符串，与「在序列化阶段报错」的承诺不符。成员显式标了 `[Format]`、或实例钩子 `Serialization.ValueText` 给出文本形态时照旧按文本写出（线上形态由调用方选定）。net8.0 行为不变。
 - 声明式默认正文（`[Body]` / 未标注成员 / 多个 `[RootBody]` 合并出来的那个对象）的行为校准：
   - 键顺序＝声明顺序，`[Body]` 不再被整段提前到 `[RootBody]` 之前；
   - 成员没有 `[Format]` 时照样走实例钩子 `Serialization.ValueText`，集合成员逐元素问钩子、钩子不处理的元素按声明类型写出；

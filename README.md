@@ -3,8 +3,8 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2928%20passed-success)](#构建与测试)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2771%20passed-success)](#构建与测试)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2948%20passed-success)](#构建与测试)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2852%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-92.2%25_(branch_87.5%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -2299,7 +2299,7 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 | `ConditionalRequests` | `true` | 过期条目带 `ETag` / `Last-Modified` 时发条件请求，304 直接复用缓存的正文（见下） |
 | `Store` | `null` | 条目存储，`null` = 内置 `MemoryCacheStore`；接 Redis / 共享缓存时换成自己的 `IAxiosCacheStore` |
 | `MaxEntries` | 1024 | 内置内存存储的条目上限：满了先清过期条目，仍满就不再收新条目（自建 `Store` 时本项不生效） |
-| `MaxBytes` | 64 MB | 内置内存存储的近似字节上限（正文 + 头长度估算，`0` = 不限制）：和条目满同一口径，放不下就不收新条目（自建 `Store` 时本项不生效） |
+| `MaxBytes` | 64 MB | 内置内存存储的近似字节上限（正文 + 头长度估算，`0` = 不限制）：和条目满同一口径，放不下就不收新条目；**覆盖同一个键同样受限**——新正文放不下时保留旧条目，占用不会越过上限（自建 `Store` 时本项不生效） |
 | `StoreTimeout` | 2 秒 | 单次落库超时：存储挂起时按「这次没缓存」处理，不把响应一起拖住（`null` / 非正数 = 不限时；只约束自建存储；实际等待还被剩余 `Resilience.TotalTimeout` 封顶） |
 | `KeySelector` | `null` | 自定义键（参数是生效配置与最终 URL），默认 `AxiosCache.CreateKey` |
 | `ShouldCache` | 默认口径 | 哪些请求参与缓存，默认为 `AxiosCache.IsCacheable`（GET / HEAD、无短路响应、非流式、无请求体、非范围请求），可在此基础上组合 |
@@ -2327,6 +2327,8 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 | `Intersection` | 同上（服务器与请求侧否决都优先） | `min(TimeToLive, 剩余新鲜期, 请求的 max-age)`；无新鲜期时用 `TimeToLive` |
 
 剩余新鲜期 = `max-age`（没有则 `Expires - Date`）减去龄期（`Age` 头与「收到时刻 − `Date`」的较大值）。`max-age` 出现但值非法或为负时按零（RFC 9111 §4.2.1：无效的新鲜期信息按已过期处理），此时 `Expires` 不再兜底。两种解析模式都不做 `Last-Modified` 启发式估算。
+
+**畸形头值的容错口径**：`Cache-Control` 里引号不闭合时，解析器不会把后面的指令当成引号内容吞掉——它退回「按所有逗号切分」逐条识别，因此 `x="a,b, no-store` 里的 `no-store` 仍然生效（否则本不该缓存的响应会被缓存）。落在未闭合引号之后（含其内）的新鲜期指令（`max-age` / `s-maxage` / `stale-*`）不采信，避免畸形头值延长缓存寿命；引号之前的指令本身可信，照常生效（`Expires` 的规则不变）。合法引号内的逗号照旧豁免，`quoted-pair`（`\"` / `\\`）按转义处理并在取值时解开。
 
 `Server` / `Intersection` 同时解析**请求**侧的 `Cache-Control` / `Pragma`，与响应侧取交集：
 
@@ -2729,11 +2731,11 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 2722 / 2709 | `net8.0` / `net6.0` | 5431 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2742 / 2731 | `net8.0` / `net6.0` | 5473 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests`（OpenAPI 生成） | 80 | `net8.0` | 80 |
 | `AxiosNet.Compat.Tests`（netstandard2.0 兼容资产） | 57 / 52 | `net8.0` / `net472` | 109 |
-| **合计** | **2928 / 2830** | | **5758** |
+| **合计** | **2948 / 2852** | | **5800** |
 
 表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。
 
