@@ -20,33 +20,39 @@ public sealed class RequestAllocationTests
 
     /// <summary>
     /// 每请求分配上界（`GetAsync&lt;string&gt;`，stub handler，空正文）。门槛只用来抓「又多了几个每请求对象」，
-    /// 改完热路径要跟着下调，不要放宽；两档差异来自 BCL 自身（net6 的请求 / 响应对象比 net8 多约 170 B）。
-    /// 默认 <see cref="AxiosConfig.Timeout"/> = 100 秒，所以每次尝试会建一个计时 CTS（实测约 368 B），已计入上界。
+    /// 改完热路径要跟着下调，不要放宽。
     /// </summary>
+    /// <remarks>
+    /// 上界 = 整套串跑实测上沿 + 48 B 稳定带（实测 2,008 / 2,056 B 两个进程级稳态，带内不判红）。
+    /// 两档差异来自 BCL 自身（net6 的请求 / 响应对象比 net8 多约 170 B）；默认 <see cref="AxiosConfig.Timeout"/> = 100 秒，
+    /// 每次尝试会建一个计时 CTS（实测约 368 B），已计入上界。
+    /// </remarks>
 #if NET6_0
-    private const long GetStringBudgetBytes = 2228;
+    private const long GetStringBudgetBytes = 2272;
 #else
-    private const long GetStringBudgetBytes = 2048;
+    private const long GetStringBudgetBytes = 2104;
 #endif
 
     /// <summary>
     /// 带 2 个 params 的每请求分配上界。查询串按「先算准容量、再写进池化缓冲」产出，门槛只用来抓
     /// 「又回到攒中间集合 / 中间字符串」的写法；改完热路径要跟着下调，不要放宽。
     /// </summary>
+    /// <remarks>上界 = 整套串跑实测上沿 + 48 B 稳定带（实测 2,296 / 2,344 B 两个进程级稳态）。</remarks>
 #if NET6_0
-    private const long GetWithParamsBudgetBytes = 2518;
+    private const long GetWithParamsBudgetBytes = 2560;
 #else
-    private const long GetWithParamsBudgetBytes = 2348;
+    private const long GetWithParamsBudgetBytes = 2392;
 #endif
 
     /// <summary>
     /// 带嵌套 params 的每请求分配上界。嵌套展平的祖先链按池化数组复用，门槛只用来抓
     /// 「每层又新造一个环检测集合」的写法；改完热路径要跟着下调，不要放宽。
     /// </summary>
+    /// <remarks>上界 = 整套串跑实测上沿 + 48 B 稳定带（实测 2,616 / 2,664 B 两个进程级稳态）。</remarks>
 #if NET6_0
-    private const long GetWithNestedParamsBudgetBytes = 2838;
+    private const long GetWithNestedParamsBudgetBytes = 2880;
 #else
-    private const long GetWithNestedParamsBudgetBytes = 2668;
+    private const long GetWithNestedParamsBudgetBytes = 2712;
 #endif
 
     /// <summary>
@@ -185,10 +191,15 @@ public sealed class RequestAllocationTests
             + "——嵌套展平又在每层新造环检测集合；若是有意优化，请连这条上界一起下调。");
     }
 
-    /// <summary>取多个测量窗口里的最小值：只看最干净的一轮，压掉并发与 GC 抖动。</summary>
+    /// <summary>先预热 64 次（一次性建缓存与 Tier0 编译不进窗口），再取 3 个测量窗口的最小值：只看最干净的一轮。</summary>
     private static long MinimumBytes(int iterations, Action action, int windows = 3)
     {
-        action();
+        const int WarmupIterations = 64;
+        for (var i = 0; i < WarmupIterations; i++)
+        {
+            action();
+        }
+
         var best = long.MaxValue;
         for (var window = 0; window < windows; window++)
         {
