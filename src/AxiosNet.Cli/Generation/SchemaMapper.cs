@@ -100,7 +100,7 @@ internal sealed class SchemaMapper
 
         // 顶层是 $ref 时先解引用，再判断能否按类展开。
         var resolved = schema is null ? null : schema["$ref"] is null ? schema : _refs.Resolve(schema, location);
-        if (resolved is not { IsObject: true } || !IsClassLike(resolved))
+        if (resolved is not { IsObject: true } || !SchemaShape.IsClassLike(resolved))
         {
             return false;
         }
@@ -126,7 +126,7 @@ internal sealed class SchemaMapper
         return properties.Count > 0;
     }
 
-    /// <summary>真正的映射分支：$ref → enum → oneOf/anyOf → 对象 → 对象/数组/原始类型，未知一律降级。</summary>
+    /// <summary>真正的映射分支：形态判定交给 <see cref="SchemaShape.Of"/>，这里只按形态出类型，未知一律降级。</summary>
     private TypeRef MapCore(SpecNode schema, string suggestedName, string location)
     {
         if (schema["$ref"]?.AsString() is { } reference)
@@ -135,19 +135,35 @@ internal sealed class SchemaMapper
             return IsNullable(schema) ? mapped with { Nullable = true } : mapped;
         }
 
-        // 可空性在各分支之间传递；type 为多值时 ReadType 会置 conflict，直接降级。
+        // 可空性在各分支之间传递。
         var nullable = IsNullable(schema);
-        var (typeName, conflict) = ReadType(schema, location);
-        if (conflict)
-        {
-            return new TypeRef("JsonElement", true, nullable);
-        }
+        var shape = SchemaShape.Of(schema);
 
-        if (schema["enum"] is { IsArray: true } enumNode && enumNode.Items.Count > 0)
+        switch (shape.Kind)
         {
-            return MapEnum(schema, enumNode, suggestedName, location, typeName, nullable);
-        }
+            case SchemaShapeKind.Enum:
+                return MapEnum(schema, schema["enum"]!, suggestedName, location, shape.Type, nullable);
 
+            case SchemaShapeKind.Union:
+                return MapUnion(schema, suggestedName, location, nullable);
+
+            case SchemaShapeKind.ClassLike:
+                return MapInlineClass(schema, suggestedName, location, nullable);
+
+            case SchemaShapeKind.Array:
+                return MapArray(schema, suggestedName, location, nullable);
+
+            case SchemaShapeKind.Primitive:
+                return MapPrimitive(shape.Type!, shape.Format, nullable);
+
+            default:
+                return MapUnknown(schema, shape, suggestedName, location, nullable);
+        }
+    }
+
+    /// <summary>联合类型：把成员类型照常登记，集合本身按 JsonElement 交付；<c>oneOf</c> / <c>anyOf</c> 只有警告码不同。</summary>
+    private TypeRef MapUnion(SpecNode schema, string suggestedName, string location, bool nullable)
+    {
         if (schema["oneOf"] is { IsArray: true } oneOf && oneOf.Items.Count > 0)
         {
             RegisterUnionMembers(oneOf, suggestedName, location);
@@ -158,35 +174,35 @@ internal sealed class SchemaMapper
             return new TypeRef("JsonElement", true, nullable);
         }
 
-        if (schema["anyOf"] is { IsArray: true } anyOf && anyOf.Items.Count > 0)
+        RegisterUnionMembers(schema["anyOf"]!, suggestedName, location);
+        _warnings.Add(
+            "ANYOF_FALLBACK",
+            location,
+            $"anyOf 无法用声明式接口表达：类型按 JsonElement 生成，成员类型一并生成供调用方自行判别。");
+        return new TypeRef("JsonElement", true, nullable);
+    }
+
+    /// <summary>形态为「未知」时的降级：多值 <c>type</c> 与 <c>object</c> / <c>null</c> / 未知类型各自落到 JsonElement 或自由对象。</summary>
+    private TypeRef MapUnknown(
+        SpecNode schema,
+        SchemaShape shape,
+        string suggestedName,
+        string location,
+        bool nullable)
+    {
+        if (shape.ConflictingTypes is { } types)
         {
-            RegisterUnionMembers(anyOf, suggestedName, location);
             _warnings.Add(
-                "ANYOF_FALLBACK",
+                "MULTIPLE_TYPES",
                 location,
-                $"anyOf 无法用声明式接口表达：类型按 JsonElement 生成，成员类型一并生成供调用方自行判别。");
+                $"type 同时声明了 {string.Join(" / ", types)}，按 JsonElement 处理。");
             return new TypeRef("JsonElement", true, nullable);
         }
 
-        if (IsClassLike(schema))
-        {
-            return MapInlineClass(schema, suggestedName, location, nullable);
-        }
-
-        switch (typeName)
+        switch (shape.Type)
         {
             case "object":
                 return MapFreeFormObject(schema, suggestedName, location, nullable);
-
-            case "array":
-                return MapArray(schema, suggestedName, location, nullable);
-
-            case "string":
-            case "integer":
-            case "number":
-            case "boolean":
-            case "file":
-                return MapPrimitive(typeName, schema["format"]?.AsString(), nullable);
 
             case null:
                 return schema["additionalProperties"] is not null
@@ -197,7 +213,7 @@ internal sealed class SchemaMapper
                 return new TypeRef("JsonElement", true, true);
 
             default:
-                _warnings.Add("UNKNOWN_SCHEMA_TYPE", location, $"未知 schema 类型 {typeName}，按 JsonElement 处理。");
+                _warnings.Add("UNKNOWN_SCHEMA_TYPE", location, $"未知 schema 类型 {shape.Type}，按 JsonElement 处理。");
                 return new TypeRef("JsonElement", true, nullable);
         }
     }
@@ -242,7 +258,7 @@ internal sealed class SchemaMapper
         var rawName = RefResolver.LastSegment(reference);
         var nullable = IsNullable(target);
 
-        if (IsClassLike(target))
+        if (SchemaShape.IsClassLike(target))
         {
             var name = UniqueTypeName(rawName);
             var type = new ApiType
@@ -533,43 +549,6 @@ internal sealed class SchemaMapper
         }
     }
 
-    /// <summary>读 schema 的 <c>type</c>：数组形式时剔除 null 后只剩一种才算明确，多值返回 Conflict。</summary>
-    private (string? Type, bool Conflict) ReadType(SpecNode schema, string location)
-    {
-        var node = schema["type"];
-        if (node is null)
-        {
-            return (null, false);
-        }
-
-        if (!node.IsArray)
-        {
-            return (node.AsString(), false);
-        }
-
-        // 3.1 允许 type 是数组；null 只表达可空，不算真正的第二类型。
-        var types = node.Items
-            .Select(item => item.AsString())
-            .Where(type => !string.IsNullOrEmpty(type) && type != "null")
-            .ToList();
-
-        if (types.Count == 0)
-        {
-            return ("null", false);
-        }
-
-        if (types.Count > 1)
-        {
-            _warnings.Add(
-                "MULTIPLE_TYPES",
-                location,
-                $"type 同时声明了 {string.Join(" / ", types)}，按 JsonElement 处理。");
-            return (null, true);
-        }
-
-        return (types[0], false);
-    }
-
     /// <summary>把（可能含 allOf 的）对象 schema 展开成 <see cref="ApiType"/> 的属性列表。</summary>
     private void FillClass(ApiType type, SpecNode schema)
     {
@@ -719,11 +698,6 @@ internal sealed class SchemaMapper
             hasExtension = true;
         }
     }
-
-    /// <summary>判断 schema 是否应该生成命名类：有非空 properties 或非空 allOf。</summary>
-    private static bool IsClassLike(SpecNode schema)
-        => (schema["properties"] is { IsObject: true } properties && properties.Object.Count > 0)
-           || (schema["allOf"] is { IsArray: true } allOf && allOf.Items.Count > 0);
 
     /// <summary>判断 schema 是否可空：兼容 3.0 的 nullable / x-nullable 与 3.1 的 <c>type: [..., "null"]</c>。</summary>
     private static bool IsNullable(SpecNode schema)

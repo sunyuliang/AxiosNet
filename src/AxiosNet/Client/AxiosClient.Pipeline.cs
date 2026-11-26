@@ -36,7 +36,6 @@ public sealed partial class AxiosClient
         // 总预算计时起点：调用入口。
         var entryTimestamp = Stopwatch.GetTimestamp();
 
-        // 遥测状态全是局部量。
         AxiosConfig? config = null;
         Uri? telemetryUri = null;
 
@@ -44,21 +43,14 @@ public sealed partial class AxiosClient
         // 拦截器可以换掉整份配置（换过的配置不再携带它），改判不能因此失效。
         var constructionFailureMap = perCallConfig.ConstructionFailureMap;
 
-        // 本次请求认下的观测实现。
-        GuardedTelemetrySink? telemetry = null;
-        var telemetryEntered = false;
-        var telemetryStart = 0L;
-        AxiosRequestTrace telemetryTrace = default;
-
-        // 观测收尾（ExitRequest → span 收尾）打包成一次 Dispose。
-        TelemetryScope telemetryScope = default;
+        // 观测会话：进入 / 成功 / 失败 / 收尾都走它；未开观测时全是空操作。
+        TelemetrySession telemetry = default;
 
         // 缓存状态。
         AxiosCache? cache = null;
         string? cacheKey = null;
         AxiosCacheFlight? flight = null;
         CacheRequestDirectives cacheDirectives = CacheRequestDirectives.None;
-        var cacheMissed = false;
 
         try
         {
@@ -125,71 +117,17 @@ public sealed partial class AxiosClient
             if (config.Caching is { } configuredCache && configuredCache.CanHandle(config))
             {
                 cache = configuredCache;
-                cacheKey = configuredCache.KeyFor(config, plan.Uri);
 
-                // 请求侧 Cache-Control / Pragma：只有非 Configured 模式才解析。
-                cacheDirectives = configuredCache.ReadRequestDirectives(config);
+                var attempt = await TryServeFromCacheAsync(cache, config, plan.Uri, deadlineTimestamp, dataType, target)
+                    .ConfigureAwait(false);
 
-                // 请求要求绕开缓存时不查、不参与单飞，但仍会尝试落库。
-                if (!cacheDirectives.SkipLookup)
+                cacheKey = attempt.Key;
+                flight = attempt.Flight;
+                cacheDirectives = attempt.Directives;
+
+                if (attempt.Served is { } served)
                 {
-                    if (await configuredCache.TryGetAsync(cacheKey, config, deadlineTimestamp).ConfigureAwait(false) is { } cachedReply)
-                    {
-                        AxiosTelemetry.Dispatch.CacheHit(config);
-                        return await CompleteShortCircuitAsync(cachedReply, config, dataType, target).ConfigureAwait(false);
-                    }
-
-                    cacheMissed = true;
-
-                    if (configuredCache.SingleFlight)
-                    {
-                        flight = configuredCache.Join(cacheKey);
-
-                        if (!flight.IsLeader)
-                        {
-                            try
-                            {
-                                var sharedReply = await AwaitFlightAsync(flight, config, deadlineTimestamp).ConfigureAwait(false);
-
-                                if (sharedReply is not null)
-                                {
-                                    AxiosTelemetry.Dispatch.CacheHit(config);
-                                    cacheMissed = false;
-                                    return await CompleteShortCircuitAsync(sharedReply, config, dataType, target).ConfigureAwait(false);
-                                }
-                            }
-                            finally
-                            {
-                                // 跟随者不落库、不参与广播。
-                                flight = null;
-                            }
-                        }
-                    }
-                }
-
-                // 查过没有且真要发出去：计一次未命中。
-                if (cacheMissed)
-                {
-                    AxiosTelemetry.Dispatch.CacheMiss(config);
-                }
-
-                // 请求侧否决落库时不必为缓存复制正文。
-                config.CacheCaptureRawBody = cacheDirectives.CanStore;
-
-                // 条件请求：拿带校验器的旧条目，把校验器写成条件头。
-                // no-store 不读缓存；调用方自己写了条件头时以调用方为准（不覆盖、也不接管 304）。
-                if (configuredCache.ConditionalRequests
-                    && !cacheDirectives.NoStore
-                    && !HasCallerConditionalHeaders(config))
-                {
-                    var revalidation = await configuredCache
-                        .TryGetRevalidationAsync(cacheKey, config, deadlineTimestamp)
-                        .ConfigureAwait(false);
-
-                    if (revalidation is not null && CacheValidators.HasAny(revalidation))
-                    {
-                        config.RevalidationEntry = revalidation;
-                    }
+                    return served;
                 }
             }
 
@@ -197,25 +135,9 @@ public sealed partial class AxiosClient
             telemetryUri = plan.Uri;
 
             // 一次请求只认一个实现：判开 / 记进 / 开 span 用同一对象。
-            telemetry = AxiosTelemetry.Dispatch;
-            if (telemetry.IsEnabled(config))
-            {
-                telemetryStart = AxiosTelemetry.Timestamp;
+            telemetry = TelemetrySession.Enter(config, telemetryUri);
 
-                // 「已进」只在 EnterRequest 真的返回后置位。
-                telemetryEntered = telemetry.TryEnterRequest();
-
-                // 收尾快照先落定，后续任何一步抛异常都不能漏掉这次「出」。
-                telemetryScope = new TelemetryScope(telemetry, telemetryEntered);
-
-                if (telemetryEntered)
-                {
-                    telemetryTrace = telemetry.StartRequest(config, plan.Uri);
-                    telemetryScope = telemetryScope.WithTrace(telemetryTrace);
-                }
-            }
-
-            var template = CreateRequestMessage(config, plan, telemetryTrace);
+            var template = CreateRequestMessage(config, plan, telemetry.Trace);
 
             // 401 重放需要在第二次发送前继续持有正文。
             AxiosException? attemptFailure = null;
@@ -249,7 +171,7 @@ public sealed partial class AxiosClient
                 // 条件请求的 304：正文来自缓存，单独计数。
                 if (result.CacheRevalidated)
                 {
-                    AxiosTelemetry.Dispatch.CacheRevalidated(config, telemetryTrace);
+                    AxiosTelemetry.Dispatch.CacheRevalidated(config, telemetry.Trace);
                 }
 
                 // 落库 + 放行跟随者，都在返回之前完成。
@@ -259,11 +181,8 @@ public sealed partial class AxiosClient
                     flight = null;
                 }
 
-                if (telemetryEntered)
-                {
-                    // 放在落库之后、template.Dispose() 之前。
-                    telemetry!.RequestSucceeded(config, plan.Uri, result, telemetryStart, telemetryTrace);
-                }
+                // 放在落库之后、template.Dispose() 之前。
+                telemetry.RequestSucceeded(config, plan.Uri, result);
 
                 return result;
             }
@@ -275,36 +194,13 @@ public sealed partial class AxiosClient
             finally
             {
                 // 正文随模板一起释放；401 重放时交给失败的配置。
-                if (config.RetainBodyContent
-                    && attemptFailure is { Status: 401 }
-                    && template.Content is not null
-                    && attemptFailure.Config is { } failureConfig)
-                {
-                    failureConfig.RetainedReplayContent = template.Content;
-                    template.Content = null;
-                }
-
+                HandoffBodyForReplay(config, template, attemptFailure);
                 template.Dispose();
             }
         }
         catch (Exception ex)
         {
-            // 领导者失败：HTTP 状态类失败把状态 / 头 / 原始正文共享给跟随者，各自判定；
-            // 传输 / 取消类失败按约定广播。流式响应或拿不到原始字节时跟随者补发。
-            if (flight is not null && cache is not null && cacheKey is not null)
-            {
-                if (ex is AxiosException { Response: not null } statusFailure && config is not null)
-                {
-                    cache.CompleteFlight(
-                        cacheKey,
-                        flight,
-                        TryCreateSharedFailureReply(statusFailure.Response, config, cache));
-                }
-                else
-                {
-                    cache.FailFlight(cacheKey, flight, ex);
-                }
-            }
+            BroadcastFlightFailure(cache, cacheKey, flight, config, ex);
 
             // 失败路径不落库，内部缓冲只服务单飞共享。
             if (ex is AxiosException { Response: { } failedResponse })
@@ -313,10 +209,7 @@ public sealed partial class AxiosClient
             }
 
             // 记录后原样抛出；观测异常已被派发层兜住。
-            if (telemetryEntered)
-            {
-                telemetry!.RequestFailed(config, telemetryUri, ex, telemetryStart, telemetryTrace);
-            }
+            telemetry.RequestFailed(config, telemetryUri, ex);
 
             // 声明式入口的装配失败改判：原始异常仍是 Cause，对外错误码由声明方决定（见 ConstructionFailureMap）。
             // 本次请求的改判器优先，异常自身带的配置只做兜底。
@@ -339,7 +232,7 @@ public sealed partial class AxiosClient
             // 收尾各段互不连坐，且都不把异常带给调用方。
             try
             {
-                telemetryScope.Dispose();
+                telemetry.Dispose();
             }
             finally
             {
@@ -564,6 +457,106 @@ public sealed partial class AxiosClient
             template.Dispose();
             throw;
         }
+    }
+
+    /// <summary>401 且开了正文保留时，把模板里的正文交给失败配置，供重放复用。</summary>
+    /// <param name="config">本次请求的生效配置（<c>RetainBodyContent</c> 取自这里）。</param>
+    /// <param name="template">持有正文的请求模板。</param>
+    /// <param name="failure">本次失败的异常；只有 401 状态失败才交接。</param>
+    private static void HandoffBodyForReplay(AxiosConfig config, HttpRequestMessage template, AxiosException? failure)
+    {
+        if (config.RetainBodyContent
+            && failure is { Status: 401 }
+            && template.Content is not null
+            && failure.Config is { } failureConfig)
+        {
+            failureConfig.RetainedReplayContent = template.Content;
+            template.Content = null;
+        }
+    }
+
+    /// <summary>一次请求的观测会话：进入、成功、失败、收尾各自封装，未开观测时全是空操作。</summary>
+    /// <remarks>进入时快照一个实现，整条请求只认它；<c>ExitRequest</c> 与 span 停止的成对性由 <see cref="TelemetryScope"/> 保证。</remarks>
+    private readonly struct TelemetrySession : IDisposable
+    {
+        private readonly GuardedTelemetrySink? _sink;
+        private readonly TelemetryScope _scope;
+        private readonly bool _entered;
+        private readonly long _start;
+        private readonly AxiosRequestTrace _trace;
+
+        private TelemetrySession(
+            GuardedTelemetrySink? sink,
+            TelemetryScope scope,
+            bool entered,
+            long start,
+            AxiosRequestTrace trace)
+        {
+            _sink = sink;
+            _scope = scope;
+            _entered = entered;
+            _start = start;
+            _trace = trace;
+        }
+
+        /// <summary>按配置判定是否观测，并完成进入与 span 开启；未开观测时返回默认值（各项操作皆为空）。</summary>
+        /// <param name="config">本次请求的生效配置。</param>
+        /// <param name="uri">最终 URL。</param>
+        internal static TelemetrySession Enter(AxiosConfig config, Uri uri)
+        {
+            // 一次请求只认一个实现：判开 / 记进 / 开 span 用同一对象。
+            var sink = AxiosTelemetry.Dispatch;
+            if (!sink.IsEnabled(config))
+            {
+                return default;
+            }
+
+            var start = AxiosTelemetry.Timestamp;
+
+            // 「已进」只在 EnterRequest 真的返回后置位。
+            var entered = sink.TryEnterRequest();
+
+            // 收尾快照先落定，后续任何一步抛异常都不能漏掉这次「出」。
+            var scope = new TelemetryScope(sink, entered);
+
+            if (!entered)
+            {
+                return new TelemetrySession(sink, scope, entered: false, start, default);
+            }
+
+            var trace = sink.StartRequest(config, uri);
+            return new TelemetrySession(sink, scope.WithTrace(trace), entered: true, start, trace);
+        }
+
+        /// <summary>本次请求的 span 句柄；未开观测时为默认值。</summary>
+        internal AxiosRequestTrace Trace => _trace;
+
+        /// <summary>请求成功：交给观测实现记录；收尾仍由 <see cref="Dispose"/> 统一执行。</summary>
+        /// <param name="config">本次请求的生效配置。</param>
+        /// <param name="uri">最终 URL。</param>
+        /// <param name="response">已落库的响应。</param>
+        internal void RequestSucceeded(AxiosConfig config, Uri uri, AxiosResponse response)
+        {
+            if (_entered)
+            {
+                _sink!.RequestSucceeded(config, uri, response, _start, _trace);
+            }
+        }
+
+        /// <summary>请求失败：错误原样记录，异常本身仍由调用方抛出。</summary>
+        /// <param name="config">本次请求的生效配置；进入观测之前就失败时为 <c>null</c>。</param>
+        /// <param name="uri">最终 URL；进入观测之前就失败时为 <c>null</c>。</param>
+        /// <param name="error">触发失败的异常。</param>
+        internal void RequestFailed(AxiosConfig? config, Uri? uri, Exception error)
+        {
+            if (_entered)
+            {
+                _sink!.RequestFailed(config, uri, error, _start, _trace);
+            }
+        }
+
+        /// <summary>退出观测并停止 span；异常不外抛。</summary>
+        public void Dispose() => _scope.Dispose();
     }
 
     /// <summary>一次请求的观测收尾：<c>ExitRequest</c> 与 span 收尾按固定顺序执行。</summary>

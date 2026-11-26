@@ -311,6 +311,6 @@ public sealed class CacheControlDirectives
     }
 
     /// <summary>把 <c>max-age</c> 之类的秒数换成时长：非数字或负数返回 null，超出 <see cref="TimeSpan"/> 上限按无限长处理。</summary>
-    /// <remarks>与响应侧共用 <see cref="AxiosCache.ParseSeconds"/>：两侧对同一个秒数必须给出同一结论。</remarks>
-    private static TimeSpan? ParseSeconds(string? argument) => AxiosCache.ParseSeconds(argument);
+    /// <remarks>与响应侧共用 <see cref="HttpCacheSemantics.ParseSeconds"/>：两侧对同一个秒数必须给出同一结论。</remarks>
+    private static TimeSpan? ParseSeconds(string? argument) => HttpCacheSemantics.ParseSeconds(argument);
 }

@@ -738,8 +738,8 @@ internal sealed class ApiReader
         => type.Name == "string" || (type.IsValueType && type.Name != "JsonElement");
 
     /// <summary>
-    /// 在类型映射之前按 schema 形态判断参数能否落成标量：与 <see cref="SchemaMapper"/> 的分支顺序保持一致
-    /// （$ref → enum → oneOf/anyOf → 对象 → 数组 / 原始类型）。返回的第二项区分数组，用于选警告码。
+    /// 在类型映射之前按 schema 形态判断参数能否落成标量。形态判定统一在 <see cref="SchemaShape.Of"/>，
+    /// 这里只做策略判断；返回的第二项区分数组，用于选警告码。
     /// </summary>
     private (bool Scalar, bool Array) ClassifyParameterSchema(SpecNode? schema, string location)
     {
@@ -749,75 +749,41 @@ internal sealed class ApiReader
             return (false, false);
         }
 
-        // enum 在映射里先于对象 / 数组分支，结果一定是枚举或基础类型（都是标量）。
-        if (resolved["enum"] is { IsArray: true } enumNode && enumNode.Items.Count > 0)
-        {
-            return (true, false);
-        }
+        var shape = SchemaShape.Of(resolved);
 
-        // oneOf / anyOf 一律降级为 JsonElement，运行时不算标量。
-        if (resolved["oneOf"] is { IsArray: true } oneOf && oneOf.Items.Count > 0)
+        return shape.Kind switch
         {
-            return (false, false);
-        }
+            // enum 在映射里先于对象 / 数组分支，结果一定是枚举或基础类型（都是标量）。
+            SchemaShapeKind.Enum => (true, false),
 
-        if (resolved["anyOf"] is { IsArray: true } anyOf && anyOf.Items.Count > 0)
-        {
-            return (false, false);
-        }
+            // 数组：落成集合参数，按数组口径报错。
+            SchemaShapeKind.Array => (false, true),
 
-        // 有 properties / allOf 的 schema 会生成类，不是标量。
-        if (IsClassLike(resolved))
-        {
-            return (false, false);
-        }
+            SchemaShapeKind.Primitive => (IsScalarPrimitive(shape), false),
 
-        switch (EffectiveType(resolved))
+            // Union / ClassLike / Unknown 一律降级成 JsonElement 或 byte[]，运行时不算标量。
+            _ => (false, false)
+        };
+    }
+
+    /// <summary>原始类型里哪些算标量：<c>string</c> 除 <c>format=byte</c> / <c>binary</c>（映射成 <c>byte[]</c>）之外都算。</summary>
+    private static bool IsScalarPrimitive(SchemaShape shape)
+    {
+        switch (shape.Type)
         {
             case "string":
-                // format=byte / binary 映射成 byte[]，运行时同样不算标量。
-                var format = resolved["format"]?.AsString();
-                return (format is not ("byte" or "binary"), false);
+                return shape.Format is not ("byte" or "binary");
 
             case "integer":
             case "number":
             case "boolean":
-                return (true, false);
-
-            case "array":
-                return (false, true);
+                return true;
 
             default:
-                // object / file / null / 未知 / 多类型都降级成 JsonElement 或 byte[]，不是标量。
-                return (false, false);
+                // file 映射成 byte[]，不算标量。
+                return false;
         }
     }
-
-    /// <summary>取 schema 的有效 <c>type</c>：3.1 的数组形式剔除 null 后只剩一种才算明确，否则视为未知。</summary>
-    private static string? EffectiveType(SpecNode schema)
-    {
-        var node = schema["type"];
-        if (node is null)
-        {
-            return null;
-        }
-
-        if (!node.IsArray)
-        {
-            return node.AsString();
-        }
-
-        var types = node.Items
-            .Select(item => item.AsString())
-            .Where(type => !string.IsNullOrEmpty(type) && type != "null")
-            .ToList();
-        return types.Count == 1 ? types[0] : null;
-    }
-
-    /// <summary>判断 schema 是否会生成命名类：有非空 properties 或非空 allOf（与映射器口径一致）。</summary>
-    private static bool IsClassLike(SpecNode schema)
-        => (schema["properties"] is { IsObject: true } properties && properties.Object.Count > 0)
-           || (schema["allOf"] is { IsArray: true } allOf && allOf.Items.Count > 0);
 
     /// <summary>决定数组型查询参数的序列化格式：优先扩展字段 x-axios-collection-format，再按 OpenAPI style/explode 推导。</summary>
     private string CollectionFormat(SpecNode parameter, string location, string wireName)

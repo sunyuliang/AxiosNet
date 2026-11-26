@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using AxiosNet.Cache;
 using AxiosNet.Pipeline;
 using AxiosNet.Telemetry;
@@ -79,6 +80,149 @@ public sealed partial class AxiosClient
         }
     }
 
+    /// <summary>缓存阶段的冷路径：查命中、参与单飞、读请求指令、准备条件请求；命中时直接给出已成型的响应。</summary>
+    /// <param name="cache">本次请求的缓存策略（准入已由 <see cref="AxiosCache.CanHandle"/> 判定）。</param>
+    /// <param name="config">本次请求的生效配置；<c>CacheCaptureRawBody</c> 与 <c>RevalidationEntry</c> 由这里写回。</param>
+    /// <param name="uri">最终 URL，用于建键。</param>
+    /// <param name="deadlineTimestamp">总预算截止时间戳，读条目与等同伴都受它约束。</param>
+    /// <param name="dataType">泛型入口的数据类型，命中交付时按它重新解析正文。</param>
+    /// <param name="target">复用的响应对象（重放路径可能传入）。</param>
+    // netstandard2.0 编译器不接受方法级 AsyncMethodBuilder（CS0592）：兼容资产上摘掉该特性。
+#if !NETSTANDARD2_0
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<CacheAttempt> TryServeFromCacheAsync(
+        AxiosCache cache,
+        AxiosConfig config,
+        Uri uri,
+        long deadlineTimestamp,
+        Type? dataType,
+        AxiosResponse? target)
+    {
+        var key = cache.KeyFor(config, uri);
+
+        // 请求侧 Cache-Control / Pragma：只有非 Configured 模式才解析。
+        var directives = cache.ReadRequestDirectives(config);
+
+        AxiosCacheFlight? flight = null;
+        var cacheMissed = false;
+
+        try
+        {
+            // 请求要求绕开缓存时不查、不参与单飞，但仍会尝试落库。
+            if (!directives.SkipLookup)
+            {
+                if (await cache.TryGetAsync(key, config, deadlineTimestamp).ConfigureAwait(false) is { } cachedReply)
+                {
+                    AxiosTelemetry.Dispatch.CacheHit(config);
+                    var hit = await CompleteShortCircuitAsync(cachedReply, config, dataType, target).ConfigureAwait(false);
+                    return new CacheAttempt(hit, key, Flight: null, directives);
+                }
+
+                cacheMissed = true;
+
+                if (cache.SingleFlightEnabled)
+                {
+                    flight = cache.SingleFlight.Join(key);
+
+                    if (!flight.IsLeader)
+                    {
+                        try
+                        {
+                            var sharedReply = await AwaitFlightAsync(flight, config, deadlineTimestamp).ConfigureAwait(false);
+
+                            if (sharedReply is not null)
+                            {
+                                AxiosTelemetry.Dispatch.CacheHit(config);
+                                cacheMissed = false;
+                                var shared = await CompleteShortCircuitAsync(sharedReply, config, dataType, target).ConfigureAwait(false);
+                                return new CacheAttempt(shared, key, Flight: null, directives);
+                            }
+                        }
+                        finally
+                        {
+                            // 跟随者不落库、不参与广播。
+                            flight = null;
+                        }
+                    }
+                }
+            }
+
+            // 查过没有且真要发出去：计一次未命中。
+            if (cacheMissed)
+            {
+                AxiosTelemetry.Dispatch.CacheMiss(config);
+            }
+
+            // 请求侧否决落库时不必为缓存复制正文。
+            config.CacheCaptureRawBody = directives.CanStore;
+
+            // 条件请求：拿带校验器的旧条目，把校验器写成条件头。
+            // no-store 不读缓存；调用方自己写了条件头时以调用方为准（不覆盖、也不接管 304）。
+            if (cache.ConditionalRequests
+                && !directives.NoStore
+                && !HasCallerConditionalHeaders(config))
+            {
+                var revalidation = await cache.TryGetRevalidationAsync(key, config, deadlineTimestamp).ConfigureAwait(false);
+
+                if (revalidation is not null && CacheValidators.HasAny(revalidation))
+                {
+                    config.RevalidationEntry = revalidation;
+                }
+            }
+
+            return new CacheAttempt(Served: null, key, flight, directives);
+        }
+        catch (Exception ex) when (flight is not null)
+        {
+            // 领导者已加入单飞：抛出去之前必须把失败广播给跟随者，否则它们等的那个 Completion 永远不会完成，
+            // 这条键的在途登记也不会被摘除（后续同键请求会一直挂在它上面）。
+            BroadcastFlightFailure(cache, key, flight, config, ex);
+            throw;
+        }
+    }
+
+    /// <summary>本次请求在单飞上与缓存上要跨阶段保留的三项状态。</summary>
+    /// <param name="Served">命中或跟随者拿到的响应；<c>null</c> 表示还要真正发送。</param>
+    /// <param name="Key">本次请求的缓存键。</param>
+    /// <param name="Flight">领导者的在途登记；跟随者与未参与单飞时为 <c>null</c>。</param>
+    /// <param name="Directives">请求侧的缓存指令，落库时还要再看一次。</param>
+    private readonly record struct CacheAttempt(
+        AxiosResponse? Served,
+        string? Key,
+        AxiosCacheFlight? Flight,
+        CacheRequestDirectives Directives);
+
+    /// <summary>
+    /// 领导者失败时把结果交给跟随者：HTTP 状态类失败共享状态 / 头 / 原始正文让各自判定，
+    /// 传输 / 取消类失败按约定广播；没参与单飞或跟随者已脱离时什么都不做。
+    /// </summary>
+    /// <param name="cache">本次请求的缓存策略。</param>
+    /// <param name="key">缓存键。</param>
+    /// <param name="flight">领导者的在途登记。</param>
+    /// <param name="config">本次请求的生效配置。</param>
+    /// <param name="error">触发失败的异常。</param>
+    private static void BroadcastFlightFailure(
+        AxiosCache? cache,
+        string? key,
+        AxiosCacheFlight? flight,
+        AxiosConfig? config,
+        Exception error)
+    {
+        if (flight is null || cache is null || key is null)
+        {
+            return;
+        }
+
+        if (error is AxiosException { Response: not null } statusFailure && config is not null)
+        {
+            cache.SingleFlight.Complete(key, flight, TryCreateSharedFailureReply(statusFailure.Response, config, cache));
+            return;
+        }
+
+        cache.SingleFlight.Fail(key, flight, error);
+    }
+
     /// <summary>
     /// 落库并放行跟随者：只有 2xx、拿到了原始字节、且 <see cref="CacheFreshnessMode"/> 允许落库时才入缓存；写入受剩余总预算约束。
     /// <paramref name="flight"/> 为 <c>null</c> 时只落库，不参与单飞。
@@ -141,7 +285,7 @@ public sealed partial class AxiosClient
 
             if (flight is not null)
             {
-                cache.CompleteFlight(key, flight, reply);
+                cache.SingleFlight.Complete(key, flight, reply);
             }
         }
     }
@@ -404,7 +548,7 @@ public sealed partial class AxiosClient
             // 304 之后的条目重新计时。
             ReceivedAt = DateTimeOffset.UtcNow,
             StoredAge = headers.TryGetValue("Age", out var ageValues) && ageValues.Count > 0
-                ? AxiosCache.ParseSeconds(ageValues[0]) ?? TimeSpan.Zero
+                ? HttpCacheSemantics.ParseSeconds(ageValues[0]) ?? TimeSpan.Zero
                 : TimeSpan.Zero
         };
     }

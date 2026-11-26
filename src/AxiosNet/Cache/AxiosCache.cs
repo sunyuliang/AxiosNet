@@ -1,67 +1,4 @@
-using System.Collections.Concurrent;
-using System.Globalization;
-using System.Security.Cryptography;
-using System.Text;
-
 namespace AxiosNet.Cache;
-
-/// <summary><see cref="AxiosCache"/> 的策略选项。</summary>
-public sealed class AxiosCacheOptions
-{
-    /// <summary>条目存活时长，默认 30 秒；必须大于零（零会让条目刚存进去就过期）。</summary>
-    public TimeSpan TimeToLive { get; set; } = TimeSpan.FromSeconds(30);
-
-    /// <summary>缓存时长的取值方式，默认 <see cref="CacheFreshnessMode.Configured"/>：只信 <see cref="TimeToLive"/>，不解析响应头。</summary>
-    /// <remarks>
-    /// Server / Intersection 会解析 <c>Cache-Control</c> / <c>Expires</c> / <c>Age</c> 并取交集：请求 <c>no-store</c> 不读不写，
-    /// <c>no-cache</c> 跳过新鲜查询（仍可落库），<c>max-age=N</c> 作落库上限，响应 <c>Vary: *</c> 不落库。
-    /// </remarks>
-    public CacheFreshnessMode FreshnessMode { get; set; }
-
-    /// <summary>同键并发只发一次（单飞），默认 <c>true</c>；关掉后每个请求各自发送，只共享已落库的条目。</summary>
-    /// <remarks>
-    /// 请求侧要求绕开缓存时不查缓存、也不参与单飞。领导者拿到非 2xx 时只共享状态码 / 头 / 原始正文，跟随者用自己的
-    /// <see cref="AxiosConfig.ValidateStatus"/> 判定；流式响应或正文超过 <see cref="MaxSharedFailureBodyBytes"/> 时退回各自补发。
-    /// </remarks>
-    public bool SingleFlight { get; set; } = true;
-
-    /// <summary>非 2xx 响应在单飞内共享给跟随者的正文上限，默认 256 KB；<c>0</c> = 关闭共享。负值构造时抛 <see cref="ArgumentOutOfRangeException"/>。</summary>
-    /// <remarks>流式响应（<see cref="ResponseType.Stream"/>）无论大小都不共享。</remarks>
-    public int MaxSharedFailureBodyBytes { get; set; } = 256 * 1024;
-
-    /// <summary>条件请求（<c>ETag</c> / <c>Last-Modified</c> 复用），默认开启：新鲜条目没命中时用旧条目发条件请求，<c>304</c> 直接交付库里的正文并刷新头与存活时长。</summary>
-    /// <remarks>只有实现 <see cref="IAxiosCacheRevalidationStore"/> 的存储才有旧条目；调用方自己写了条件头时以调用方为准。</remarks>
-    public bool ConditionalRequests { get; set; } = true;
-
-    /// <summary>条目存储，<c>null</c> = 内置 <see cref="MemoryCacheStore"/>；接 Redis / 共享缓存时换成自己的实现。</summary>
-    /// <remarks>只在构造 <see cref="AxiosCache"/> 时读取一次（换存储请新建实例）。netstandard2.0 上是普通 <c>set</c>（跨程序集 <c>init</c> 无法写入）。</remarks>
-#if NETSTANDARD2_0
-    public IAxiosCacheStore? Store { get; set; }
-#else
-    public IAxiosCacheStore? Store { get; init; }
-#endif
-
-    /// <summary>内置内存存储的条目上限，默认 1024（须大于零）；自建 <see cref="Store"/> 时不生效。</summary>
-    public int MaxEntries { get; set; } = 1024;
-
-    /// <summary>内置内存存储的近似字节上限，默认 64 MB；<c>0</c> = 不限制。自建 <see cref="Store"/> 时不生效。</summary>
-    /// <remarks>按「正文字节 + 头字符数 ×2」估算；超限与条目满同一口径：先清过期项，仍放不下就不收新条目。</remarks>
-    public long MaxBytes { get; set; } = 64L * 1024 * 1024;
-
-    /// <summary>单次写入缓存的超时，默认 2 秒；<c>null</c> 或 <see cref="TimeSpan.Zero"/> = 不限时（负值构造时抛 <see cref="ArgumentOutOfRangeException"/>）。</summary>
-    /// <remarks>只约束自建存储；实际等待还受本次剩余总预算封顶，预算花完就不落库。内置 <see cref="MemoryCacheStore"/> 同步写入不受影响。</remarks>
-    public TimeSpan? StoreTimeout { get; set; } = TimeSpan.FromSeconds(2);
-
-    /// <summary>键选择器（参数是本次生效配置与最终 URL），默认 <see cref="AxiosCache.CreateKey"/>。</summary>
-    /// <remarks>需要按租户 / 用户 / 语言区分缓存时在这里拼进键；返回空白视为配置错误。</remarks>
-    public Func<AxiosConfig, Uri, string>? KeySelector { get; set; }
-
-    /// <summary>
-    /// 哪些请求参与缓存，默认 <see cref="AxiosCache.IsCacheable"/>：GET / HEAD、无短路响应、非流式、无请求体、非范围请求。
-    /// </summary>
-    /// <remarks>可以在默认口径上组合：<c>c =&gt; AxiosCache.IsCacheable(c) || c.Method == HttpMethod.Post</c>。</remarks>
-    public Func<AxiosConfig, bool> ShouldCache { get; set; } = AxiosCache.IsCacheable;
-}
 
 /// <summary>响应缓存：挂在 <see cref="AxiosConfig.Caching"/> 上，命中时不发请求，直接交付上次的响应（与短路响应同一条路径）。</summary>
 /// <remarks>
@@ -76,8 +13,6 @@ public sealed class AxiosCacheOptions
 /// </example>
 public sealed class AxiosCache
 {
-    // 在途登记：键 → 领导者那一轮。
-    private readonly ConcurrentDictionary<string, AxiosCacheFlight> _flights = new(StringComparer.Ordinal);
     private readonly AxiosCacheOptions _options;
     private readonly IAxiosCacheStore _store;
     private readonly IAxiosCacheRevalidationStore? _revalidationStore;
@@ -135,7 +70,10 @@ public sealed class AxiosCache
     public IAxiosCacheStore Store => _store;
 
     /// <summary>同键并发是否只发一次。</summary>
-    internal bool SingleFlight => _options.SingleFlight;
+    internal bool SingleFlightEnabled => _options.SingleFlight;
+
+    /// <summary>在途发送登记簿：领导者负责发送与落库，跟随者等它那一份结果。</summary>
+    internal SingleFlightCoordinator SingleFlight { get; } = new();
 
     /// <summary>是否发条件请求（旧条目由存储的 <see cref="IAxiosCacheRevalidationStore"/> 提供）。</summary>
     internal bool ConditionalRequests => _options.ConditionalRequests;
@@ -173,24 +111,7 @@ public sealed class AxiosCache
 
     /// <summary>默认键：方法 + 绝对 URL，带凭据时再拼一段凭据摘要（不同用户的同名接口不会串用同一条缓存）。</summary>
     /// <remarks>凭据只以摘要进键——键会一直留在存储里，原值不该跟着存活。用 Cookie 或自定义头区分身份时请给 <see cref="AxiosCacheOptions.KeySelector"/>。查询串里的令牌会原样以明文进键（敏感令牌请勿放查询串，或用 KeySelector 只取摘要）；<c>OnSendingRequest</c> 在发送前才执行，晚于建键，其中写的头进不了键。</remarks>
-    public static string CreateKey(AxiosConfig config, Uri uri)
-    {
-        ArgumentNullException.ThrowIfNull(config);
-        ArgumentNullException.ThrowIfNull(uri);
-
-        var identity = ResolveIdentity(config);
-        var absoluteUri = uri.AbsoluteUri;
-        var builder = new StringBuilder(config.Method.Method.Length + absoluteUri.Length + 24 + (identity is null ? 0 : 17));
-
-        builder.Append(config.Method.Method).Append(' ').Append(absoluteUri);
-
-        if (identity is not null)
-        {
-            builder.Append(' ').Append(Digest(identity));
-        }
-
-        return builder.ToString();
-    }
+    public static string CreateKey(AxiosConfig config, Uri uri) => CacheKeyFactory.Create(config, uri);
 
     /// <summary>这个请求要不要走缓存（<see cref="AxiosCacheOptions.ShouldCache"/>，默认 <see cref="IsCacheable"/>）。</summary>
     internal bool CanHandle(AxiosConfig config)
@@ -262,11 +183,11 @@ public sealed class AxiosCache
             return null;
         }
 
-        var http = ReadHttpCacheInfo(headers, receivedAt);
+        var http = HttpCacheSemantics.ReadHttpCacheInfo(headers, receivedAt);
         var remaining = http.Remaining;
 
         // Vary: * 表示键覆盖不住，不落库。
-        if (ContainsVaryStar(http.Vary))
+        if (HttpCacheSemantics.ContainsVaryStar(http.Vary))
         {
             return null;
         }
@@ -302,122 +223,6 @@ public sealed class AxiosCache
 
         return new AxiosCacheEntryPolicy(
             timeToLive, _options.TimeToLive, mode, headers: null, receivedAt, http);
-    }
-
-    // Vary 含 * 表示不可缓存。
-    private static bool ContainsVaryStar(IReadOnlyList<string> vary)
-    {
-        foreach (var field in vary)
-        {
-            if (field == "*")
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /// <summary>解析响应头里与缓存相关的全部信息；只有解析模式或按需读取策略的存储才会走到这里。</summary>
-    internal static HttpCacheInfo ReadHttpCacheInfo(
-        IReadOnlyDictionary<string, IEnumerable<string>> headers,
-        DateTimeOffset receivedAt)
-    {
-        var cacheControl = CacheControlDirectives.Parse(GetValues(headers, "Cache-Control"));
-        var date = ParseHttpDate(FirstValue(headers, "Date"));
-        var expiresText = FirstValue(headers, "Expires");
-        var expires = ParseHttpDate(expiresText);
-
-        // RFC 9111 的 current_age：Age 头与「收到响应 - Date」取较大值，负数按零。
-        var age = ParseSeconds(FirstValue(headers, "Age")) ?? TimeSpan.Zero;
-        if (date is { } parsedDate && receivedAt > parsedDate)
-        {
-            var apparentAge = receivedAt - parsedDate;
-            if (apparentAge > age)
-            {
-                age = apparentAge;
-            }
-        }
-
-        TimeSpan? freshness = null;
-        if (cacheControl.MaxAge is { } maxAge)
-        {
-            freshness = maxAge;
-        }
-        else if (expiresText is not null)
-        {
-            // 非法 Expires 按「已过期」处理（RFC 9111 §5.3）；合法值的新鲜期是 Expires - Date，缺 Date 时用收到响应的时刻。
-            var reference = date ?? receivedAt;
-            freshness = expires is { } parsedExpires && parsedExpires > reference
-                ? parsedExpires - reference
-                : TimeSpan.Zero;
-        }
-
-        return new HttpCacheInfo(freshness, age, cacheControl, date, expires, ParseVary(headers));
-    }
-
-    // 取某个响应头的全部值；头不存在返回 null。
-    private static IEnumerable<string>? GetValues(
-        IReadOnlyDictionary<string, IEnumerable<string>> headers,
-        string name)
-        => headers.TryGetValue(name, out var values) ? values : null;
-
-    // 取第一个非空白值，同名头按声明顺序。
-    private static string? FirstValue(
-        IReadOnlyDictionary<string, IEnumerable<string>> headers,
-        string name)
-        => GetValues(headers, name)?.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
-
-    // 解析 HTTP 日期；空白或不合法返回 null。
-    private static DateTimeOffset? ParseHttpDate(string? value)
-        => !string.IsNullOrWhiteSpace(value)
-            && DateTimeOffset.TryParse(
-                value,
-                CultureInfo.InvariantCulture,
-                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal | DateTimeStyles.AllowWhiteSpaces,
-                out var parsed)
-            ? parsed
-            : null;
-
-    // 解析 max-age 这类秒数；负数、带符号、非整数一律当无效。
-    internal static TimeSpan? ParseSeconds(string? value)
-    {
-        if (value is null
-            || !long.TryParse(value.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var seconds)
-            || seconds < 0)
-        {
-            return null;
-        }
-
-        // 秒数换算成 tick 可能超出 TimeSpan 上限：超出就按「无限长」处理。
-        return seconds > long.MaxValue / TimeSpan.TicksPerSecond
-            ? TimeSpan.MaxValue
-            : TimeSpan.FromTicks(seconds * TimeSpan.TicksPerSecond);
-    }
-
-    // 拆 Vary 为字段名列表并去重；只经 AxiosCacheEntryPolicy 交给存储，库自身的键不读它。
-    private static IReadOnlyList<string> ParseVary(IReadOnlyDictionary<string, IEnumerable<string>> headers)
-    {
-        var values = GetValues(headers, "Vary");
-        if (values is null)
-        {
-            return Array.Empty<string>();
-        }
-
-        List<string>? fields = null;
-        foreach (var value in values)
-        {
-            foreach (var part in value.Split(','))
-            {
-                var field = part.Trim();
-                if (field.Length > 0)
-                {
-                    (fields ??= new List<string>()).Add(field);
-                }
-            }
-        }
-
-        return fields ?? (IReadOnlyList<string>)Array.Empty<string>();
     }
 
     /// <summary>读一条；存储报错按「没命中」处理，调用方取消照常抛统一错误；读取时长受剩余总预算约束。</summary>
@@ -561,97 +366,5 @@ public sealed class AxiosCache
         {
             return false;
         }
-    }
-
-    /// <summary>登记一次发送：返回的实例要么是领导者（负责发送并落库），要么是等待同一结果的跟随者。</summary>
-    internal AxiosCacheFlight Join(string key)
-    {
-        if (_flights.TryGetValue(key, out var running))
-        {
-            return new AxiosCacheFlight(running.Completion);
-        }
-
-        var leader = new AxiosCacheFlight();
-        var existing = _flights.GetOrAdd(key, leader);
-
-        return ReferenceEquals(existing, leader) ? leader : new AxiosCacheFlight(existing.Completion);
-    }
-
-    /// <summary>领导者成功：落库已完成（或这次不可缓存），放行跟随者。</summary>
-    internal void CompleteFlight(string key, AxiosCacheFlight flight, AxiosShortCircuit? reply)
-    {
-        RemoveFlight(key, flight);
-        flight.Succeed(reply);
-    }
-
-    /// <summary>领导者失败：跟随者原样拿到这个错误，不要挂在原地等。</summary>
-    internal void FailFlight(string key, AxiosCacheFlight flight, Exception error)
-    {
-        RemoveFlight(key, flight);
-        flight.Fail(error);
-    }
-
-    // 先摘除再放行等待者。
-    private void RemoveFlight(string key, AxiosCacheFlight flight)
-    {
-        // 按「键 + 实例」移除。
-        ((ICollection<KeyValuePair<string, AxiosCacheFlight>>)_flights)
-            .Remove(new KeyValuePair<string, AxiosCacheFlight>(key, flight));
-    }
-
-    /// <summary>身份来源：托管落点身份优先，其次显式 <c>Authorization</c> 头，最后内核凭据槽位解析出的头值；三者都只以摘要进键。</summary>
-    private static string? ResolveIdentity(AxiosConfig config)
-    {
-        if (config.ResolvedCredentialIdentity is { } identity)
-        {
-            return identity;
-        }
-
-        if (config.HasHeaders && config.Headers.Get("Authorization") is { } authorization)
-        {
-            return authorization;
-        }
-
-        return config.ResolvedAuthorization;
-    }
-
-    /// <summary>凭据摘要：SHA-256 的前 8 字节转十六进制（16 个字符），只够区分身份、不足以还原原值。</summary>
-    private static string Digest(string value)
-        => PlatformCompat.Sha256HexPrefix8(value);
-}
-
-/// <summary>一次在途发送的登记：领导者发送完成后把结果交给跟随者。</summary>
-internal sealed class AxiosCacheFlight
-{
-    private readonly TaskCompletionSource<AxiosShortCircuit?> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly Task<AxiosShortCircuit?>? _shared;
-
-    /// <summary>领导者：结果由 <see cref="Succeed"/> / <see cref="Fail"/> 填写。</summary>
-    internal AxiosCacheFlight()
-    {
-    }
-
-    /// <summary>跟随者：等领导者那一份结果。</summary>
-    internal AxiosCacheFlight(Task<AxiosShortCircuit?> shared) => _shared = shared;
-
-    /// <summary>本次调用是否由自己发请求（跟随者只等领导者的结果）。</summary>
-    internal bool IsLeader => _shared is null;
-
-    /// <summary>领导者等自己填结果，跟随者等共享的那一份。</summary>
-    internal Task<AxiosShortCircuit?> Completion => _shared ?? _completion.Task;
-
-    /// <summary>放行跟随者；<paramref name="reply"/> 为 <c>null</c> 表示这次没有可共享的字节，跟随者自己发。</summary>
-    internal void Succeed(AxiosShortCircuit? reply) => _completion.TrySetResult(reply);
-
-    /// <summary>把失败转给跟随者；无人跟随时先观察一次。</summary>
-    internal void Fail(Exception error)
-    {
-        if (!_completion.TrySetException(error))
-        {
-            return;
-        }
-
-        // 没有跟随者时这个异常没人接：先观察一次。
-        _ = _completion.Task.Exception;
     }
 }

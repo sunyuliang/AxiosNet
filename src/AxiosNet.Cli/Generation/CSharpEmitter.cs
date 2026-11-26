@@ -284,27 +284,7 @@ internal sealed class CSharpEmitter
                 .Append(operation.ClassName).Append("())</c> 返回 <c>default</c>；要读状态码用 <c>RequestFullAsync</c>。</remarks>\n");
         }
 
-        if (operation.Deprecated)
-        {
-            builder.Append("[Obsolete(\"Deprecated in the OpenAPI document.\")]\n");
-        }
-
-        builder.Append(RouteAttribute(operation)).Append('\n');
-
-        if (operation.RequestBody is { IsMultipart: true })
-        {
-            builder.Append("[Multipart]\n");
-        }
-
-        if (operation.EmitAuthorize)
-        {
-            builder.Append(AuthorizeAttribute(operation.AuthScheme ?? "Bearer")).Append('\n');
-        }
-
-        if (operation.Anonymous)
-        {
-            builder.Append("[AllowAnonymous]\n");
-        }
+        AppendAttributes(builder, operation, interfaceStyle: false, indent: string.Empty);
 
         builder.Append("public sealed class ").Append(operation.ClassName)
             .Append(" : ApiRequest<").Append(RequestResponseType(operation)).Append(">\n{\n");
@@ -318,53 +298,16 @@ internal sealed class CSharpEmitter
             operation.ClassName, "Configure", "StreamFormat"
         };
 
-        foreach (var parameter in operation.Parameters)
+        foreach (var member in OperationMembers(operation))
         {
             // 属性名是线上键名的取值来源：不显式写名称时运行时用属性名，大小写不同必须写成 [Query("role")]。
-            var name = Naming.Unique(Naming.Pascal(parameter.Name), usedNames);
+            var name = Naming.Unique(member.ModelSeed, usedNames);
             members.Add(RequestProperty(
-                parameter.Description,
-                ParameterAttribute(parameter, name),
-                parameter.Type,
+                member.Description,
+                BindingAttribute(member, name),
+                member.Type,
                 name,
-                !parameter.Required || parameter.Type.Nullable));
-        }
-
-        if (operation.RequestBody is { IsMultipart: true } multipart)
-        {
-            foreach (var part in multipart.Parts)
-            {
-                var name = Naming.Unique(Naming.Pascal(part.Name), usedNames);
-                members.Add(RequestProperty(
-                    part.Description,
-                    PartAttribute(part, name),
-                    part.Type,
-                    name,
-                    !part.Required || part.Type.Nullable));
-            }
-        }
-        else if (operation.RequestBody is { Properties.Count: > 0 } inline)
-        {
-            // 内联对象正文：一个属性一个正文键，不额外生成只包一层的 Body 类型。
-            foreach (var property in inline.Properties)
-            {
-                var name = Naming.Unique(Naming.Pascal(property.WireName), usedNames);
-                members.Add(RequestProperty(
-                    property.Description,
-                    BodyKeyAttribute(property.WireName),
-                    property.Type,
-                    name,
-                    !property.Required || property.Type.Nullable));
-            }
-        }
-        else if (operation.RequestBody is { } body)
-        {
-            members.Add(RequestProperty(
-                body.Description,
-                "[Body]",
-                body.Type,
-                Naming.Unique(Naming.Pascal(body.BodyName), usedNames),
-                !body.Required || body.Type.Nullable));
+                member.IsNullable));
         }
 
         // 模型式没有方法级特性，媒体类型与集合格式只能写进 Configure 重写。
@@ -466,96 +409,18 @@ internal sealed class CSharpEmitter
     {
         AppendDoc(builder, MethodDoc(operation), "    ");
 
-        if (operation.Deprecated)
-        {
-            builder.Append("    [Obsolete(\"Deprecated in the OpenAPI document.\")]\n");
-        }
-
-        builder.Append("    ").Append(RouteAttribute(operation)).Append('\n');
-
-        if (operation.StreamFormat is not null)
-        {
-            builder.Append("    [Stream(AxiosStreamFormat.").Append(operation.StreamFormat).Append(")]\n");
-        }
-
-        if (operation.CollectionFormat is not null)
-        {
-            builder.Append("    [QueryCollectionFormat(AxiosCollectionFormat.")
-                .Append(operation.CollectionFormat).Append(")]\n");
-        }
-
-        if (operation.RequestBody is { IsMultipart: false } body && !IsJsonMedia(body.MediaType))
-        {
-            builder.Append("    [BodyContentType(\"").Append(EscapeString(body.MediaType)).Append("\")]\n");
-        }
-
-        if (operation.RequestBody is { IsMultipart: true })
-        {
-            builder.Append("    [Multipart]\n");
-        }
-
-        if (operation.EmitAuthorize)
-        {
-            builder.Append("    ").Append(AuthorizeAttribute(operation.AuthScheme ?? "Bearer")).Append('\n');
-        }
-
-        if (operation.Anonymous)
-        {
-            builder.Append("    [AllowAnonymous]\n");
-        }
+        AppendAttributes(builder, operation, interfaceStyle: true, indent: "    ");
 
         builder.Append("    ").Append(ReturnType(operation)).Append(' ').Append(operation.Name).Append("(\n");
 
-        foreach (var line in ParameterLines(operation))
+        foreach (var member in OperationMembers(operation))
         {
-            builder.Append("        ").Append(line).Append(",\n");
+            builder.Append("        ").Append(BindingAttribute(member, member.Name)).Append(' ')
+                .Append(FormatType(member.Type, member.IsNullable)).Append(' ')
+                .Append(member.Name).Append(",\n");
         }
 
         builder.Append("        CancellationToken cancellationToken = default);\n");
-    }
-
-    /// <summary>逐行产出接口参数声明（path/query/header → multipart 部件或单个 body），末尾的取消令牌由调用方追加。</summary>
-    private IEnumerable<string> ParameterLines(ApiOperation operation)
-    {
-        foreach (var parameter in operation.Parameters)
-        {
-            yield return ParameterAttribute(parameter)
-                         + " "
-                         + FormatType(parameter.Type, !parameter.Required || parameter.Type.Nullable)
-                         + " "
-                         + parameter.Name;
-        }
-
-        if (operation.RequestBody is { IsMultipart: true } multipart)
-        {
-            foreach (var part in multipart.Parts)
-            {
-                yield return PartAttribute(part)
-                             + " "
-                             + FormatType(part.Type, !part.Required || part.Type.Nullable)
-                             + " "
-                             + part.Name;
-            }
-        }
-        else if (operation.RequestBody is { Properties.Count: > 0 } inline)
-        {
-            // 内联对象正文：一个属性一个参数，与模型式的正文键一一对应。
-            foreach (var property in inline.Properties)
-            {
-                yield return BodyKeyAttribute(property.WireName)
-                             + " "
-                             + FormatType(property.Type, !property.Required || property.Type.Nullable)
-                             + " "
-                             + property.Name;
-            }
-        }
-        else if (operation.RequestBody is { } body)
-        {
-            yield return "[Body] "
-                         + FormatType(body.Type, !body.Required || body.Type.Nullable)
-                         + " "
-                         + body.BodyName;
-        }
     }
 
     /// <summary>接口方法的返回类型：流式取异步帧序列，无正文按是否包装响应区分，其余按强类型正文。</summary>
@@ -600,45 +465,209 @@ internal sealed class CSharpEmitter
             ? "[Authorize]"
             : $"[Authorize(\"{EscapeString(scheme)}\")]";
 
-    /// <summary>以成员名作为线上键名生成绑定特性（模型式外部无法改属性名，故直接等于成员名）。</summary>
-    private static string ParameterAttribute(ApiParameter parameter)
-        => ParameterAttribute(parameter, parameter.Name);
-
-    /// <summary>按位置选 <c>[Path]</c> / <c>[Query]</c> / <c>[Header]</c>；成员名与线上键名不一致时显式写出键名。</summary>
-    private static string ParameterAttribute(ApiParameter parameter, string memberName)
+    /// <summary>与输出形态无关的操作级特性，按书写顺序列出；<paramref name="interfaceStyle"/> 只决定是否写方法级的那三项。</summary>
+    /// <remarks>
+    /// 接口式把流式格式 / 集合格式 / 正文媒体类型写成方法级特性；模型式没有方法级特性，这三项改由
+    /// <see cref="ConfigureLines"/> 落到本次请求上。
+    /// </remarks>
+    private static List<string> OperationAttributes(ApiOperation operation, bool interfaceStyle)
     {
-        // 位置枚举到特性名的一一映射。
-        var name = parameter.Location switch
+        var attributes = new List<string>();
+
+        if (operation.Deprecated)
         {
-            ApiParameterLocation.Path => "Path",
-            ApiParameterLocation.Query => "Query",
-            _ => "Header"
-        };
+            attributes.Add("[Obsolete(\"Deprecated in the OpenAPI document.\")]");
+        }
 
-        // Path / Query 的键名按 OpenAPI 规范区分大小写；Header 由 HTTP 规定不区分，省略参数名才安全。
-        var comparison = parameter.Location == ApiParameterLocation.Header
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
+        attributes.Add(RouteAttribute(operation));
 
-        return MatchesWire(parameter.WireName, memberName, comparison)
-            ? $"[{name}]"
-            : $"[{name}(\"{EscapeString(parameter.WireName)}\")]";
+        if (interfaceStyle)
+        {
+            if (operation.StreamFormat is not null)
+            {
+                attributes.Add($"[Stream(AxiosStreamFormat.{operation.StreamFormat})]");
+            }
+
+            if (operation.CollectionFormat is not null)
+            {
+                attributes.Add($"[QueryCollectionFormat(AxiosCollectionFormat.{operation.CollectionFormat})]");
+            }
+
+            if (operation.RequestBody is { IsMultipart: false } body && !IsJsonMedia(body.MediaType))
+            {
+                attributes.Add($"[BodyContentType(\"{EscapeString(body.MediaType)}\")]");
+            }
+        }
+
+        if (operation.RequestBody is { IsMultipart: true })
+        {
+            attributes.Add("[Multipart]");
+        }
+
+        if (operation.EmitAuthorize)
+        {
+            attributes.Add(AuthorizeAttribute(operation.AuthScheme ?? "Bearer"));
+        }
+
+        if (operation.Anonymous)
+        {
+            attributes.Add("[AllowAnonymous]");
+        }
+
+        return attributes;
     }
 
-    /// <summary>以成员名作为部件名生成 <c>[Part]</c>（模型式下名称可能已被去重改写）。</summary>
-    private static string PartAttribute(ApiPart part)
-        => PartAttribute(part, part.Name);
+    /// <summary>按统一缩进逐行写出操作级特性。</summary>
+    private static void AppendAttributes(StringBuilder builder, ApiOperation operation, bool interfaceStyle, string indent)
+    {
+        foreach (var attribute in OperationAttributes(operation, interfaceStyle))
+        {
+            builder.Append(indent).Append(attribute).Append('\n');
+        }
+    }
 
-    /// <summary>按成员名生成 <c>[Part]</c>；成员名与部件名不一致时显式写出线上字段名。</summary>
-    private static string PartAttribute(ApiPart part, string memberName)
-        // 部件名写进 Content-Disposition，服务端按原样匹配，大小写不同也必须显式写出。
-        => MatchesWire(part.WireName, memberName, StringComparison.Ordinal)
-            ? "[Part]"
-            : $"[Part(\"{EscapeString(part.WireName)}\")]";
+    /// <summary>与输出形态无关的可绑定成员：模型式渲染成属性，接口式渲染成参数。四种正文形态只在这里遍历一次。</summary>
+    private static List<OperationMember> OperationMembers(ApiOperation operation)
+    {
+        var members = new List<OperationMember>();
 
-    /// <summary>按线上键名生成正文键特性；始终显式写出键名，无参 <c>[Body]</c> 表示整份正文。</summary>
-    private static string BodyKeyAttribute(string wireName)
-        => $"[Body(\"{EscapeString(wireName)}\")]";
+        foreach (var parameter in operation.Parameters)
+        {
+            members.Add(new OperationMember(
+                parameter.Name,
+                Naming.Pascal(parameter.Name),
+                parameter.Description,
+                parameter.Type,
+                parameter.Required,
+                parameter.Location switch
+                {
+                    ApiParameterLocation.Path => BindingChannel.Path,
+                    ApiParameterLocation.Query => BindingChannel.Query,
+                    _ => BindingChannel.Header
+                },
+                parameter.WireName,
+                WireIgnoreCase: parameter.Location == ApiParameterLocation.Header));
+        }
+
+        if (operation.RequestBody is { IsMultipart: true } multipart)
+        {
+            foreach (var part in multipart.Parts)
+            {
+                members.Add(new OperationMember(
+                    part.Name,
+                    Naming.Pascal(part.Name),
+                    part.Description,
+                    part.Type,
+                    part.Required,
+                    BindingChannel.Part,
+                    part.WireName,
+                    WireIgnoreCase: false));
+            }
+        }
+        else if (operation.RequestBody is { Properties.Count: > 0 } inline)
+        {
+            // 内联对象正文：一个属性一个正文键，不额外生成只包一层的 Body 类型。
+            foreach (var property in inline.Properties)
+            {
+                members.Add(new OperationMember(
+                    property.Name,
+                    Naming.Pascal(property.WireName),
+                    property.Description,
+                    property.Type,
+                    property.Required,
+                    BindingChannel.BodyKey,
+                    property.WireName,
+                    WireIgnoreCase: false));
+            }
+        }
+        else if (operation.RequestBody is { } body)
+        {
+            members.Add(new OperationMember(
+                body.BodyName,
+                Naming.Pascal(body.BodyName),
+                body.Description,
+                body.Type,
+                body.Required,
+                BindingChannel.Body,
+                body.BodyName,
+                WireIgnoreCase: false));
+        }
+
+        return members;
+    }
+
+    /// <summary>成员的绑定特性：正文两种恒按线上名写出，其余在成员名与线上名一致时省略参数。</summary>
+    private static string BindingAttribute(OperationMember member, string memberName)
+    {
+        switch (member.Channel)
+        {
+            case BindingChannel.Body:
+                return "[Body]";
+
+            case BindingChannel.BodyKey:
+                return $"[Body(\"{EscapeString(member.WireName)}\")]";
+
+            default:
+                var name = member.Channel switch
+                {
+                    BindingChannel.Path => "Path",
+                    BindingChannel.Query => "Query",
+                    BindingChannel.Header => "Header",
+                    _ => "Part"
+                };
+
+                // Header 由 HTTP 规定不区分大小写，省略参数名才安全；其余按线上键名区分大小写。
+                var comparison = member.WireIgnoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+                return MatchesWire(member.WireName, memberName, comparison)
+                    ? $"[{name}]"
+                    : $"[{name}(\"{EscapeString(member.WireName)}\")]";
+        }
+    }
+
+    /// <summary>绑定通道：决定成员上写哪种绑定特性。</summary>
+    private enum BindingChannel
+    {
+        /// <summary><c>[Path]</c>：填进路由模板的占位符。</summary>
+        Path,
+
+        /// <summary><c>[Query]</c>：进查询串。</summary>
+        Query,
+
+        /// <summary><c>[Header]</c>：进单个请求头。</summary>
+        Header,
+
+        /// <summary><c>[Part]</c>：multipart 部件。</summary>
+        Part,
+
+        /// <summary><c>[Body("key")]</c>：正文里的一个键。</summary>
+        BodyKey,
+
+        /// <summary><c>[Body]</c>：整份正文。</summary>
+        Body
+    }
+
+    /// <summary>一个可绑定成员：两条渲染路径共用这一份事实，只在命名与包装形式上不同。</summary>
+    /// <param name="Name">接口式直接使用的成员名（参数名 / 部件名 / 正文键名）。</param>
+    /// <param name="ModelSeed">模型式的属性名种子（PascalCase，未按类内成员去重）。</param>
+    /// <param name="Description">成员说明，写进生成代码的 XML 注释。</param>
+    /// <param name="Type">成员类型。</param>
+    /// <param name="Required">是否必填。</param>
+    /// <param name="Channel">绑定通道。</param>
+    /// <param name="WireName">线上键名 / 部件名。</param>
+    /// <param name="WireIgnoreCase">线上名比较是否忽略大小写。</param>
+    private readonly record struct OperationMember(
+        string Name,
+        string ModelSeed,
+        string? Description,
+        TypeRef Type,
+        bool Required,
+        BindingChannel Channel,
+        string WireName,
+        bool WireIgnoreCase)
+    {
+        /// <summary>渲染出的可空标注：非必填或类型本身可空。</summary>
+        internal bool IsNullable => !Required || Type.Nullable;
+    }
 
     /// <summary>判断成员名（去掉关键字转义前缀 <c>@</c> 后）是否与线上键名一致，一致即可省略特性参数。</summary>
     private static bool MatchesWire(string wireName, string parameterName, StringComparison comparison)

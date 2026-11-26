@@ -63,7 +63,7 @@ public sealed class AxiosCacheEntryPolicy
     private HttpCacheInfo ResolveHttp()
     {
         // _headers 只在 http 为 null（Configured 模式）时才有值。
-        var parsed = AxiosCache.ReadHttpCacheInfo(_headers!, _receivedAt);
+        var parsed = HttpCacheSemantics.ReadHttpCacheInfo(_headers!, _receivedAt);
         return Interlocked.CompareExchange(ref _http, parsed, null) ?? parsed;
     }
 }
