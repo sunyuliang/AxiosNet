@@ -265,11 +265,17 @@ namespace AxiosNet.SourceGen
                     new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()),
                     !blocked);
 
+            // 诊断已经写进收集器的收场：产物为空壳，Emit 由 blocked 关掉。
+            InterfaceModelInfo Blocked()
+            {
+                blocked = true;
+                return Result(EquatableArray<string>.Empty, false, null, EquatableArray<InterfaceMethodInfo>.Empty);
+            }
+
             InterfaceModelInfo Rejected(DiagnosticDescriptor descriptor, params string[] args)
             {
                 diagnostics.Add(new DiagnosticInfo(descriptor, ToEquatable(args), location));
-                blocked = true;
-                return Result(EquatableArray<string>.Empty, false, null, EquatableArray<InterfaceMethodInfo>.Empty);
+                return Blocked();
             }
 
             var unsupported = GetInterfaceUnsupportedReason(symbol, compilation);
@@ -286,32 +292,9 @@ namespace AxiosNet.SourceGen
 
             var chain = GetInterfaceChain(symbol);
 
-            foreach (var current in chain)
+            if (RejectUnsupportedMember(chain, symbol, location, diagnostics))
             {
-                foreach (var member in current.GetMembers())
-                {
-                    if (member is IPropertySymbol or IEventSymbol)
-                    {
-                        return Rejected(Diagnostics.InterfaceMemberNotSupported, symbol.Name, member.Name);
-                    }
-
-                    if (member is IMethodSymbol { IsStatic: true, IsAbstract: true } staticMethod)
-                    {
-                        return Rejected(Diagnostics.InterfaceMemberNotSupported, symbol.Name, staticMethod.Name);
-                    }
-
-                    // 非 public 的抽象成员无法在生成程序集里显式实现（C# 也不允许跨程序集实现），
-                    // 继续生成会得到 CS0535；提前报错而不是让生成代码编译失败。
-                    if (member is IMethodSymbol { IsAbstract: true } nonPublicMethod
-                        && nonPublicMethod.DeclaredAccessibility != Accessibility.Public)
-                    {
-                        return Rejected(
-                            Diagnostics.InterfaceShapeUnsupported,
-                            symbol.Name,
-                            nonPublicMethod.Name,
-                            "是非 public 的抽象成员：生成的代理无法在消费程序集实现");
-                    }
-                }
+                return Blocked();
             }
 
             // 接口级静态头：基接口在前、派生接口在后（同名后者覆盖）。
@@ -324,6 +307,7 @@ namespace AxiosNet.SourceGen
             var interfaceAuth = ReadNearestInterfaceAuthorization(chain, wellKnown);
             if (interfaceAuth.Conflict)
             {
+                // 只记诊断、不置 blocked：契约照常产出。
                 diagnostics.Add(new DiagnosticInfo(
                     Diagnostics.AuthorizationConflict,
                     ToEquatable(["接口 " + symbol.Name]),
@@ -343,280 +327,25 @@ namespace AxiosNet.SourceGen
                         continue;
                     }
 
-                    var methodDisplay = method.Name;
-                    var methodLocation = method.Locations.FirstOrDefault(static l => l.IsInSource) ?? location;
-
-                    var routes = method.GetAttributes()
-                        .Where(attribute => DerivesFrom(attribute.AttributeClass, wellKnown.HttpApi))
-                        .ToList();
-
-                    if (routes.Count == 0)
-                    {
-                        diagnostics.Add(new DiagnosticInfo(
-                            Diagnostics.RouteCountInvalid,
-                            ToEquatable(["接口 " + symbol.Name + " 的 " + methodDisplay, "缺少路由特性"]),
-                            methodLocation));
-                        blocked = true;
-                        continue;
-                    }
-
-                    if (routes.Count > 1)
-                    {
-                        var names = string.Join("、", routes.Select(static route => route.AttributeClass!.Name));
-                        diagnostics.Add(new DiagnosticInfo(
-                            Diagnostics.RouteCountInvalid,
-                            ToEquatable(["接口 " + symbol.Name + " 的 " + methodDisplay, $"标注了多个路由特性（{names}）"]),
-                            methodLocation));
-                        blocked = true;
-                        continue;
-                    }
-
-                    if (!TryReadRoute(routes[0], wellKnown, out var routeMethod, out var routePath))
-                    {
-                        diagnostics.Add(new DiagnosticInfo(
-                            Diagnostics.CustomRouteAttribute,
-                            ToEquatable(["接口 " + symbol.Name + " 的 " + methodDisplay, routes[0].AttributeClass!.Name]),
-                            methodLocation));
-                        blocked = true;
-                        continue;
-                    }
-
-                    if (string.IsNullOrWhiteSpace(routeMethod) || string.IsNullOrWhiteSpace(routePath))
-                    {
-                        diagnostics.Add(new DiagnosticInfo(
-                            Diagnostics.RouteValueInvalid,
-                            ToEquatable(["接口 " + symbol.Name + " 的 " + methodDisplay]),
-                            methodLocation));
-                        blocked = true;
-                        continue;
-                    }
-
-                    if (method.IsGenericMethod)
-                    {
-                        diagnostics.Add(new DiagnosticInfo(
-                            Diagnostics.InterfaceShapeUnsupported,
-                            ToEquatable([symbol.Name, methodDisplay, "泛型方法无法代理"]),
-                            methodLocation));
-                        blocked = true;
-                        continue;
-                    }
-
-                    if (!TryGetReturnShape(method, wellKnown, out var returnKind, out var bodyType, out var streaming, out var shapeError))
-                    {
-                        diagnostics.Add(new DiagnosticInfo(
-                            Diagnostics.InterfaceReturnUnsupported,
-                            ToEquatable([symbol.Name, methodDisplay, shapeError!]),
-                            methodLocation));
-                        blocked = true;
-                        continue;
-                    }
-
-                    var streamAttribute = FindAttribute(method, wellKnown.Stream);
-                    var streamFormat = 0;
-                    if (streamAttribute is not null)
-                    {
-                        if (!streaming)
-                        {
-                            diagnostics.Add(new DiagnosticInfo(
-                                Diagnostics.InterfaceStreamInvalid,
-                                ToEquatable([symbol.Name, methodDisplay, "[Stream] 只用于返回 Task<AxiosResponse<IAsyncEnumerable<T>>> 的方法"]),
-                                methodLocation));
-                            blocked = true;
-                            continue;
-                        }
-
-                        if (streamAttribute.ConstructorArguments.Length == 1
-                            && streamAttribute.ConstructorArguments[0].Value is int declaredFormat)
-                        {
-                            streamFormat = declaredFormat;
-                        }
-
-                        if (!IsDefinedStreamFormat(streamFormat, wellKnown))
-                        {
-                            diagnostics.Add(new DiagnosticInfo(
-                                Diagnostics.InterfaceStreamInvalid,
-                                ToEquatable([symbol.Name, methodDisplay, $"帧格式值 {streamFormat} 无效"]),
-                                methodLocation));
-                            blocked = true;
-                            continue;
-                        }
-                    }
-
-                    if (bodyType is not null && !IsTypeAccessible(bodyType, compilation.Assembly))
-                    {
-                        diagnostics.Add(new DiagnosticInfo(
-                            Diagnostics.UnsupportedType,
-                            ToEquatable(["接口 " + symbol.Name, $"返回类型 {bodyType.ToDisplayString()} 对生成代码不可见"]),
-                            methodLocation));
-                        blocked = true;
-                        continue;
-                    }
-
-                    var isMultipart = FindAttribute(method, wellKnown.Multipart) is not null;
-
-                    var contentTypeAttribute = FindAttribute(method, wellKnown.BodyContentType);
-                    string? contentType = null;
-                    if (contentTypeAttribute is not null)
-                    {
-                        contentType = GetStringArgument(contentTypeAttribute, 0)?.Trim();
-                        if (contentType is null || contentType.Length == 0 || HasHeaderControlCharacter(contentType))
-                        {
-                            diagnostics.Add(new DiagnosticInfo(
-                                Diagnostics.InterfaceEncodingInvalid,
-                                ToEquatable([symbol.Name, methodDisplay, "[BodyContentType] 的媒体类型不能为空白或包含控制字符"]),
-                                methodLocation));
-                            blocked = true;
-                            continue;
-                        }
-
-                        if (isMultipart)
-                        {
-                            diagnostics.Add(new DiagnosticInfo(
-                                Diagnostics.InterfaceEncodingInvalid,
-                                ToEquatable([symbol.Name, methodDisplay, "[Multipart] 与 [BodyContentType] 互斥：multipart 的媒体类型固定为 multipart/form-data"]),
-                                methodLocation));
-                            blocked = true;
-                            continue;
-                        }
-                    }
-
-                    int? queryCollectionFormat = null;
-                    var collectionFormatAttribute = FindAttribute(method, wellKnown.QueryCollectionFormat);
-                    if (collectionFormatAttribute is not null)
-                    {
-                        var value = collectionFormatAttribute.ConstructorArguments.Length == 1
-                            && collectionFormatAttribute.ConstructorArguments[0].Value is int declaredFormat
-                                ? declaredFormat
-                                : -1;
-                        if (!IsDefinedCollectionFormat(value, wellKnown))
-                        {
-                            diagnostics.Add(new DiagnosticInfo(
-                                Diagnostics.InterfaceEncodingInvalid,
-                                ToEquatable([symbol.Name, methodDisplay, $"查询集合格式值 {value} 无效"]),
-                                methodLocation));
-                            blocked = true;
-                            continue;
-                        }
-
-                        queryCollectionFormat = value;
-                    }
-
-                    var parameters = new List<InterfaceParameterInfo>();
-                    var cancellationTokenIndex = -1;
-                    var parameterBlocked = false;
-
-                    foreach (var parameter in method.Parameters)
-                    {
-                        if (parameter.RefKind != RefKind.None)
-                        {
-                            diagnostics.Add(new DiagnosticInfo(
-                                Diagnostics.InterfaceShapeUnsupported,
-                                ToEquatable([symbol.Name, methodDisplay, $"参数 {parameter.Name} 是 ref / out / in：接口级声明不支持按引用传递"]),
-                                methodLocation));
-                            parameterBlocked = true;
-                            continue;
-                        }
-
-                        if (parameter.Type is INamedTypeSymbol { IsRefLikeType: true }
-                            || parameter.Type.TypeKind == TypeKind.Pointer
-                            || parameter.Type.TypeKind == TypeKind.FunctionPointer)
-                        {
-                            diagnostics.Add(new DiagnosticInfo(
-                                Diagnostics.InterfaceShapeUnsupported,
-                                ToEquatable([symbol.Name, methodDisplay, $"参数 {parameter.Name} 的类型 {parameter.Type.ToDisplayString()} 无法装箱"]),
-                                methodLocation));
-                            parameterBlocked = true;
-                            continue;
-                        }
-
-                        if (!IsTypeAccessible(parameter.Type, compilation.Assembly))
-                        {
-                            diagnostics.Add(new DiagnosticInfo(
-                                Diagnostics.UnsupportedType,
-                                ToEquatable(["接口 " + symbol.Name, $"参数类型 {parameter.Type.ToDisplayString()} 对生成代码不可见"]),
-                                methodLocation));
-                            parameterBlocked = true;
-                            continue;
-                        }
-
-                        if (SymbolEqualityComparer.Default.Equals(parameter.Type, wellKnown.CancellationToken))
-                        {
-                            if (HasBindingAttribute(parameter, wellKnown))
-                            {
-                                diagnostics.Add(new DiagnosticInfo(
-                                    Diagnostics.InterfaceShapeUnsupported,
-                                    ToEquatable([symbol.Name, methodDisplay, $"参数 {parameter.Name} 是 CancellationToken，不能同时标注 Path / Query / Header / HeaderCollection / Part / Body"]),
-                                    methodLocation));
-                                parameterBlocked = true;
-                                continue;
-                            }
-
-                            if (cancellationTokenIndex >= 0)
-                            {
-                                diagnostics.Add(new DiagnosticInfo(
-                                    Diagnostics.InterfaceShapeUnsupported,
-                                    ToEquatable([symbol.Name, methodDisplay, "声明了多个 CancellationToken 参数：最多一个"]),
-                                    methodLocation));
-                                parameterBlocked = true;
-                                continue;
-                            }
-
-                            cancellationTokenIndex = parameter.Ordinal;
-                            parameters.Add(new InterfaceParameterInfo(
-                                parameter.Ordinal,
-                                ParameterName(parameter),
-                                TypeFormats.Display(parameter.Type),
-                                $"{symbol.Name}.{method.Name}.{ParameterName(parameter)}",
-                                null,
-                                false, false, null, false, null, false, null, false, false, null, false, null, null, null));
-                            continue;
-                        }
-
-                        parameters.Add(ReadParameter(parameter, method, symbol, wellKnown, diagnostics));
-                    }
-
-                    if (parameterBlocked)
-                    {
-                        blocked = true;
-                        continue;
-                    }
-
-                    var methodAuth = ReadMethodAuthorization(method, wellKnown);
-                    if (methodAuth.Conflict)
-                    {
-                        diagnostics.Add(new DiagnosticInfo(
-                            Diagnostics.AuthorizationConflict,
-                            ToEquatable(["接口 " + symbol.Name + " 的 " + methodDisplay]),
-                            methodLocation));
-                        blocked = true;
-                    }
-
-                    // 显式实现写在「声明该成员的接口」上：菱形继承里两个基接口的同名同签名成员
-                    // 只有用各自接口名实现才不产生二义性。基接口对生成代码不可见时退回根接口。
-                    var declaringExpression = IsTypeAccessible(current, compilation.Assembly)
-                        ? TypeFormats.Display(current)
-                        : interfaceExpression;
-
-                    methods.Add(new InterfaceMethodInfo(
+                    var (methodInfo, methodBlocked) = BuildMethodInfo(
+                        method,
+                        current,
+                        symbol,
+                        interfaceExpression,
+                        location,
+                        wellKnown,
+                        compilation,
                         methodIndex,
-                        method.Name,
-                        declaringExpression,
-                        routeMethod!,
-                        routePath!,
-                        new EquatableArray<string>(ReadHeaders(method, wellKnown).ToImmutableArray()),
-                        isMultipart,
-                        contentType,
-                        queryCollectionFormat,
-                        methodAuth.AllowAnonymous,
-                        methodAuth.Scheme,
-                        streaming,
-                        streamFormat,
-                        bodyType is null ? null : TypeFormats.Display(bodyType),
-                        streaming && bodyType is INamedTypeSymbol streamBody ? TypeFormats.Display(streamBody.TypeArguments[0]) : null,
-                        returnKind,
-                        cancellationTokenIndex,
-                        new EquatableArray<InterfaceParameterInfo>(parameters.ToImmutableArray())));
+                        diagnostics);
 
+                    blocked |= methodBlocked;
+
+                    if (methodInfo is null)
+                    {
+                        continue;
+                    }
+
+                    methods.Add(methodInfo);
                     methodIndex++;
                 }
             }
@@ -626,6 +355,470 @@ namespace AxiosNet.SourceGen
                 interfaceAuth.AllowAnonymous,
                 interfaceAuth.Scheme,
                 new EquatableArray<InterfaceMethodInfo>(methods.ToImmutableArray()));
+        }
+
+        /// <summary>接口成员形状预检：属性 / 事件、静态抽象方法、非 public 抽象方法都无法在生成程序集里实现。</summary>
+        /// <param name="chain">接口自身在前的接口链。</param>
+        /// <param name="symbol">被代理的接口。</param>
+        /// <param name="location">诊断落点。</param>
+        /// <param name="diagnostics">诊断收集器。</param>
+        /// <returns>发现不可生成成员时返回 <c>true</c>，并已写入诊断。</returns>
+        private static bool RejectUnsupportedMember(
+            List<INamedTypeSymbol> chain,
+            INamedTypeSymbol symbol,
+            Location location,
+            ImmutableArray<DiagnosticInfo>.Builder diagnostics)
+        {
+            foreach (var current in chain)
+            {
+                foreach (var member in current.GetMembers())
+                {
+                    if (member is IPropertySymbol or IEventSymbol)
+                    {
+                        diagnostics.Add(new DiagnosticInfo(
+                            Diagnostics.InterfaceMemberNotSupported,
+                            ToEquatable([symbol.Name, member.Name]),
+                            location));
+                        return true;
+                    }
+
+                    if (member is IMethodSymbol { IsStatic: true, IsAbstract: true } staticMethod)
+                    {
+                        diagnostics.Add(new DiagnosticInfo(
+                            Diagnostics.InterfaceMemberNotSupported,
+                            ToEquatable([symbol.Name, staticMethod.Name]),
+                            location));
+                        return true;
+                    }
+
+                    // 非 public 的抽象成员无法在生成程序集里显式实现（C# 也不允许跨程序集实现），
+                    // 继续生成会得到 CS0535；提前报错而不是让生成代码编译失败。
+                    if (member is IMethodSymbol { IsAbstract: true } nonPublicMethod
+                        && nonPublicMethod.DeclaredAccessibility != Accessibility.Public)
+                    {
+                        diagnostics.Add(new DiagnosticInfo(
+                            Diagnostics.InterfaceShapeUnsupported,
+                            ToEquatable([symbol.Name, nonPublicMethod.Name, "是非 public 的抽象成员：生成的代理无法在消费程序集实现"]),
+                            location));
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>单个接口方法 → 代理契约项：路由 / 返回 / 编码 / 参数四组校验全过才产出。</summary>
+        /// <param name="method">待烘焙的接口方法。</param>
+        /// <param name="declaringType">声明该方法的接口，用于显式实现的接口名。</param>
+        /// <param name="symbol">被代理的根接口。</param>
+        /// <param name="interfaceExpression">根接口的生成代码可引用写法，基接口不可见时作为兜底。</param>
+        /// <param name="interfaceLocation">方法没有源码位置时的诊断落点。</param>
+        /// <param name="wellKnown">本编译解析出的框架符号。</param>
+        /// <param name="compilation">当前编译，用于可见性判定。</param>
+        /// <param name="methodIndex">方法在契约里的序号。</param>
+        /// <param name="diagnostics">诊断收集器。</param>
+        /// <returns>契约项（校验未全过时为 <c>null</c>）与该次扫描是否置位 <c>blocked</c>；授权冲突只置位、不丢弃契约项。</returns>
+        private static (InterfaceMethodInfo? Method, bool Blocked) BuildMethodInfo(
+            IMethodSymbol method,
+            INamedTypeSymbol declaringType,
+            INamedTypeSymbol symbol,
+            string interfaceExpression,
+            Location interfaceLocation,
+            WellKnownSymbols wellKnown,
+            Compilation compilation,
+            int methodIndex,
+            ImmutableArray<DiagnosticInfo>.Builder diagnostics)
+        {
+            var methodLocation = method.Locations.FirstOrDefault(static l => l.IsInSource) ?? interfaceLocation;
+            var subject = "接口 " + symbol.Name + " 的 " + method.Name;
+
+            if (!TryResolveRoute(method, subject, methodLocation, wellKnown, diagnostics, out var routeMethod, out var routePath))
+            {
+                return (null, true);
+            }
+
+            if (!TryResolveReturnShape(
+                method, symbol, methodLocation, wellKnown, compilation, diagnostics,
+                out var returnKind, out var bodyType, out var streaming, out var streamFormat))
+            {
+                return (null, true);
+            }
+
+            if (!TryResolveEncodingOptions(
+                method, symbol, methodLocation, wellKnown, diagnostics,
+                out var isMultipart, out var contentType, out var queryCollectionFormat))
+            {
+                return (null, true);
+            }
+
+            if (!TryResolveParameters(
+                method, symbol, methodLocation, wellKnown, compilation, diagnostics,
+                out var parameters, out var cancellationTokenIndex))
+            {
+                return (null, true);
+            }
+
+            var methodAuth = ReadMethodAuthorization(method, wellKnown);
+            if (methodAuth.Conflict)
+            {
+                diagnostics.Add(new DiagnosticInfo(
+                    Diagnostics.AuthorizationConflict,
+                    ToEquatable([subject]),
+                    methodLocation));
+            }
+
+            // 显式实现写在「声明该成员的接口」上：菱形继承里两个基接口的同名同签名成员
+            // 只有用各自接口名实现才不产生二义性。基接口对生成代码不可见时退回根接口。
+            var declaringExpression = IsTypeAccessible(declaringType, compilation.Assembly)
+                ? TypeFormats.Display(declaringType)
+                : interfaceExpression;
+
+            var info = new InterfaceMethodInfo(
+                methodIndex,
+                method.Name,
+                declaringExpression,
+                routeMethod!,
+                routePath!,
+                new EquatableArray<string>(ReadHeaders(method, wellKnown).ToImmutableArray()),
+                isMultipart,
+                contentType,
+                queryCollectionFormat,
+                methodAuth.AllowAnonymous,
+                methodAuth.Scheme,
+                streaming,
+                streamFormat,
+                bodyType is null ? null : TypeFormats.Display(bodyType),
+                streaming && bodyType is INamedTypeSymbol streamBody ? TypeFormats.Display(streamBody.TypeArguments[0]) : null,
+                returnKind,
+                cancellationTokenIndex,
+                new EquatableArray<InterfaceParameterInfo>(parameters.ToImmutableArray()));
+
+            return (info, methodAuth.Conflict);
+        }
+
+        /// <summary>方法上的唯一路由特性 → 方法名与路径；缺失、多个、自定义子类、空值各报一条诊断。</summary>
+        /// <param name="method">待解析的接口方法。</param>
+        /// <param name="subject">诊断文案主语（<c>接口 X 的 M</c>）。</param>
+        /// <param name="methodLocation">诊断落点。</param>
+        /// <param name="wellKnown">本编译解析出的框架符号。</param>
+        /// <param name="diagnostics">诊断收集器。</param>
+        /// <param name="routeMethod">路由的 HTTP 方法名。</param>
+        /// <param name="routePath">路由的路径模板。</param>
+        /// <returns>解析成功返回 <c>true</c>；否则已写入诊断。</returns>
+        private static bool TryResolveRoute(
+            IMethodSymbol method,
+            string subject,
+            Location methodLocation,
+            WellKnownSymbols wellKnown,
+            ImmutableArray<DiagnosticInfo>.Builder diagnostics,
+            out string? routeMethod,
+            out string? routePath)
+        {
+            routeMethod = null;
+            routePath = null;
+
+            var routes = method.GetAttributes()
+                .Where(attribute => DerivesFrom(attribute.AttributeClass, wellKnown.HttpApi))
+                .ToList();
+
+            if (routes.Count == 0)
+            {
+                diagnostics.Add(new DiagnosticInfo(
+                    Diagnostics.RouteCountInvalid,
+                    ToEquatable([subject, "缺少路由特性"]),
+                    methodLocation));
+                return false;
+            }
+
+            if (routes.Count > 1)
+            {
+                var names = string.Join("、", routes.Select(static route => route.AttributeClass!.Name));
+                diagnostics.Add(new DiagnosticInfo(
+                    Diagnostics.RouteCountInvalid,
+                    ToEquatable([subject, $"标注了多个路由特性（{names}）"]),
+                    methodLocation));
+                return false;
+            }
+
+            if (!TryReadRoute(routes[0], wellKnown, out routeMethod, out routePath))
+            {
+                diagnostics.Add(new DiagnosticInfo(
+                    Diagnostics.CustomRouteAttribute,
+                    ToEquatable([subject, routes[0].AttributeClass!.Name]),
+                    methodLocation));
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(routeMethod) || string.IsNullOrWhiteSpace(routePath))
+            {
+                diagnostics.Add(new DiagnosticInfo(
+                    Diagnostics.RouteValueInvalid,
+                    ToEquatable([subject]),
+                    methodLocation));
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>方法的返回形态：泛型方法、非 Task 家族返回值、流式帧格式与正文类型可见性都在这里判定。</summary>
+        /// <param name="method">待解析的接口方法。</param>
+        /// <param name="symbol">被代理的根接口。</param>
+        /// <param name="methodLocation">诊断落点。</param>
+        /// <param name="wellKnown">本编译解析出的框架符号。</param>
+        /// <param name="compilation">当前编译，用于可见性判定。</param>
+        /// <param name="diagnostics">诊断收集器。</param>
+        /// <param name="returnKind">返回形态。</param>
+        /// <param name="bodyType">正文类型；纯 <c>AxiosResponse</c> 与空返回为 <c>null</c>。</param>
+        /// <param name="streaming">是否按帧交付的流式响应。</param>
+        /// <param name="streamFormat">流式帧格式的枚举值；没有 <c>[Stream]</c> 时为 <c>0</c>。</param>
+        /// <returns>可生成返回 <c>true</c>；否则已写入诊断。</returns>
+        private static bool TryResolveReturnShape(
+            IMethodSymbol method,
+            INamedTypeSymbol symbol,
+            Location methodLocation,
+            WellKnownSymbols wellKnown,
+            Compilation compilation,
+            ImmutableArray<DiagnosticInfo>.Builder diagnostics,
+            out InterfaceReturnKind returnKind,
+            out ITypeSymbol? bodyType,
+            out bool streaming,
+            out int streamFormat)
+        {
+            returnKind = InterfaceReturnKind.Void;
+            bodyType = null;
+            streaming = false;
+            streamFormat = 0;
+
+            var methodDisplay = method.Name;
+
+            // 泛型方法的返回形态随类型实参而变，代理无法烘焙成具体契约。
+            if (method.IsGenericMethod)
+            {
+                diagnostics.Add(new DiagnosticInfo(
+                    Diagnostics.InterfaceShapeUnsupported,
+                    ToEquatable([symbol.Name, methodDisplay, "泛型方法无法代理"]),
+                    methodLocation));
+                return false;
+            }
+
+            if (!TryGetReturnShape(method, wellKnown, out returnKind, out bodyType, out streaming, out var shapeError))
+            {
+                diagnostics.Add(new DiagnosticInfo(
+                    Diagnostics.InterfaceReturnUnsupported,
+                    ToEquatable([symbol.Name, methodDisplay, shapeError!]),
+                    methodLocation));
+                return false;
+            }
+
+            var streamAttribute = FindAttribute(method, wellKnown.Stream);
+            if (streamAttribute is not null)
+            {
+                if (!streaming)
+                {
+                    diagnostics.Add(new DiagnosticInfo(
+                        Diagnostics.InterfaceStreamInvalid,
+                        ToEquatable([symbol.Name, methodDisplay, "[Stream] 只用于返回 Task<AxiosResponse<IAsyncEnumerable<T>>> 的方法"]),
+                        methodLocation));
+                    return false;
+                }
+
+                if (streamAttribute.ConstructorArguments.Length == 1
+                    && streamAttribute.ConstructorArguments[0].Value is int declaredFormat)
+                {
+                    streamFormat = declaredFormat;
+                }
+
+                if (!IsDefinedStreamFormat(streamFormat, wellKnown))
+                {
+                    diagnostics.Add(new DiagnosticInfo(
+                        Diagnostics.InterfaceStreamInvalid,
+                        ToEquatable([symbol.Name, methodDisplay, $"帧格式值 {streamFormat} 无效"]),
+                        methodLocation));
+                    return false;
+                }
+            }
+
+            if (bodyType is not null && !IsTypeAccessible(bodyType, compilation.Assembly))
+            {
+                diagnostics.Add(new DiagnosticInfo(
+                    Diagnostics.UnsupportedType,
+                    ToEquatable(["接口 " + symbol.Name, $"返回类型 {bodyType.ToDisplayString()} 对生成代码不可见"]),
+                    methodLocation));
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>方法级编码选项：multipart 开关、<c>[BodyContentType]</c> 媒体类型与 <c>[QueryCollectionFormat]</c> 取值。</summary>
+        /// <param name="method">待解析的接口方法。</param>
+        /// <param name="symbol">被代理的根接口。</param>
+        /// <param name="methodLocation">诊断落点。</param>
+        /// <param name="wellKnown">本编译解析出的框架符号。</param>
+        /// <param name="diagnostics">诊断收集器。</param>
+        /// <param name="isMultipart">是否标了 <c>[Multipart]</c>。</param>
+        /// <param name="contentType"><c>[BodyContentType]</c> 的媒体类型；没标为 <c>null</c>。</param>
+        /// <param name="queryCollectionFormat"><c>[QueryCollectionFormat]</c> 的枚举值；没标为 <c>null</c>。</param>
+        /// <returns>取值合法返回 <c>true</c>；否则已写入诊断。</returns>
+        private static bool TryResolveEncodingOptions(
+            IMethodSymbol method,
+            INamedTypeSymbol symbol,
+            Location methodLocation,
+            WellKnownSymbols wellKnown,
+            ImmutableArray<DiagnosticInfo>.Builder diagnostics,
+            out bool isMultipart,
+            out string? contentType,
+            out int? queryCollectionFormat)
+        {
+            var methodDisplay = method.Name;
+            isMultipart = FindAttribute(method, wellKnown.Multipart) is not null;
+            contentType = null;
+            queryCollectionFormat = null;
+
+            var contentTypeAttribute = FindAttribute(method, wellKnown.BodyContentType);
+            if (contentTypeAttribute is not null)
+            {
+                contentType = GetStringArgument(contentTypeAttribute, 0)?.Trim();
+                if (contentType is null || contentType.Length == 0 || HasHeaderControlCharacter(contentType))
+                {
+                    diagnostics.Add(new DiagnosticInfo(
+                        Diagnostics.InterfaceEncodingInvalid,
+                        ToEquatable([symbol.Name, methodDisplay, "[BodyContentType] 的媒体类型不能为空白或包含控制字符"]),
+                        methodLocation));
+                    return false;
+                }
+
+                if (isMultipart)
+                {
+                    diagnostics.Add(new DiagnosticInfo(
+                        Diagnostics.InterfaceEncodingInvalid,
+                        ToEquatable([symbol.Name, methodDisplay, "[Multipart] 与 [BodyContentType] 互斥：multipart 的媒体类型固定为 multipart/form-data"]),
+                        methodLocation));
+                    return false;
+                }
+            }
+
+            var collectionFormatAttribute = FindAttribute(method, wellKnown.QueryCollectionFormat);
+            if (collectionFormatAttribute is not null)
+            {
+                var value = collectionFormatAttribute.ConstructorArguments.Length == 1
+                    && collectionFormatAttribute.ConstructorArguments[0].Value is int declaredFormat
+                    ? declaredFormat
+                    : -1;
+
+                if (!IsDefinedCollectionFormat(value, wellKnown))
+                {
+                    diagnostics.Add(new DiagnosticInfo(
+                        Diagnostics.InterfaceEncodingInvalid,
+                        ToEquatable([symbol.Name, methodDisplay, $"查询集合格式值 {value} 无效"]),
+                        methodLocation));
+                    return false;
+                }
+
+                queryCollectionFormat = value;
+            }
+
+            return true;
+        }
+
+        /// <summary>方法参数表：按引用、无法装箱、对生成代码不可见、<c>CancellationToken</c> 位置都在这里判定。</summary>
+        /// <param name="method">待解析的接口方法。</param>
+        /// <param name="symbol">被代理的根接口。</param>
+        /// <param name="methodLocation">诊断落点。</param>
+        /// <param name="wellKnown">本编译解析出的框架符号。</param>
+        /// <param name="compilation">当前编译，用于可见性判定。</param>
+        /// <param name="diagnostics">诊断收集器。</param>
+        /// <param name="parameters">按声明顺序的绑定声明；失败时内容不完整，调用方应丢弃。</param>
+        /// <param name="cancellationTokenIndex"><c>CancellationToken</c> 参数的序号；没有为 <c>-1</c>。</param>
+        /// <returns>全部参数可用返回 <c>true</c>；否则已写入诊断。</returns>
+        private static bool TryResolveParameters(
+            IMethodSymbol method,
+            INamedTypeSymbol symbol,
+            Location methodLocation,
+            WellKnownSymbols wellKnown,
+            Compilation compilation,
+            ImmutableArray<DiagnosticInfo>.Builder diagnostics,
+            out List<InterfaceParameterInfo> parameters,
+            out int cancellationTokenIndex)
+        {
+            var methodDisplay = method.Name;
+            parameters = new List<InterfaceParameterInfo>();
+            cancellationTokenIndex = -1;
+            var blocked = false;
+
+            foreach (var parameter in method.Parameters)
+            {
+                if (parameter.RefKind != RefKind.None)
+                {
+                    diagnostics.Add(new DiagnosticInfo(
+                        Diagnostics.InterfaceShapeUnsupported,
+                        ToEquatable([symbol.Name, methodDisplay, $"参数 {parameter.Name} 是 ref / out / in：接口级声明不支持按引用传递"]),
+                        methodLocation));
+                    blocked = true;
+                    continue;
+                }
+
+                if (parameter.Type is INamedTypeSymbol { IsRefLikeType: true }
+                    || parameter.Type.TypeKind == TypeKind.Pointer
+                    || parameter.Type.TypeKind == TypeKind.FunctionPointer)
+                {
+                    diagnostics.Add(new DiagnosticInfo(
+                        Diagnostics.InterfaceShapeUnsupported,
+                        ToEquatable([symbol.Name, methodDisplay, $"参数 {parameter.Name} 的类型 {parameter.Type.ToDisplayString()} 无法装箱"]),
+                        methodLocation));
+                    blocked = true;
+                    continue;
+                }
+
+                if (!IsTypeAccessible(parameter.Type, compilation.Assembly))
+                {
+                    diagnostics.Add(new DiagnosticInfo(
+                        Diagnostics.UnsupportedType,
+                        ToEquatable(["接口 " + symbol.Name, $"参数类型 {parameter.Type.ToDisplayString()} 对生成代码不可见"]),
+                        methodLocation));
+                    blocked = true;
+                    continue;
+                }
+
+                if (SymbolEqualityComparer.Default.Equals(parameter.Type, wellKnown.CancellationToken))
+                {
+                    if (HasBindingAttribute(parameter, wellKnown))
+                    {
+                        diagnostics.Add(new DiagnosticInfo(
+                            Diagnostics.InterfaceShapeUnsupported,
+                            ToEquatable([symbol.Name, methodDisplay, $"参数 {parameter.Name} 是 CancellationToken，不能同时标注 Path / Query / Header / HeaderCollection / Part / Body"]),
+                            methodLocation));
+                        blocked = true;
+                        continue;
+                    }
+
+                    if (cancellationTokenIndex >= 0)
+                    {
+                        diagnostics.Add(new DiagnosticInfo(
+                            Diagnostics.InterfaceShapeUnsupported,
+                            ToEquatable([symbol.Name, methodDisplay, "声明了多个 CancellationToken 参数：最多一个"]),
+                            methodLocation));
+                        blocked = true;
+                        continue;
+                    }
+
+                    cancellationTokenIndex = parameter.Ordinal;
+                    parameters.Add(new InterfaceParameterInfo(
+                        parameter.Ordinal,
+                        ParameterName(parameter),
+                        TypeFormats.Display(parameter.Type),
+                        $"{symbol.Name}.{method.Name}.{ParameterName(parameter)}",
+                        null,
+                        false, false, null, false, null, false, null, false, false, null, false, null, null, null));
+                    continue;
+                }
+
+                parameters.Add(ReadParameter(parameter, method, symbol, wellKnown, diagnostics));
+            }
+
+            return !blocked;
         }
 
         // 单个方法参数 → 绑定声明：特性决定它走路径 / 查询 / 头 / 正文，未标注的按名字兜底成查询参数。
