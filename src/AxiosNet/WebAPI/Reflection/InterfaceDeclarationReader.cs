@@ -16,13 +16,13 @@ internal static class InterfaceDeclarationReader
         | DynamicallyAccessedMemberTypes.Interfaces;
 
     /// <summary>读出一个接口方法的声明（连同接口级声明：静态头、授权）。</summary>
-    public static (InterfaceDeclarationData Owner, InterfaceMethodDeclaration Method) Read(
+    public static (InterfaceDeclaration Owner, InterfaceMethodDeclaration Method) Read(
         [DynamicallyAccessedMembers(InterfaceMembers)] Type interfaceType,
         MethodInfo method)
     {
-        var chain = InterfaceDeclaration.CollectInterfaceChain(interfaceType);
+        var chain = InterfaceDeclarationValidator.CollectInterfaceChain(interfaceType);
 
-        var owner = new InterfaceDeclarationData { InterfaceType = interfaceType };
+        var owner = new InterfaceDeclaration { InterfaceType = interfaceType };
         CollectStaticHeaders(chain, owner.StaticHeaders);
         ReadOwnerAuthorization(chain, owner);
 
@@ -38,7 +38,7 @@ internal static class InterfaceDeclarationReader
         ReadMethodAuthorization(method, declaration);
         ReadParameters(interfaceType, method, declaration.Parameters);
 
-        declaration.ReturnShape = InterfaceDeclaration.GetReturnShape(method, out var responseType);
+        declaration.ReturnShape = InterfaceDeclarationValidator.GetReturnShape(method, out var responseType);
         declaration.ResponseType = responseType;
         declaration.ReturnTypeText = ReturnTypeShape.Describe(method.ReturnType);
 
@@ -156,7 +156,7 @@ internal static class InterfaceDeclarationReader
     }
 
     /// <summary>接口级授权：链上第一个声明了授权的接口胜出（派生接口压过基接口）。</summary>
-    private static void ReadOwnerAuthorization(List<Type> chain, InterfaceDeclarationData owner)
+    private static void ReadOwnerAuthorization(List<Type> chain, InterfaceDeclaration owner)
     {
         foreach (var type in chain)
         {

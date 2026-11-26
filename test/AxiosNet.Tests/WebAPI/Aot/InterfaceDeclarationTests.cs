@@ -141,7 +141,7 @@ public sealed class InterfaceDeclarationTests
                 .ReturnsVoid());
 
         // 生成器可直接写声明字段：builder 不再拆开的分支（[ApiIgnore] 与绑定同标、方法级声明损坏）。
-        var ignoreConflict = new InterfaceDeclarationData { InterfaceType = typeof(IIgnoreConflictApi) };
+        var ignoreConflict = new InterfaceDeclaration { InterfaceType = typeof(IIgnoreConflictApi) };
         var ignoreMethod = new InterfaceMethodDeclaration
         {
             Name = nameof(IIgnoreConflictApi.GetAsync),
@@ -163,7 +163,7 @@ public sealed class InterfaceDeclarationTests
         ignoreConflict.Methods.Add(ignoreMethod);
         GeneratedMetadataRegistry.RegisterInterface(ignoreConflict, CreateProxy);
 
-        var methodError = new InterfaceDeclarationData { InterfaceType = typeof(IMethodErrorApi) };
+        var methodError = new InterfaceDeclaration { InterfaceType = typeof(IMethodErrorApi) };
         methodError.Methods.Add(new InterfaceMethodDeclaration
         {
             Name = nameof(IMethodErrorApi.GetAsync),

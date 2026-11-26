@@ -48,15 +48,15 @@ internal static class GeneratedMetadataRegistry
     }
 
     /// <summary>登记接口代理元数据；同一类型重复登记属编程错误。</summary>
-    internal static void RegisterInterface(InterfaceDeclarationData declaration, Func<ApiClient, object> factory)
+    internal static void RegisterInterface(InterfaceDeclaration declaration, Func<ApiClient, object> factory)
         => AddInterface(declaration, factory, allowExisting: false);
 
     /// <summary>生成代码的注册入口：多个程序集为同一接口各生成一份时，生成结果等价，保留先注册的一份。</summary>
-    internal static void RegisterGeneratedInterface(InterfaceDeclarationData declaration, Func<ApiClient, object> factory)
+    internal static void RegisterGeneratedInterface(InterfaceDeclaration declaration, Func<ApiClient, object> factory)
         => AddInterface(declaration, factory, allowExisting: true);
 
     /// <summary>登记接口声明：写时复制换表；<paramref name="allowExisting"/> 为 true 时重复注册直接忽略（多个程序集为同一契约生成的代理等价）。</summary>
-    private static void AddInterface(InterfaceDeclarationData declaration, Func<ApiClient, object> factory, bool allowExisting)
+    private static void AddInterface(InterfaceDeclaration declaration, Func<ApiClient, object> factory, bool allowExisting)
     {
         ArgumentNullException.ThrowIfNull(declaration);
         ArgumentNullException.ThrowIfNull(factory);
@@ -94,14 +94,14 @@ internal sealed class InterfaceEntry
     // 方法元数据表（首次调用时建好，之后只读）。
     private InterfaceMethodMetadata[]? _methods;
 
-    public InterfaceEntry(InterfaceDeclarationData declaration, Func<ApiClient, object> factory)
+    public InterfaceEntry(InterfaceDeclaration declaration, Func<ApiClient, object> factory)
     {
         Declaration = declaration;
         Factory = factory;
     }
 
     /// <summary>源生成期烘焙好的接口声明：路由前缀、静态头、方法签名都按它恢复。</summary>
-    public InterfaceDeclarationData Declaration { get; }
+    public InterfaceDeclaration Declaration { get; }
 
     /// <summary>代理工厂：入参是宿主客户端，返回接口的代理实例；生成期已写死构造，不走反射。</summary>
     public Func<ApiClient, object> Factory { get; }

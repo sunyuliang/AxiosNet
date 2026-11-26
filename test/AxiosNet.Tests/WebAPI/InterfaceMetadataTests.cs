@@ -9,7 +9,7 @@ namespace AxiosNet.Tests.WebAPI;
 /// <summary>
 /// 元数据构建层（<see cref="InterfaceMethodMetadata"/>）的二次校验。
 /// <para>
-/// 同一批规则在 <see cref="InterfaceDeclaration"/> 里已经报过一次；这里是「万一声明校验被绕过」的兜底，
+/// 同一批规则在 <see cref="InterfaceDeclarationValidator"/> 里已经报过一次；这里是「万一声明校验被绕过」的兜底，
 /// 所以只能直接驱动构建入口才能压到——走 <c>Create&lt;T&gt;()</c> 永远先在声明校验那层被拦下。
 /// </para>
 /// </summary>

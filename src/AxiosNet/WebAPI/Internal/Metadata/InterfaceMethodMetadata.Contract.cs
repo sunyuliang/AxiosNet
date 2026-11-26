@@ -8,7 +8,7 @@ internal sealed partial class InterfaceMethodMetadata
 {
     /// <summary>按声明构建方法契约；声明错误随元数据携带，首次使用时抛出。</summary>
     internal static InterfaceMethodMetadata FromDeclaration(
-        InterfaceDeclarationData owner,
+        InterfaceDeclaration owner,
         InterfaceMethodDeclaration declaration)
     {
         try
@@ -23,7 +23,7 @@ internal sealed partial class InterfaceMethodMetadata
 
     /// <summary>声明路径的契约构建：只做归一化、绑定与授权。</summary>
     internal static InterfaceMethodMetadata BuildCore(
-        InterfaceDeclarationData owner,
+        InterfaceDeclaration owner,
         InterfaceMethodDeclaration declaration)
     {
         if (owner.Error is { } ownerError)

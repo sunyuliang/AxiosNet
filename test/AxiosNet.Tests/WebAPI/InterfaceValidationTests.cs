@@ -231,7 +231,7 @@ public sealed class InterfaceValidationTests
             nameof(WellFormedApiImplementation.GetAsync),
             new[] { typeof(int), typeof(string), typeof(CancellationToken) })!;
 
-        var resolved = InterfaceDeclaration.ResolveMethod(typeof(IWellFormedApi), implementationMethod);
+        var resolved = InterfaceDeclarationValidator.ResolveMethod(typeof(IWellFormedApi), implementationMethod);
 
         Assert.True(resolved.DeclaringType!.IsInterface);
         Assert.Equal(nameof(IWellFormedApi.GetAsync), resolved.Name);
@@ -245,7 +245,7 @@ public sealed class InterfaceValidationTests
             nameof(WellFormedApiImplementation.GetAsync),
             new[] { typeof(long), typeof(string), typeof(CancellationToken) })!;
 
-        var resolved = InterfaceDeclaration.ResolveMethod(typeof(IWellFormedApi), overload);
+        var resolved = InterfaceDeclarationValidator.ResolveMethod(typeof(IWellFormedApi), overload);
 
         Assert.Same(overload, resolved);
     }
@@ -255,7 +255,7 @@ public sealed class InterfaceValidationTests
     {
         var unknown = typeof(WellFormedApiImplementation).GetMethod(nameof(WellFormedApiImplementation.Unrelated))!;
 
-        Assert.Same(unknown, InterfaceDeclaration.ResolveMethod(typeof(IWellFormedApi), unknown));
+        Assert.Same(unknown, InterfaceDeclarationValidator.ResolveMethod(typeof(IWellFormedApi), unknown));
     }
 }
 
@@ -286,7 +286,7 @@ public interface IDuplicatePlaceholderApi
     Task<AxiosResponse<Person>> GetAsync([Path] int id, CancellationToken cancellationToken = default);
 }
 
-// 形状负例：每一条都对应 InterfaceDeclaration 里的一条规则
+// 形状负例：每一条都对应 InterfaceDeclarationValidator 里的一条规则
 
 /// <summary>开放泛型接口：只能使用闭合类型。</summary>
 public interface IGenericRepo<T>

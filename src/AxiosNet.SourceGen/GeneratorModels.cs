@@ -153,6 +153,10 @@ namespace AxiosNet.SourceGen
         string? PartContentType);
 
     /// <summary>接口方法的返回形态（生成器侧；写入 <c>InterfaceBuilder.Returns*</c>）。</summary>
+    /// <remarks>
+    /// 没有「不支持」项：非法签名在生成期就报诊断。本枚举 <c>0</c> 是 <c>Response</c>，
+    /// 运行时侧 <c>InterfaceReturnShape</c> 的 <c>0</c> 是「不支持」，两侧默认值含义相反，不可按序号互转。
+    /// </remarks>
     internal enum InterfaceReturnKind
     {
         /// <summary>返回完整 <c>AxiosResponse</c>（状态码、头与正文都要）。</summary>

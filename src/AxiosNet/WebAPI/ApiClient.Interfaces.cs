@@ -37,7 +37,7 @@ public sealed partial class ApiClient
         // 守卫条件必须直接写 intrinsic：ILC 在 Native AOT 下折成常量 false，整段 DispatchProxy 回退随之被裁掉。
         if (!RuntimeSupport.ForceNoDynamicCode && RuntimeFeature.IsDynamicCodeSupported)
         {
-            ValidateInterfaceDeclaration(() => InterfaceDeclaration.EnsureValid(typeof(T)));
+            ValidateInterfaceDeclaration(() => InterfaceDeclarationValidator.EnsureValid(typeof(T)));
             return ApiInterfaceProxy.Create<T>(this);
         }
 
@@ -69,7 +69,7 @@ public sealed partial class ApiClient
         // 与泛型重载同一条守卫。
         if (!RuntimeSupport.ForceNoDynamicCode && RuntimeFeature.IsDynamicCodeSupported)
         {
-            ValidateInterfaceDeclaration(() => InterfaceDeclaration.EnsureValid(interfaceType));
+            ValidateInterfaceDeclaration(() => InterfaceDeclarationValidator.EnsureValid(interfaceType));
             return ApiInterfaceProxy.Create(interfaceType, this);
         }
 

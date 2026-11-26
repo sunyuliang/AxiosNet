@@ -86,6 +86,10 @@ public class AxiosResponse
     }
 
     /// <summary>响应正文字节数（只有非流式响应有值），供遥测写进 span。</summary>
+    /// <remarks>
+    /// 是<b>长度</b>不是字节本身：字节内容看 <see cref="RawBody"/> 或 <see cref="RawBodyBuffer"/>（都是 <c>byte[]</c> 形态）。
+    /// <see cref="AxiosConfig.ResponseType"/> 为 <c>Stream</c> 时无值（<c>null</c>）；空正文是 <c>0</c>。长度取自实际读到的字节，不用 <c>Content-Length</c>。
+    /// </remarks>
     internal long? BodyBytes { get; set; }
 
     /// <summary>这次响应是条件请求的 304 合并出来的（正文来自缓存），供遥测与日志区分「未命中」。</summary>

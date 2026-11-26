@@ -87,6 +87,10 @@ public class AxiosException : Exception
     public bool IsTotalTimeoutExceeded { get; private init; }
 
     /// <summary>本次超时的上限取自剩余总预算（被 <see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/> 压小）。</summary>
+    /// <remarks>
+    /// 与 <see cref="IsTotalTimeoutExceeded"/> 互斥：后者是<b>尚未发出</b>就发现预算耗尽，本项是请求<b>已发出</b>、
+    /// 上限被剩余预算压小后到点。因此本项仍算一次失败（计熔断、可重试），后者不算。
+    /// </remarks>
     internal bool TimedOutOnTotalBudget { get; private init; }
 
     /// <summary>

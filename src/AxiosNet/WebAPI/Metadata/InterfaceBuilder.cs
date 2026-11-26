@@ -9,11 +9,11 @@ public sealed class InterfaceBuilder
 {
     internal InterfaceBuilder(Type interfaceType)
     {
-        Declaration = new InterfaceDeclarationData { InterfaceType = interfaceType };
+        Declaration = new InterfaceDeclaration { InterfaceType = interfaceType };
     }
 
     /// <summary>构建中的接口声明；<c>Build</c> 后交给注册表。</summary>
-    internal InterfaceDeclarationData Declaration { get; }
+    internal InterfaceDeclaration Declaration { get; }
 
     /// <summary>接口级静态头（基接口在前、派生接口在后由生成器排好序）。</summary>
     public InterfaceBuilder StaticHeaders(params string[] headers)

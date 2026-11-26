@@ -23,7 +23,7 @@ public sealed partial class ApiClient
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2062",
-        Justification = "同上：反射回退（InterfaceDeclaration.Validate）只在 JIT 下可达，AOT 下提前返回缺少元数据的错误。")]
+        Justification = "同上：反射回退（InterfaceDeclarationValidator.Validate）只在 JIT 下可达，AOT 下提前返回缺少元数据的错误。")]
     public static IReadOnlyList<string> ValidateInterfaces(params Type[] interfaceTypes)
     {
         ArgumentNullException.ThrowIfNull(interfaceTypes);
@@ -65,7 +65,7 @@ public sealed partial class ApiClient
             // 守卫条件必须直接写 intrinsic：ILC 折成常量 false 后，这段反射校验才不可达并被裁掉。
             if (!RuntimeSupport.ForceNoDynamicCode && RuntimeFeature.IsDynamicCodeSupported)
             {
-                errors.AddRange(InterfaceDeclaration.Validate(interfaceType));
+                errors.AddRange(InterfaceDeclarationValidator.Validate(interfaceType));
                 continue;
             }
 
@@ -108,12 +108,12 @@ public sealed partial class ApiClient
 
         foreach (var type in types)
         {
-            if (!type.IsInterface || type.IsGenericTypeDefinition || !InterfaceDeclaration.HasRoute(type))
+            if (!type.IsInterface || type.IsGenericTypeDefinition || !InterfaceDeclarationValidator.HasRoute(type))
             {
                 continue;
             }
 
-            errors.AddRange(InterfaceDeclaration.Validate(type));
+            errors.AddRange(InterfaceDeclarationValidator.Validate(type));
         }
 
         return errors;

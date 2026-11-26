@@ -90,8 +90,9 @@ internal sealed class RequestModelMemberDeclaration : BindingMemberDeclaration
     }
 }
 
-/// <summary>接口级声明的声明数据（全部方法的声明 + 接口级授权 / 静态头）。</summary>
-internal sealed class InterfaceDeclarationData
+/// <summary>接口级声明：全部方法的声明 + 接口级授权 / 静态头。</summary>
+/// <remarks>与 <see cref="AxiosNet.WebAPI.Reflection.InterfaceDeclarationValidator"/> 区别：这里是数据，那里是校验器。</remarks>
+internal sealed class InterfaceDeclaration
 {
     public Type InterfaceType { get; init; } = null!;
 

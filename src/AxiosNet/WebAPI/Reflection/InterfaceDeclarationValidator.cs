@@ -8,7 +8,8 @@ namespace AxiosNet.WebAPI.Reflection;
 /// <summary>
 /// 接口级声明的反射读取与静态校验：接口形状、路由特性、返回类型、参数绑定特性；<see cref="ApiClient.Create{T}"/> 与 <see cref="ApiClient.ValidateInterfaces(Type[])"/> 共用。
 /// </summary>
-internal static class InterfaceDeclaration
+/// <remarks>类型名带 <c>Validator</c> 后缀，以便「校验器」与「声明数据」（<see cref="Internal.Metadata.InterfaceDeclaration"/>）在调用点一眼可分。</remarks>
+internal static class InterfaceDeclarationValidator
 {
     /// <summary>接口级校验要读属性 / 事件，按最宽的要求标注。</summary>
     private const DynamicallyAccessedMemberTypes InterfaceMembers =

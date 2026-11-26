@@ -60,6 +60,6 @@ internal class ApiInterfaceProxy : DispatchProxy
     /// <summary>拦截接口调用：按接口 + 方法签名取元数据，交给它发请求并把结果还原成声明的返回形态。</summary>
     protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         => InterfaceMethodMetadataJit
-            .Get(_interfaceType!, InterfaceDeclaration.ResolveMethod(_interfaceType!, targetMethod!))
+            .Get(_interfaceType!, InterfaceDeclarationValidator.ResolveMethod(_interfaceType!, targetMethod!))
             .Invoke(_client!, args);
 }
