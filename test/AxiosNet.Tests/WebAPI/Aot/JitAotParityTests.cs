@@ -97,19 +97,139 @@ public sealed class JitAotParityTests
         Assert.Contains("Body=True", dump, StringComparison.Ordinal);
     }
 
+    /// <summary>请求模型声明同样双写：生成器烘焙 vs <see cref="RequestModelDeclarationReader"/> 读出，逐字段相等。</summary>
+    [Fact]
+    public void RequestModelDeclarations_FromGeneratorAndReflection_AreFieldEqual()
+    {
+        var ns = UniqueNamespace();
+        var (diagnostics, output) = RunGenerator(ParityModels.Replace("__NS__", ns));
+
+        Assert.DoesNotContain(diagnostics, static d => d.Severity == DiagnosticSeverity.Error);
+
+        var assembly = LoadEmitted(output);
+
+        foreach (var name in RequestModelNames)
+        {
+            var modelType = assembly.GetType(ns + "." + name, throwOnError: true)!;
+
+            Assert.True(
+                GeneratedMetadataRegistry.TryGetRequestModel(modelType, out var baked),
+                $"生成代码没有登记请求模型 {name}。");
+
+            var mirrored = RequestModelDeclarationReader.Read(modelType);
+
+            // 类级字段整份比（成员列表折成计数），成员再逐项比：两层都要相等才算同形。
+            Assert.Equal(
+                Dump(baked, collapseMembers: true, blankAsNull: OptionalNameDeclarations),
+                Dump(mirrored, collapseMembers: true, blankAsNull: OptionalNameDeclarations));
+
+            for (var i = 0; i < baked!.Members.Count; i++)
+            {
+                Assert.Equal(
+                    Dump(baked.Members[i], blankAsNull: OptionalNameDeclarations),
+                    Dump(mirrored.Members[i], blankAsNull: OptionalNameDeclarations));
+            }
+        }
+    }
+
+    /// <summary>请求模型侧的转储同样要真的钻到成员层。</summary>
+    [Fact]
+    public void Dump_CoversRequestModelFields()
+    {
+        var ns = UniqueNamespace();
+        var (_, output) = RunGenerator(ParityModels.Replace("__NS__", ns));
+        var assembly = LoadEmitted(output);
+
+        var orderType = assembly.GetType(ns + ".OrderRequest", throwOnError: true)!;
+        Assert.True(GeneratedMetadataRegistry.TryGetRequestModel(orderType, out var order));
+
+        var uploadType = assembly.GetType(ns + ".UploadRequest", throwOnError: true)!;
+        Assert.True(GeneratedMetadataRegistry.TryGetRequestModel(uploadType, out var upload));
+
+        var orderDump = Dump(order!, collapseMembers: false);
+        Assert.Contains("MethodName=\"POST\"", orderDump, StringComparison.Ordinal);
+        Assert.Contains("Path=\"orders/{id}\"", orderDump, StringComparison.Ordinal);
+        Assert.Contains("ImplementsApiRequest=True", orderDump, StringComparison.Ordinal);
+        Assert.Contains("ContentType=\"application/json\"", orderDump, StringComparison.Ordinal);
+        Assert.Contains("StaticHeaders=[\"X-Model: 1\"]", orderDump, StringComparison.Ordinal);
+        Assert.Contains("PathName=null", orderDump, StringComparison.Ordinal);
+        Assert.Contains("NameFromAttribute=True", orderDump, StringComparison.Ordinal);
+        Assert.Contains("Ignore=True", orderDump, StringComparison.Ordinal);
+        Assert.Contains("GetValue=<delegate>", orderDump, StringComparison.Ordinal);
+
+        var uploadDump = Dump(upload!, collapseMembers: false);
+        Assert.Contains("Multipart=True", uploadDump, StringComparison.Ordinal);
+        Assert.Contains("PartName=\"file\"", uploadDump, StringComparison.Ordinal);
+        Assert.Contains("PartFileName=\"a.bin\"", uploadDump, StringComparison.Ordinal);
+        Assert.Contains("PartContentType=\"application/octet-stream\"", uploadDump, StringComparison.Ordinal);
+    }
+
+    /// <summary>归一是真的在起作用：反射侧原文是空串，抹平后才是 <c>null</c>。</summary>
+    [Fact]
+    public void OptionalNames_NormalizationTurnsBlankIntoNull()
+    {
+        var ns = UniqueNamespace();
+        var (_, output) = RunGenerator(ParityModels.Replace("__NS__", ns));
+        var assembly = LoadEmitted(output);
+
+        var orderType = assembly.GetType(ns + ".OrderRequest", throwOnError: true)!;
+        var mirrored = RequestModelDeclarationReader.Read(orderType);
+
+        var raw = Dump(mirrored);
+        var normalized = Dump(mirrored, blankAsNull: OptionalNameDeclarations);
+
+        // 反射侧三处无参命名都是空串：不加归一就会与烘焙声明的 null 一一对不上。
+        Assert.Contains("PathName=\"\"", raw, StringComparison.Ordinal);
+        Assert.Contains("QueryName=\"\"", raw, StringComparison.Ordinal);
+        Assert.Contains("HeaderName=\"\"", raw, StringComparison.Ordinal);
+
+        Assert.Contains("PathName=null", normalized, StringComparison.Ordinal);
+        Assert.Contains("QueryName=null", normalized, StringComparison.Ordinal);
+        Assert.Contains("HeaderName=null", normalized, StringComparison.Ordinal);
+        Assert.DoesNotContain("Name=\"\"", normalized, StringComparison.Ordinal);
+    }
+
+    /// <summary>归一的范围只能是「空串等价于缺省」的那三处：放宽到别的字段会掩盖真实分叉。</summary>
+    [Fact]
+    public void OptionalNames_NormalizationCoversOnlyBlankTolerantNames()
+    {
+        Assert.Equal(
+            ["HeaderName", "PathName", "QueryName"],
+            OptionalNameDeclarations.OrderBy(static name => name, StringComparer.Ordinal));
+
+        foreach (var name in OptionalNameDeclarations)
+        {
+            var property = typeof(RequestModelMemberDeclaration)
+                .GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+
+            Assert.NotNull(property);
+            Assert.Equal(typeof(string), property!.PropertyType);
+        }
+
+        // 空白在 Part 上是构建错误、在 Body 上另有含义：都不许进集。
+        Assert.DoesNotContain(nameof(RequestModelMemberDeclaration.PartName), OptionalNameDeclarations);
+        Assert.DoesNotContain(nameof(RequestModelMemberDeclaration.PartFileName), OptionalNameDeclarations);
+        Assert.DoesNotContain(nameof(RequestModelMemberDeclaration.PartContentType), OptionalNameDeclarations);
+        Assert.DoesNotContain(nameof(RequestModelMemberDeclaration.BodyName), OptionalNameDeclarations);
+    }
+
     /// <summary>把声明按「公开属性 + 集合元素」递归转成文本；委托成员只留占位，类型只留全名。</summary>
     /// <param name="value">任意声明对象。</param>
-    private static string Dump(object? value)
+    /// <param name="collapseMembers">为 <c>true</c> 时把成员声明列表折成「几个成员」，让整份声明比对专注类级字段。</param>
+    /// <param name="blankAsNull">需要抹平空串的命名属性集合；<c>null</c> 表示逐字比对。</param>
+    private static string Dump(object? value, bool collapseMembers = false, HashSet<string>? blankAsNull = null)
     {
         var builder = new StringBuilder();
-        Write(builder, value);
+        Write(builder, value, collapseMembers, blankAsNull);
         return builder.ToString();
     }
 
     /// <summary>转储的递归实现。</summary>
     /// <param name="builder">输出缓冲。</param>
     /// <param name="value">当前节点。</param>
-    private static void Write(StringBuilder builder, object? value)
+    /// <param name="collapseMembers">为 <c>true</c> 时折叠成员声明列表。</param>
+    /// <param name="blankAsNull">需要抹平空串的属性名集合；只对 <c>string</c> 值生效。</param>
+    private static void Write(StringBuilder builder, object? value, bool collapseMembers, HashSet<string>? blankAsNull)
     {
         switch (value)
         {
@@ -139,6 +259,13 @@ public sealed class JitAotParityTests
                 return;
 
             case IEnumerable sequence:
+                // 成员声明列表折叠成计数：它由调用方逐项比对，整份转储只保留「有几个」。
+                if (collapseMembers && IsMemberList(value))
+                {
+                    builder.Append('[').Append(sequence.Cast<object>().Count()).Append(" members]");
+                    return;
+                }
+
                 builder.Append('[');
                 var first = true;
                 foreach (var item in sequence)
@@ -149,7 +276,7 @@ public sealed class JitAotParityTests
                     }
 
                     first = false;
-                    Write(builder, item);
+                    Write(builder, item, collapseMembers, blankAsNull);
                 }
 
                 builder.Append(']');
@@ -173,12 +300,44 @@ public sealed class JitAotParityTests
                 builder.Append(", ");
             }
 
+            var propertyValue = properties[i].GetValue(value);
+
+            // 只有入选的命名属性、且值确实是空串才抹成 null：别的空值留在原处照常比。
+            if (blankAsNull is not null
+                && propertyValue is string blank
+                && blank.Length == 0
+                && blankAsNull.Contains(properties[i].Name))
+            {
+                propertyValue = null;
+            }
+
             builder.Append(properties[i].Name).Append('=');
-            Write(builder, properties[i].GetValue(value));
+            Write(builder, propertyValue, collapseMembers, blankAsNull);
         }
 
         builder.Append('}');
     }
+
+    /// <summary>是否「请求模型成员声明列表」：只有它按计数折叠，静态头一类的字符串列表照常逐项比。</summary>
+    /// <param name="value">集合节点。</param>
+    private static bool IsMemberList(object value)
+        => value.GetType().IsGenericType
+           && value.GetType().GetGenericArguments()[0] == typeof(RequestModelMemberDeclaration);
+
+    /// <summary>请求模型上「空串等价于缺省」的三处命名：只有它们在比对时把空串抹成 <c>null</c>。</summary>
+    /// <remarks>
+    /// 无参 <c>[Path]</c> / <c>[Query]</c> / <c>[Header]</c> 的特性构造参数是空串，而生成器发射不带实参的
+    /// <c>.Path()</c>，烘焙声明里为 <c>null</c>；消费端 <c>BindingAccumulator.ResolveName</c> 用
+    /// <c>IsNullOrWhiteSpace</c> 判定「沿用成员名」，两者同义。
+    /// 不入列的：<c>PartName</c> / <c>PartFileName</c> / <c>PartContentType</c>（空白是构建错误）、
+    /// <c>BodyName</c>（<c>null</c> 表示整份正文，空串表示按键聚合，语义不同）。
+    /// </remarks>
+    private static readonly HashSet<string> OptionalNameDeclarations = new(StringComparer.Ordinal)
+    {
+        nameof(RequestModelMemberDeclaration.PathName),
+        nameof(RequestModelMemberDeclaration.QueryName),
+        nameof(RequestModelMemberDeclaration.HeaderName),
+    };
 
     /// <summary>用反射路径重建同形声明：方法顺序跟烘焙声明走，接口级字段取每次读取都相同的那份。</summary>
     /// <param name="interfaceType">已加载的接口类型。</param>
@@ -297,6 +456,66 @@ public sealed class JitAotParityTests
 
         return references.ToArray();
     }
+
+    private const string ParityModels = """
+        using System.Collections.Generic;
+        using System.IO;
+        using System.Text.Json.Serialization;
+        using AxiosNet;
+        using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
+
+        namespace __NS__;
+
+        public sealed record Item(string Name, int Size);
+
+        [Post("orders/{id}")]
+        [Headers("X-Model: 1")]
+        [BodyContentType("application/json")]
+        [QueryCollectionFormat(AxiosCollectionFormat.Multi)]
+        public sealed class OrderRequest : IApiRequest<Item>
+        {
+            [Path]
+            public int Id { get; init; }
+
+            [Query("q")]
+            public string? Keyword { get; init; }
+
+            [Query]
+            public IReadOnlyList<string>? Tags { get; init; }
+
+            [Header("X-Trace")]
+            public string? Trace { get; init; }
+
+            [HeaderCollection]
+            public IDictionary<string, string>? Extra { get; init; }
+
+            [Body]
+            public Item Payload { get; init; } = new("n", 1);
+
+            [JsonPropertyName("note")]
+            public string? Note { get; init; }
+
+            [ApiIgnore]
+            public string? Ignored { get; init; }
+
+            // 无参 [Header]：反射侧读出空串、生成期烘焙 null —— 三处可选命名里的 HeaderName 这条。
+            [Header]
+            public string? Untitled { get; init; }
+        }
+
+        [Post("upload")]
+        [Multipart]
+        public sealed class UploadRequest
+        {
+            [Part("file", FileName = "a.bin", ContentType = "application/octet-stream")]
+            public Stream? File { get; init; }
+
+            public string Note { get; init; } = string.Empty;
+        }
+        """;
+
+    private static readonly string[] RequestModelNames = ["OrderRequest", "UploadRequest"];
 
     private const string ParityInterface = """
         using System;
