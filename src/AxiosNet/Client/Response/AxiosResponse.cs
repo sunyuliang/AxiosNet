@@ -140,10 +140,16 @@ public class AxiosResponse
             Config = Config,
             Request = Request,
             RawBodyBuffer = RawBodyBuffer,
-
-            // 后续尝试会整体换掉头字典，因此这里复制一份而不是共用。
-            Headers = new Dictionary<string, IEnumerable<string>>(Headers, StringComparer.OrdinalIgnoreCase),
         };
+
+        // 后续尝试会整体换掉头字典，因此这里复制一份而不是共用（值本身是字符串序列，不再变）。
+        var headers = new Dictionary<string, IEnumerable<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var header in Headers)
+        {
+            headers[header.Key] = header.Value;
+        }
+
+        copy.Headers = headers;
 
         // 字节是原始正文的唯一来源：先搬字节（会作废文本），已解码的文本再原样带过去。
         copy.SetRawBody(_rawBody, _rawBodyCharSet, _rawBodyEncoding);
