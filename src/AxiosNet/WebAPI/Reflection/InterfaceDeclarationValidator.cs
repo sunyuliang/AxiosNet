@@ -350,12 +350,12 @@ internal static class InterfaceDeclarationValidator
         return InterfaceChainOrdering.SortKey(definition.FullName ?? definition.Name, names);
     }
 
-    /// <summary>泛型实参的稳定名字：数组写成 <c>T[]</c>，泛型只取定义名、不带闭合实参，便于不同类型共用同一份声明。</summary>
+    /// <summary>泛型实参的稳定名字：数组按秩写成 <c>T[]</c> / <c>T[,]</c>，泛型只取定义名、不带闭合实参，便于不同类型共用同一份声明。</summary>
     private static string GetChainArgumentName(Type type)
     {
         if (type.IsArray)
         {
-            return GetChainArgumentName(type.GetElementType()!) + "[]";
+            return GetChainArgumentName(type.GetElementType()!) + InterfaceChainOrdering.ArraySuffix(type.GetArrayRank());
         }
 
         var definition = type.IsGenericType ? type.GetGenericTypeDefinition() : type;

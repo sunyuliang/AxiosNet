@@ -33,6 +33,12 @@ internal static class InterfaceChainOrdering
         return builder.ToString();
     }
 
+    /// <summary>数组实参的排序后缀：一维写 <c>[]</c>，多维按秩写 <c>[,]</c>。</summary>
+    /// <param name="rank">数组维数（1 起）。</param>
+    /// <remarks>两路径必须产出同形后缀：都按数组的秩数拼，不能一律写 <c>[]</c>，否则 <c>T[]</c> 与 <c>T[,]</c> 会算出同一个键。</remarks>
+    public static string ArraySuffix(int rank)
+        => rank <= 1 ? "[]" : "[" + new string(',', rank - 1) + "]";
+
     /// <summary>接口链排序比较：依赖接口数降序，同层再按 <see cref="SortKey"/> 序数升序。</summary>
     /// <param name="leftInheritedCount">左侧接口实现的接口数量。</param>
     /// <param name="leftKey">左侧接口的 <see cref="SortKey"/>。</param>

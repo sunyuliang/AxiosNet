@@ -44,6 +44,9 @@ public sealed class JitAotParityTests
         var baked = entry!.Declaration;
         Assert.NotEmpty(baked.Methods);
 
+        // 方法集合先守恒再谈字段：只比「同一方法上的字段」发现不了「生成器把某个方法整条漏发」。
+        Assert.Equal(ChainMethodNames(interfaceType), BakedMethodNames(baked));
+
         var mirrored = MirrorThroughReflection(interfaceType, baked);
 
         // 逐方法比对而不是整份字符串：失败时能直接指出是哪个方法漂了。
@@ -349,9 +352,7 @@ public sealed class JitAotParityTests
 
         foreach (var method in shape.Methods)
         {
-            var info = FindMethod(interfaceType, method.Name)
-                ?? throw new InvalidOperationException(
-                    $"接口 {interfaceType.Name} 及其继承链上没有方法 {method.Name}：烘焙声明与类型对不上。");
+            var info = FindMethod(interfaceType, method);
 
             var (owner, declaration) = InterfaceDeclarationReader.Read(interfaceType, info);
             mirror.Methods.Add(declaration);
@@ -372,26 +373,88 @@ public sealed class JitAotParityTests
 
     /// <summary>在接口及其继承链上找方法：烘焙声明是链级的（含基接口方法），反射要跟着走一遍链。</summary>
     /// <param name="interfaceType">已加载的接口类型。</param>
-    /// <param name="name">方法名。</param>
-    private static MethodInfo? FindMethod(Type interfaceType, string name)
+    /// <param name="method">烘焙声明里的方法，按名字 + 参数名序列配对重载。</param>
+    private static MethodInfo FindMethod(Type interfaceType, InterfaceMethodDeclaration method)
     {
-        var found = interfaceType.GetMethod(name, BindingFlags.Public | BindingFlags.Instance);
-        if (found is not null)
+        var candidates = ChainMethods(interfaceType)
+            .Where(candidate => candidate.Name == method.Name)
+            .ToArray();
+
+        if (candidates.Length == 0)
         {
-            return found;
+            throw new InvalidOperationException(
+                $"接口 {interfaceType.Name} 及其继承链上没有方法 {method.Name}：烘焙声明与类型对不上。");
         }
 
-        foreach (var inherited in interfaceType.GetInterfaces())
+        if (candidates.Length == 1)
         {
-            found = inherited.GetMethod(name, BindingFlags.Public | BindingFlags.Instance);
-            if (found is not null)
+            return candidates[0];
+        }
+
+        // 重载：按参数名序列配对。参数名与声明同源，顺带校验了参数顺序与个数。
+        var expected = method.Parameters.Select(static parameter => parameter.Name).ToArray();
+        var matched = candidates
+            .Where(candidate => candidate.GetParameters()
+                .Select(static parameter => parameter.Name)
+                .SequenceEqual(expected))
+            .ToArray();
+
+        if (matched.Length == 1)
+        {
+            return matched[0];
+        }
+
+        throw new InvalidOperationException(
+            $"接口 {interfaceType.Name} 上的 {method.Name} 有 {candidates.Length} 个重载，"
+            + $"按参数名（{string.Join(", ", expected)}）配不出唯一一个：烘焙声明与类型对不上。");
+    }
+
+    /// <summary>接口链上真实声明的方法：自身 + 每一层基接口，按签名去重。</summary>
+    /// <param name="interfaceType">已加载的接口类型。</param>
+    private static MethodInfo[] ChainMethods(Type interfaceType)
+    {
+        var methods = new List<MethodInfo>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var current in new[] { interfaceType }.Concat(interfaceType.GetInterfaces()))
+        {
+            foreach (var method in current.GetMethods(BindingFlags.Public | BindingFlags.Instance))
             {
-                return found;
+                if (seen.Add(Signature(method)))
+                {
+                    methods.Add(method);
+                }
             }
         }
 
-        return null;
+        return methods.ToArray();
     }
+
+    /// <summary>方法签名键：声明接口 + 名字 + 参数类型，用于在接口链上去重同一个方法。</summary>
+    /// <param name="method">接口方法。</param>
+    private static string Signature(MethodInfo method)
+        => (method.DeclaringType?.FullName ?? "?")
+           + "|"
+           + method.Name
+           + "("
+           + string.Join(",", method.GetParameters().Select(static parameter => parameter.ParameterType.FullName))
+           + ")";
+
+    /// <summary>反射侧的方法名（排序后），与烘焙声明的名字序列比对集合是否守恒。</summary>
+    /// <param name="interfaceType">已加载的接口类型。</param>
+    private static string[] ChainMethodNames(Type interfaceType)
+        => ChainMethods(interfaceType)
+            .Select(static method => method.Name)
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToArray();
+
+    /// <summary>烘焙声明里的方法名（排序后）。</summary>
+    /// <param name="declaration">生成器烘焙的接口声明。</param>
+    private static string[] BakedMethodNames(InterfaceDeclaration declaration)
+        => declaration.Methods
+            .Select(static method => method.Name)
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToArray();
 
     private static Assembly LoadEmitted(Compilation output)
     {
@@ -554,6 +617,10 @@ public sealed class JitAotParityTests
                 [HeaderCollection] IDictionary<string, string>? extra,
                 [ApiIgnore] string? ignored,
                 CancellationToken cancellationToken);
+
+            // 同名不同参的重载：对拍要按参数名配出唯一一个，不能「按名字取第一个」。
+            [Get("items/{id}")]
+            Task<Item> GetAsync([Path] int id, CancellationToken cancellationToken);
 
             [Post("items")]
             [BodyContentType("application/json")]

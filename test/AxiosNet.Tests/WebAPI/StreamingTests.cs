@@ -224,6 +224,34 @@ public sealed class StreamingTests
     }
 
     [Fact]
+    public async Task Ndjson_LastFrameWithoutLineTerminator_IsStillDelivered()
+    {
+        // 整条流最后一个字节不是换行：末尾那段没被行尾终结的内容也要当成一帧交付。
+        using var client = CreateClient(
+            new ScriptedStreamHandler(new[] { Encoding.UTF8.GetBytes("{\"n\":1}\n{\"n\":2}") }));
+
+        var response = await client.RequestStreamAsync(new StreamFrameRequest());
+
+        var items = await CollectAsync(response.Data!);
+        Assert.Equal(2, items.Count);
+        Assert.Equal(1, items[0].N);
+        Assert.Equal(2, items[1].N);
+    }
+
+    [Fact]
+    public async Task Sse_StreamWithoutAnyLineTerminator_IsStillDelivered()
+    {
+        // 连一个行尾都没有：整块内容在 EOF 处当最后一行收下，再按「末帧补吐」出一条事件。
+        using var client = CreateClient(
+            new ScriptedStreamHandler(new[] { Encoding.UTF8.GetBytes("data: {\"n\":9}") }));
+
+        var response = await client.RequestStreamAsync(new StreamFrameRequest(), AxiosStreamFormat.ServerSentEvents);
+
+        var items = await CollectAsync(response.Data!);
+        Assert.Equal(9, Assert.Single(items).N);
+    }
+
+    [Fact]
     public async Task Ndjson_InvalidFrame_ReportsBadResponse()
     {
         using var client = CreateClient(

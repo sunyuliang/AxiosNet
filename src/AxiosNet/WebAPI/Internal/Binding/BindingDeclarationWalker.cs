@@ -182,7 +182,7 @@ internal static class BindingDeclarationWalker
             DeclarationNormalization.OptionalPartValue(member.PartContentType, display, nameof(PartAttribute.ContentType)));
     }
 
-    /// <summary>同名部件冲突的错误：说明同名成员要合并成一项。</summary>
+    /// <summary>同名部件冲突的错误：说明同名成员要合并成一个。</summary>
     private static InvalidOperationException DuplicatePart(BindingWalkContext context, string name)
         => new($"{context.Owner} 有多个 Part 绑定使用了同名 \"{name}\"：同名参数请合并为一个{context.MemberKind}（集合值走 AxiosNet 的数组规则）。");
 }

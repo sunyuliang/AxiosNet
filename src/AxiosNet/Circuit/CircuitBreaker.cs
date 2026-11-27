@@ -41,6 +41,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     private readonly ConcurrentDictionary<string, HostState> _hosts = new(StringComparer.OrdinalIgnoreCase);
 
     // 存活实例表：仪表读取时按它汇总，实例被回收后它的维度账随之消失（不会被永久计入）。
+    // 登记延迟到「第一次真的建维度」——没有维度的实例对汇总没有任何贡献，不该占表，也不该让构造函数拿进程级锁。
     private static readonly List<WeakReference<CircuitBreaker>> LiveInstances = new();
     private static readonly object LiveInstancesGate = new();
 
@@ -50,8 +51,25 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     /// <summary>清理死实例的间隔（按新建实例数计）。</summary>
     private const int PruneEveryRegistrations = 32;
 
-    /// <summary>把新实例登记进存活表，并按间隔清掉已回收的条目。</summary>
-    /// <param name="breaker">刚构造的实例。</param>
+    // 是否已登记过：实例只在第一次真的建维度时登记，未产生维度前不占存活表。
+    private int _registeredLive;
+
+    /// <summary>首次建维度时登记一次（并发下只有一个线程能赢）。</summary>
+    private void RegisterLiveOnce()
+    {
+        if (Volatile.Read(ref _registeredLive) != 0)
+        {
+            return;
+        }
+
+        if (Interlocked.Exchange(ref _registeredLive, 1) == 0)
+        {
+            RegisterLive(this);
+        }
+    }
+
+    /// <summary>把实例登记进存活表，并按间隔清掉已回收的条目。</summary>
+    /// <param name="breaker">待登记的实例。</param>
     private static void RegisterLive(CircuitBreaker breaker)
     {
         lock (LiveInstancesGate)
@@ -129,9 +147,9 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     }
 
     /// <summary>默认配置：连续 5 次失败或窗口失败率过半（至少 10 样本）熔断，冷却 30 秒，连续 3 次成功恢复。</summary>
+    /// <remarks>构造不碰任何进程级状态；实例在第一次真的建维度时才登记进存活表（<c>circuit.state</c> 的统计口径）。</remarks>
     public CircuitBreaker()
     {
-        RegisterLive(this);
     }
 
     /// <summary>按阈值与冷却时长构造（其余取默认值）。</summary>
@@ -493,6 +511,10 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
         }
 
         var candidate = new HostState(key);
+
+        // 第一次真的要建维度时才登记存活表：构造期不拿进程级锁，也不在构造期把 this 交出去。
+        RegisterLiveOnce();
+
         while (true)
         {
             if (_hosts.TryAdd(key, candidate))

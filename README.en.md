@@ -3,8 +3,8 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2956%20passed-success)](#build-and-test)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2860%20passed-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2958%20passed-success)](#build-and-test)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2862%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-92.2%25_(branch_87.5%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -1013,6 +1013,13 @@ using var b = Axios.Create(c => c.BaseAddress = "https://pay.example.com/",   po
 HttpConnectionPool.Release("orders");   // remove and shut down gracefully; the next call builds a new one
 ```
 
+Two named factories spell out the transport source, equivalent to the two forms above and sparing you the constructor parameter order:
+
+| Factory | Equivalent to | Notes |
+| --- | --- | --- |
+| `AxiosClient.Pooled(poolOptions: ...)` | `new AxiosClient(poolOptions: ...)` | Builds its own pool; the instance owns and disposes it |
+| `AxiosClient.WithSharedPool(pool, ...)` | `new AxiosClient(pool: ...)` | Shares an existing pool and does **not** own it; disposing the client leaves the pool open |
+
 | Option | Default | Notes |
 | --- | --- | --- |
 | `MaxConnectionsPerServer` | 100 | Max TCP connections per site; excess requests queue at the connection layer |
@@ -1167,7 +1174,7 @@ Two entry points, differing in whether they go through the pool:
 | Need | How | Uses the pool |
 | --- | --- | --- |
 | Wrap a logging / signing / tracing `DelegatingHandler` | `ConnectionPoolOptions.HandlerFactory` | Yes |
-| Take over the transport (test doubles, custom protocol) | `new AxiosClient(handler: ...)` | No |
+| Take over the transport (test doubles, custom protocol) | `new AxiosClient(handler: ...)` or `AxiosClient.WithHandler(handler, ...)` | No |
 
 ```csharp
 using AxiosNet.Pooling;
@@ -2729,11 +2736,11 @@ Sources compile as **C# 12**: every project declares `<LangVersion>12.0</LangVer
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2750 / 2739 | `net8.0` / `net6.0` | 5489 |
+| `AxiosNet.Tests` (core + declarative) | 2752 / 2741 | `net8.0` / `net6.0` | 5493 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests` (OpenAPI generation) | 80 | `net8.0` | 80 |
 | `AxiosNet.Compat.Tests` (netstandard2.0 compat asset) | 57 / 52 | `net8.0` / `net472` | 109 |
-| **Total** | **2956 / 2860** | | **5816** |
+| **Total** | **2958 / 2862** | | **5820** |
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed".
 

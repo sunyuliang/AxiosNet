@@ -8,6 +8,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `AxiosClient.Pooled` / `AxiosClient.WithHandler` / `AxiosClient.WithSharedPool` 三个具名工厂：分别对应「自建池」「直接注入 Handler」「共享已有池」三种连接层来源，与 `new AxiosClient(poolOptions: …)` / `new AxiosClient(handler: …)` / `new AxiosClient(pool: …)` 等价，只是不必记构造参数的位置。
+
 ### Changed (Breaking)
 
 - `AxiosResponse.RawBody` 是原始正文的唯一来源，`RawText` 由它按 charset 派生（首次读取才解码）：错误响应、短路 / 缓存命中与 `byte[]` 形态的 `Data` 不需要 `Observability.CaptureRawResponseBody` 就有 `RawBody`，成功响应打开该开关后 `RawText` 也可读。此前 `RawText` 只服务错误体、`RawBody` 只受开关控制，两者不可能同时有值。错误响应的字节超过 64 KB 时只留文本。迁移：不再能用 `RawBody is null` 判断「没开开关」，该判断请读 `Config.Observability.CaptureRawResponseBody`。

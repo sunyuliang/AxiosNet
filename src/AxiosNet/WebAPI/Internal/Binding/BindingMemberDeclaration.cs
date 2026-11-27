@@ -4,7 +4,7 @@ namespace AxiosNet.WebAPI.Internal.Binding;
 
 /// <summary>
 /// 成员级绑定声明：请求模型的属性与接口方法的参数共用同一份形状，绑定规则由
-/// <see cref="BindingDeclarationWalker"/> 统一执行。只承载特性事实，校验不在本类型内。
+/// <see cref="BindingDeclarationWalker"/> 统一执行；本类型只承载特性事实与「取值实现是否可解析」这一项前置判定。
 /// </summary>
 internal abstract class BindingMemberDeclaration
 {

@@ -3,8 +3,8 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2956%20passed-success)](#构建与测试)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2860%20passed-success)](#构建与测试)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2958%20passed-success)](#构建与测试)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2862%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-92.2%25_(branch_87.5%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -1016,6 +1016,13 @@ using var b = Axios.Create(c => c.BaseAddress = "https://pay.example.com/",   po
 HttpConnectionPool.Release("orders");   // 摘除并优雅释放；此后同名再取会新建一条
 ```
 
+连接层来源另有两个具名工厂，与上面两种写法等价，只是不必记构造参数的位置：
+
+| 工厂 | 等价于 | 说明 |
+| --- | --- | --- |
+| `AxiosClient.Pooled(poolOptions: ...)` | `new AxiosClient(poolOptions: ...)` | 自建池，实例拥有并负责释放它 |
+| `AxiosClient.WithSharedPool(pool, ...)` | `new AxiosClient(pool: ...)` | 共享池，**不**拥有它，释放实例不会关闭池 |
+
 | 选项 | 默认 | 说明 |
 | --- | --- | --- |
 | `MaxConnectionsPerServer` | 100 | 单站点最大 TCP 连接数，超出的请求在连接层排队 |
@@ -1170,7 +1177,7 @@ await client.GetAsync(url, c => c.Transport.HttpVersion = HttpVersion.Version30)
 | 需求 | 用法 | 走连接池 |
 | --- | --- | --- |
 | 套一层日志 / 签名 / 埋点 `DelegatingHandler` | `ConnectionPoolOptions.HandlerFactory` | 是 |
-| 完全接管连接层（测试桩、自定义传输） | `new AxiosClient(handler: ...)` | 否 |
+| 完全接管连接层（测试桩、自定义传输） | `new AxiosClient(handler: ...)` 或 `AxiosClient.WithHandler(handler, ...)` | 否 |
 
 ```csharp
 using AxiosNet.Pooling;
@@ -2731,11 +2738,11 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 2750 / 2739 | `net8.0` / `net6.0` | 5489 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2752 / 2741 | `net8.0` / `net6.0` | 5493 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests`（OpenAPI 生成） | 80 | `net8.0` | 80 |
 | `AxiosNet.Compat.Tests`（netstandard2.0 兼容资产） | 57 / 52 | `net8.0` / `net472` | 109 |
-| **合计** | **2956 / 2860** | | **5816** |
+| **合计** | **2958 / 2862** | | **5820** |
 
 表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。
 

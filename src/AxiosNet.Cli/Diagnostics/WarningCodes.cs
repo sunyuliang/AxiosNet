@@ -16,6 +16,12 @@ internal static class WarningCodes
     /// <summary>apiKey 安全方案无法用 [Authorize] 表达。</summary>
     internal const string APIKEY_SECURITY = "APIKEY_SECURITY";
 
+    /// <summary>请求头参数的 schema 是数组，请求头只能是一段文本，跳过该操作。</summary>
+    internal const string ARRAY_HEADER_PARAMETER = "ARRAY_HEADER_PARAMETER";
+
+    /// <summary>路径参数的 schema 是数组，路径段只能是一段文本，跳过该操作。</summary>
+    internal const string ARRAY_PATH_PARAMETER = "ARRAY_PATH_PARAMETER";
+
     /// <summary>数组缺少对象形式的 items，按 JsonElement[] 生成。</summary>
     internal const string ARRAY_WITHOUT_ITEMS = "ARRAY_WITHOUT_ITEMS";
 
@@ -90,6 +96,12 @@ internal static class WarningCodes
 
     /// <summary>security 要求同时满足多个方案，[Authorize] 只能表达其一。</summary>
     internal const string MULTI_SCHEME_SECURITY = "MULTI_SCHEME_SECURITY";
+
+    /// <summary>请求头参数的 schema 不是标量，请求头只能是一段文本，跳过该操作。</summary>
+    internal const string NON_SCALAR_HEADER_PARAMETER = "NON_SCALAR_HEADER_PARAMETER";
+
+    /// <summary>路径参数的 schema 不是标量，路径段只能是一段文本，跳过该操作。</summary>
+    internal const string NON_SCALAR_PATH_PARAMETER = "NON_SCALAR_PATH_PARAMETER";
 
     /// <summary>没有 2xx / 2XX / default 响应，按无返回值生成。</summary>
     internal const string NO_SUCCESS_RESPONSE = "NO_SUCCESS_RESPONSE";

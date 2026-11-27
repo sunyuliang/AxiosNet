@@ -598,7 +598,7 @@ internal sealed class ApiReader
         if (!scalar)
         {
             _warnings.Add(
-                isArray ? "ARRAY_PATH_PARAMETER" : "NON_SCALAR_PATH_PARAMETER",
+                isArray ? WarningCodes.ARRAY_PATH_PARAMETER : WarningCodes.NON_SCALAR_PATH_PARAMETER,
                 location,
                 $"路径参数 {wireName} 的 schema 是数组或对象：路径段在线上就是一段文本，"
                 + "AxiosNet 的 [Path] 只接受标量，已跳过该操作。");
@@ -691,7 +691,7 @@ internal sealed class ApiReader
         if (!scalar)
         {
             _warnings.Add(
-                isArray ? "ARRAY_HEADER_PARAMETER" : "NON_SCALAR_HEADER_PARAMETER",
+                isArray ? WarningCodes.ARRAY_HEADER_PARAMETER : WarningCodes.NON_SCALAR_HEADER_PARAMETER,
                 location,
                 $"请求头参数 {wireName} 的 schema 是数组或对象：请求头在线上就是一段文本，"
                 + "AxiosNet 的 [Header] 只接受标量，已跳过该操作。");

@@ -971,11 +971,11 @@ namespace AxiosNet.SourceGen
             return names;
         }
 
-        // 拼泛型实参的链式名字：数组加 []、泛型递归展开，用于区分同一接口的不同闭合形态。
+        // 拼泛型实参的链式名字：数组按秩加 [] / [,]、泛型递归展开，用于区分同一接口的不同闭合形态。
         private static string GetChainArgumentName(ITypeSymbol type)
             => type switch
             {
-                IArrayTypeSymbol array => GetChainArgumentName(array.ElementType) + "[]",
+                IArrayTypeSymbol array => GetChainArgumentName(array.ElementType) + InterfaceChainOrdering.ArraySuffix(array.Rank),
                 INamedTypeSymbol named => GetMetadataName(named.OriginalDefinition),
                 _ => type.Name
             };

@@ -182,7 +182,7 @@ public sealed partial class AxiosClient
         }
     }
 
-    /// <summary>本次请求在单飞上与缓存上要跨阶段保留的三项状态。</summary>
+    /// <summary>本次请求在单飞上与缓存上要跨阶段保留的四项状态。</summary>
     /// <param name="Served">命中或跟随者拿到的响应；<c>null</c> 表示还要真正发送。</param>
     /// <param name="Key">本次请求的缓存键。</param>
     /// <param name="Flight">领导者的在途登记；跟随者与未参与单飞时为 <c>null</c>。</param>

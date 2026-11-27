@@ -91,8 +91,8 @@ internal static class RequestContentType
     {
         unresolvedName = null;
 
-        // 不含 "charset" 字样（含 null）时不可能声明字符集：不进 BCL 解析。
-        if (mediaType is null || !SpanComparisons.ContainsIgnoreCase(mediaType, "charset"))
+        // 不含 "charset" 字样时不可能声明字符集：不进 BCL 解析。
+        if (!SpanComparisons.ContainsIgnoreCase(mediaType, "charset"))
         {
             return null;
         }
