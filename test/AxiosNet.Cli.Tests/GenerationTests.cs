@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using AxiosNet.Cli.Diagnostics;
 using AxiosNet.Cli.Model;
 using AxiosNet.Cli.Spec;
@@ -737,6 +737,45 @@ public sealed class GenerationTests
 
         // 被跳过的操作不能留下只被它引用的模型：对象路径参数若先映射再判定，会生成 ByObjectMeta 之类死类型。
         Assert.False(run.Exists("Models.g.cs"));
+    }
+
+    /// <summary>
+    /// 3.1 的多值 <c>type</c> 参数不是「数组或对象」：告警文案要指向联合类型，
+    /// 与正文属性上的 <c>MULTIPLE_TYPES</c> 同一口径（否则使用者会照提示改成单一标量，改错方向）。
+    /// </summary>
+    [Fact]
+    public void MultiValueTypeParameter_IsReportedAsUnion()
+    {
+        const string spec = """
+            {
+              "openapi": "3.1.0",
+              "info": { "title": "T", "version": "1" },
+              "paths": {
+                "/h": {
+                  "get": {
+                    "operationId": "byUnionHeader",
+                    "parameters": [{ "name": "X-Union", "in": "header",
+                                     "schema": { "type": ["string", "integer"], "enum": ["alpha", "beta", 1] } }],
+                    "responses": { "200": { "description": "ok" } }
+                  }
+                },
+                "/ok": {
+                  "get": { "operationId": "ok", "responses": { "200": { "description": "ok" } } }
+                }
+              }
+            }
+            """;
+
+        using var run = CliHarness.RunText(spec, ".json", "--style", "interface");
+
+        Assert.Contains("NON_SCALAR_HEADER_PARAMETER", run.Codes);
+        Assert.Contains("OPERATION_SKIPPED", run.Codes);
+
+        var message = run.MessageFor("NON_SCALAR_HEADER_PARAMETER");
+        Assert.NotNull(message);
+        Assert.Contains("多值联合", message, StringComparison.Ordinal);
+        Assert.Contains("string / integer", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("数组或对象", message, StringComparison.Ordinal);
     }
 
     /// <summary>

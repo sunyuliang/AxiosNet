@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using AxiosNet.Cli.Diagnostics;
@@ -591,13 +591,13 @@ internal sealed class ApiReader
 
         // 先按 schema 形态判定能否绑定，再调用映射：非标量参数若先 Map 会注册出永远不会被引用的死模型。
         var schema = ParameterSchema(parameter);
-        var (scalar, isArray) = ClassifyParameterSchema(schema, $"{location} path {wireName}");
+        var (scalar, problem, detail) = ClassifyParameterSchema(schema, $"{location} path {wireName}");
         if (!scalar)
         {
             _warnings.Add(
-                isArray ? WarningCodes.ARRAY_PATH_PARAMETER : WarningCodes.NON_SCALAR_PATH_PARAMETER,
+                problem is ParameterProblem.Array ? WarningCodes.ARRAY_PATH_PARAMETER : WarningCodes.NON_SCALAR_PATH_PARAMETER,
                 location,
-                $"路径参数 {wireName} 的 schema 是数组或对象：路径段在线上就是一段文本，"
+                $"路径参数 {wireName} 的 schema {DescribeProblem(problem, detail)}：路径段在线上就是一段文本，"
                 + "AxiosNet 的 [Path] 只接受标量，已跳过该操作。");
             return false;
         }
@@ -684,13 +684,13 @@ internal sealed class ApiReader
 
         // 先判形态再映射。
         var schema = ParameterSchema(parameter);
-        var (scalar, isArray) = ClassifyParameterSchema(schema, $"{location} header {wireName}");
+        var (scalar, problem, detail) = ClassifyParameterSchema(schema, $"{location} header {wireName}");
         if (!scalar)
         {
             _warnings.Add(
-                isArray ? WarningCodes.ARRAY_HEADER_PARAMETER : WarningCodes.NON_SCALAR_HEADER_PARAMETER,
+                problem is ParameterProblem.Array ? WarningCodes.ARRAY_HEADER_PARAMETER : WarningCodes.NON_SCALAR_HEADER_PARAMETER,
                 location,
-                $"请求头参数 {wireName} 的 schema 是数组或对象：请求头在线上就是一段文本，"
+                $"请求头参数 {wireName} 的 schema {DescribeProblem(problem, detail)}：请求头在线上就是一段文本，"
                 + "AxiosNet 的 [Header] 只接受标量，已跳过该操作。");
             return false;
         }
@@ -738,30 +738,86 @@ internal sealed class ApiReader
     /// 在类型映射之前按 schema 形态判断参数能否落成标量。形态判定统一在 <see cref="SchemaShape.Of"/>，
     /// 这里只做策略判断；返回的第二项区分数组，用于选警告码。
     /// </summary>
-    private (bool Scalar, bool Array) ClassifyParameterSchema(SpecNode? schema, string location)
+    private (bool Scalar, ParameterProblem Problem, string? Detail) ClassifyParameterSchema(SpecNode? schema, string location)
     {
         var resolved = _refs.Resolve(schema, location);
         if (resolved is not { IsObject: true })
         {
-            return (false, false);
+            return (false, ParameterProblem.Unknown, detail: null);
         }
 
         var shape = SchemaShape.Of(resolved);
 
+        // 多值 type（3.1 的 type: [string, integer]）先于其余分支：它不是「数组」，也不是「对象」，
+        // 与正文属性上的 MULTIPLE_TYPES 同一形态，文案必须这么说，否则使用者会照提示改成单一标量。
+        if (shape.ConflictingTypes is { Count: > 0 } conflicting)
+        {
+            return (false, ParameterProblem.MultipleTypes, string.Join(" / ", conflicting));
+        }
+
         return shape.Kind switch
         {
             // enum 在映射里先于对象 / 数组分支，结果一定是枚举或基础类型（都是标量）。
-            SchemaShapeKind.Enum => (true, false),
+            SchemaShapeKind.Enum => (true, ParameterProblem.None, detail: null),
 
             // 数组：落成集合参数，按数组口径报错。
-            SchemaShapeKind.Array => (false, true),
+            SchemaShapeKind.Array => (false, ParameterProblem.Array, detail: null),
 
-            SchemaShapeKind.Primitive => (IsScalarPrimitive(shape), false),
+            // 二进制：format=byte / binary 与 file 都映射成 byte[]，同样不是标量。
+            SchemaShapeKind.Primitive => IsScalarPrimitive(shape)
+                ? (true, ParameterProblem.None, detail: null)
+                : (false, ParameterProblem.Binary, detail: null),
 
-            // Union / ClassLike / Unknown 一律降级成 JsonElement 或 byte[]，运行时不算标量。
-            _ => (false, false)
+            // oneOf / anyOf 降级成 JsonElement。
+            SchemaShapeKind.Union => (false, ParameterProblem.Union, detail: null),
+
+            SchemaShapeKind.ClassLike => (false, ParameterProblem.Object, detail: null),
+
+            // 其余未知形态同样降级，运行时不算标量。
+            _ => (false, ParameterProblem.Unknown, detail: null)
         };
     }
+
+    /// <summary>参数为什么绑不成标量（只用于挑警告码与文案）。</summary>
+    private enum ParameterProblem
+    {
+        /// <summary>是标量，没有问题。</summary>
+        None,
+
+        /// <summary><c>type: array</c>：走 <c>ARRAY_*</c> 告警码。</summary>
+        Array,
+
+        /// <summary>对象 / 字典（有 <c>properties</c> 或 <c>allOf</c>）。</summary>
+        Object,
+
+        /// <summary><c>oneOf</c> / <c>anyOf</c> 联合。</summary>
+        Union,
+
+        /// <summary>多值 <c>type</c> 联合（OpenAPI 3.1）：与正文属性上的 <c>MULTIPLE_TYPES</c> 同一形态。</summary>
+        MultipleTypes,
+
+        /// <summary>二进制（<c>format=byte</c> / <c>binary</c> / <c>file</c>）：映射成 <c>byte[]</c>。</summary>
+        Binary,
+
+        /// <summary>认不出的形态。</summary>
+        Unknown
+    }
+
+    /// <summary>把形态问题写成告警文案里的一段（接在「…的 schema」之后）。</summary>
+    /// <param name="problem">形态问题。</param>
+    /// <param name="detail">多值 type 的具体类型名（<c>string / integer</c>）。</param>
+    private static string DescribeProblem(ParameterProblem problem, string? detail)
+        => problem switch
+        {
+            ParameterProblem.Array => "是数组",
+            ParameterProblem.Object => "是对象 / 字典",
+            ParameterProblem.Union => "是 oneOf / anyOf 联合",
+            ParameterProblem.MultipleTypes => detail is { Length: > 0 } types
+                ? $"把 type 声明成多值联合（{types}）"
+                : "把 type 声明成多值联合",
+            ParameterProblem.Binary => "是二进制（format=byte / binary / file）",
+            _ => "形态无法识别"
+        };
 
     /// <summary>原始类型里哪些算标量：<c>string</c> 除 <c>format=byte</c> / <c>binary</c>（映射成 <c>byte[]</c>）之外都算。</summary>
     private static bool IsScalarPrimitive(SchemaShape shape)
