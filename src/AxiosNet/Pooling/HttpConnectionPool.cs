@@ -31,6 +31,9 @@ public sealed class HttpConnectionPool : IDisposable
     // 0/1 释放标志。
     private int _disposed;
 
+    /// <summary>池是否已关闭（<see cref="Dispose"/> 之后恒为 <c>true</c>；节点回收完成与否不影响该值）。</summary>
+    internal bool IsClosed => Volatile.Read(ref _disposed) == 1;
+
     /// <summary>默认传输档的档名（空串）。</summary>
     internal const string DefaultProfile = "";
 

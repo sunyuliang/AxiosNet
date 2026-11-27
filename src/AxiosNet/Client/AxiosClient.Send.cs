@@ -249,8 +249,11 @@ public sealed partial class AxiosClient
         }
         catch (ObjectDisposedException ex)
         {
-            // 池在请求在途时被释放：翻译成「请求被中止」。
-            throw AxiosException.Canceled(config, request, "客户端或其连接池在请求在途时被释放，请求被中止", ex);
+            // 只有「本实例 / 它的池真的被释放了」才是取消；底层 TLS / 流实现也会抛 ODE，
+            // 那种情况归网络错误——否则会被当成不重试、不计熔断的取消，排障方向全错。
+            throw IsClientOrPoolDisposed()
+                ? AxiosException.Canceled(config, request, "客户端或其连接池在请求在途时被释放，请求被中止", ex)
+                : AxiosException.Network(config, request, ex);
         }
         finally
         {
@@ -263,6 +266,12 @@ public sealed partial class AxiosClient
             hookedRequest?.Dispose();
         }
     }
+
+    /// <summary>本实例或它的池是否已释放：用于判定 <see cref="ObjectDisposedException"/> 的真实归属。</summary>
+    private bool IsClientOrPoolDisposed()
+        => Volatile.Read(ref _disposed) == 1
+           || (_pool?.IsClosed ?? false)
+           || (_customClient is null && Volatile.Read(ref _resourcesDisposed) == 1);
 
     /// <summary>阶段 3 —— 取连接：注入 Handler 时固定用它的 <see cref="HttpClient"/>，否则按 origin 租一条。</summary>
     private async ValueTask<(HttpClient Client, PoolLease? Lease)> LeaseClientAsync(

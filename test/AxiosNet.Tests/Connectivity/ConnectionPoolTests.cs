@@ -2033,8 +2033,43 @@ public sealed class ConnectionPoolTests
         Assert.Equal(AxiosException.ErrCanceled, ex.Code);
     }
 
-    // key 为 null：ArgumentNullException（与库里其余入口的入参校验同一口径）。
+    // 底层（TLS 握手 / 流实现）抛 ObjectDisposedException 时，客户端并没有被释放：
+    // 必须归 ERR_NETWORK（可重试、计熔断），不能报成「客户端被释放」的 ERR_CANCELED。
     [Fact]
+    public async Task HandlerThrowsObjectDisposed_IsReportedAsNetwork_NotCanceled()
+    {
+        using var client = new AxiosClient(handler: new ThrowOnSendHandler(new ObjectDisposedException("SslStream")));
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("http://units.test/x"));
+
+        Assert.Equal(AxiosException.ErrNetwork, ex.Code);
+        Assert.IsType<ObjectDisposedException>(ex.Cause);
+    }
+
+    // 对照组：客户端真的释放了，仍然是 ERR_CANCELED（入口守卫，与上面那条分开）。
+    [Fact]
+    public async Task DisposedClient_StillReportsCanceled()
+    {
+        var client = new AxiosClient(handler: new ThrowOnSendHandler(new ObjectDisposedException("SslStream")));
+        client.Dispose();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("http://units.test/x"));
+
+        Assert.Equal(AxiosException.ErrCanceled, ex.Code);
+    }
+
+    /// <summary>固定抛指定异常的 Handler（模拟底层实现直接失败）。</summary>
+    private sealed class ThrowOnSendHandler : HttpMessageHandler
+    {
+        private readonly Exception _error;
+
+        public ThrowOnSendHandler(Exception error) => _error = error;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromException<HttpResponseMessage>(_error);
+    }
+
+    // key 为 null：ArgumentNullException（与库里其余入口的入参校验同一口径）。    [Fact]
     public void NamedPool_NullKey_IsRejected()
     {
         Assert.Throws<ArgumentNullException>(() => HttpConnectionPool.GetOrCreate(null!));
