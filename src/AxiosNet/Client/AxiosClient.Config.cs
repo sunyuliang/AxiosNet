@@ -67,7 +67,8 @@ public sealed partial class AxiosClient
 
         if (perCall.BodySet)
         {
-            merged.Body = perCall.Body;
+            // 与 Params 同口径：调用方的可变字典要隔离一份，请求在途时改它不能改写本次请求体。
+            merged.Body = AxiosConfig.IsolateMutableContainer(perCall.Body);
         }
 
         // 格式化钩子是实例级默认值：按请求没写就保留。

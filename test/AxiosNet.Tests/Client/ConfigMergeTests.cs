@@ -674,6 +674,68 @@ public sealed class ConfigMergeTests
     }
 
     [Fact]
+    public async Task PerRequestBodyDictionary_IsSnapshotted()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient();
+
+        var body = new Dictionary<string, object?> { ["v"] = "orig" };
+
+        // 拦截器在正文编码之前跑：这里改写调用方的字典不能影响本次请求体。
+        client.Interceptors.Request.Use(c =>
+        {
+            body["v"] = "MUTATED";
+            return Task.FromResult(c);
+        });
+
+        await client.RequestAsync(new AxiosConfig
+        {
+            Url = server.Url + "x",
+            Method = HttpMethod.Post,
+            Body = body
+        });
+
+        Assert.Single(server.Received);
+        Assert.Equal("{\"v\":\"orig\"}", Encoding.UTF8.GetString(server.Received[0].Body));
+    }
+
+    [Fact]
+    public async Task PerRequestBodyDictionary_IsIsolatedAcrossConcurrentRequests()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient();
+
+        var body = new Dictionary<string, object?> { ["v"] = "orig" };
+        var config = new AxiosConfig { Url = server.Url + "x", Method = HttpMethod.Post, Body = body };
+
+        // 拦截器屏障：等齐所有在途请求后改写调用方的字典，再一起放行到正文编码阶段。
+        const int Concurrent = 8;
+        var arrived = new SemaphoreSlim(0);
+        var release = new SemaphoreSlim(0);
+        client.Interceptors.Request.Use(async c =>
+        {
+            if (arrived.Release() == Concurrent - 1)
+            {
+                // 最后一个到齐：改写共享字典，再放行全部请求。
+                body["v"] = "MUTATED";
+                release.Release(Concurrent);
+            }
+
+            await release.WaitAsync();
+            return c;
+        });
+
+        await Task.WhenAll(Enumerable.Range(0, Concurrent).Select(_ => client.RequestAsync(config)));
+
+        // 每份生效配置都持有独立副本：在途改写不会让任何一条请求体变成 MUTATED。
+        Assert.Equal(Concurrent, server.Received.Count);
+        foreach (var received in server.Received)
+        {
+            Assert.Equal("{\"v\":\"orig\"}", Encoding.UTF8.GetString(received.Body));
+        }
+    }
+
+    [Fact]
     public async Task PerRequestBaseAddressNull_ClearsInstanceDefault()
     {
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = "http://127.0.0.1:1/default/" });
