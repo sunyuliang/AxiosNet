@@ -557,7 +557,7 @@ logger.LogInformation("raw body: {Body}", response.RawText);
 All seven verbs also have an overload that takes a full `AxiosConfig` (`GetAsync(url, config)` / `PostAsync(url, config)` …): `config.Url` / `config.Method` are overridden by the `url` / verb, everything else merges into the instance defaults as usual. That is why `PostAsync(url, null)` means "no config to pass" and behaves like `PostAsync(url)` (empty body) instead of throwing `ArgumentNullException`.
 
 - `url` may be relative (resolved against `BaseAddress`) or absolute; `null` / blank throws `ERR_INVALID_URL` — to hit the base address itself pass `"/"` explicitly.
-- Leaving `config.Url` as `null` also means "request `BaseAddress` itself" and is fully equivalent to passing `"/"`: a trailing slash belongs to the address and is kept as-is.
+- Leaving `config.Url` as `null` means "request `BaseAddress` itself": the base address is used verbatim, trailing slash included. Passing `"/"` goes through directory joining (the base trailing slash is collapsed, then one separator is appended), so when `BaseAddress` itself has no trailing slash the two differ by exactly that slash (`…/api` vs `…/api/`) — routes or signature strings that care about it should pick one form explicitly.
 - `Method` is BCL's `HttpMethod`, so custom verbs work: `new HttpMethod("PROPFIND")`.
 - Escape path segments with `AxiosUrl.EncodePathSegment(value)`.
 - `BaseAddress` is resolved by RFC 3986 §5.2.2 component rules, not string concatenation:
@@ -894,7 +894,7 @@ Two chains, same shape as axios: the request chain runs after interceptors and b
 ```csharp
 var http = Axios.Create(c =>
 {
-    c.TransformRequest.Add((data, cfg) =>
+    c.Serialization.TransformRequest.Add((data, cfg) =>
     {
         if (data is IDictionary<string, object?> map)
         {
@@ -904,13 +904,13 @@ var http = Axios.Create(c =>
     });
 
     // Strip a { code, data } envelope everywhere
-    c.TransformResponse.Add((data, cfg) =>
+    c.Serialization.TransformResponse.Add((data, cfg) =>
         data is JsonElement { ValueKind: JsonValueKind.Object } e && e.TryGetProperty("data", out var inner)
             ? inner
             : data);
 });
 
-await http.GetAsync("users/1", c => c.TransformResponse.Add((d, _) => Normalize(d)));   // instance chain first
+await http.GetAsync("users/1", c => c.Serialization.TransformResponse.Add((d, _) => Normalize(d)));   // instance chain first
 ```
 
 - The chains are `IList<Func<object?, AxiosConfig, object?>>`; returning `null` is legal and keeps flowing.

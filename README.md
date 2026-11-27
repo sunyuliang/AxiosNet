@@ -559,7 +559,7 @@ logger.LogInformation("raw body: {Body}", response.RawText);
 以上七个方法还各有一套直接收完整 `AxiosConfig` 的重载（`GetAsync(url, config)` / `PostAsync(url, config)` …）：`config.Url` / `config.Method` 会被 `url` / 方法名覆盖，其余项按常规合并到实例默认值。`PostAsync(url, null)` 因此按「没有要传的配置」处理，等价于 `PostAsync(url)`（发空正文），不再抛 `ArgumentNullException`。
 
 - `url` 可相对（拼 `BaseAddress`）可绝对；`null` / 空白串抛 `ERR_INVALID_URL`——要请求基地址本身请显式传 `"/"`。
-- `config.Url` 留空（`null`）同样表示请求 `BaseAddress` 本身，与传 `"/"` 完全等价：尾斜杠属于地址的一部分，会原样保留。
+- `config.Url` 留空（`null`）表示请求 `BaseAddress` 本身：基地址原样使用，尾斜杠保留。传 `"/"` 走目录拼接（base 尾斜杠折叠后补一个分隔符），所以 `BaseAddress` 本身不带尾斜杠时两者只差一个尾斜杠（`…/api` 与 `…/api/`）——对尾斜杠敏感的路由或签名串请显式选定一种写法。
 - `Method` 直接用 BCL 的 `HttpMethod`，自定义谓词照发：`new HttpMethod("PROPFIND")`。
 - 路径段特殊字符用 `AxiosUrl.EncodePathSegment(value)` 转义。
 - `BaseAddress` 按 RFC 3986 §5.2.2 的组件规则解析，不做字符串拼接：
@@ -898,7 +898,7 @@ client.Interceptors.Request.Eject(id);
 ```csharp
 var http = Axios.Create(c =>
 {
-    c.TransformRequest.Add((data, cfg) =>
+    c.Serialization.TransformRequest.Add((data, cfg) =>
     {
         if (data is IDictionary<string, object?> map)
         {
@@ -908,13 +908,13 @@ var http = Axios.Create(c =>
     });
 
     // 统一剥掉 { code, data } 外壳
-    c.TransformResponse.Add((data, cfg) =>
+    c.Serialization.TransformResponse.Add((data, cfg) =>
         data is JsonElement { ValueKind: JsonValueKind.Object } e && e.TryGetProperty("data", out var inner)
             ? inner
             : data);
 });
 
-await http.GetAsync("users/1", c => c.TransformResponse.Add((d, _) => Normalize(d)));   // 实例链在前，本次在后
+await http.GetAsync("users/1", c => c.Serialization.TransformResponse.Add((d, _) => Normalize(d)));   // 实例链在前，本次在后
 ```
 
 - 链是 `IList<Func<object?, AxiosConfig, object?>>`，返回 `null` 合法，会继续往后传。
