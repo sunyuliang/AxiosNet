@@ -9,10 +9,13 @@ internal static class Compression
     public static bool IsEnabled(AxiosConfig config)
         => config.Compression is { } compression && compression != AxiosCompression.None;
 
-    /// <summary>按 <see cref="AxiosConfig.Compression"/> 压缩并补 <c>Content-Encoding</c>；未开启时原样包装（不复制）。</summary>
+    /// <summary>按 <see cref="AxiosConfig.Compression"/> 压缩并补 <c>Content-Encoding</c>；未开启或正文为空时原样包装（不复制）。</summary>
+    /// <remarks>空正文压缩只会得到一个几十字节的帧头，比不压还大，服务端还得多解一次；空正文因此不压缩、不写 <c>Content-Encoding</c>。</remarks>
     public static HttpContent WrapBytes(byte[] bytes, AxiosConfig config)
     {
-        if (config.Compression is not { } compression || compression == AxiosCompression.None)
+        if (bytes.Length == 0
+            || config.Compression is not { } compression
+            || compression == AxiosCompression.None)
         {
             return new ByteArrayContent(bytes);
         }

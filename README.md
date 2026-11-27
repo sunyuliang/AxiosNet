@@ -171,8 +171,11 @@ var user = await api.GetAsync(5);                                             //
 | --- | --- | --- | --- |
 | `application/json`（默认） | 当前序列化器输出 JSON | 原值文本（`42`、`true`、`Paid`） | 原样发送 |
 | `application/x-www-form-urlencoded` | 键值对表单（`a[b]=v`、`a[]=v`、null 跳过） | 忽略（空正文） | 原样发送 |
-| `multipart/form-data` | 字段 + 文件部件 | 抛 `ERR_BAD_OPTION_VALUE`（放进对象字段） | 抛 `ERR_BAD_OPTION_VALUE`（`HttpContent` 原样透传） |
-| 其他（`application/xml` / `yaml`…） | 交给当前序列化器 | 原值文本 | 原样发送 |
+| `multipart/form-data` | 字段 + 文件部件 | 抛 `ERR_BAD_OPTION_VALUE`（放进对象字段） | 抛 `ERR_BAD_OPTION_VALUE`（原始内容一律不收，`HttpContent` 原样透传） |
+| 其他（`application/xml` / `yaml`…） | 交给当前序列化器；声明 XML / YAML 族却没注册对应序列化器时抛 `ERR_BAD_OPTION_VALUE` | 原值文本 | 原样发送 |
+
+> - **multipart 的正文由库组装**：字段 / 文件放进对象或字典。自己拼好的 multipart 正文（含手写 boundary）请用 `HttpContent` 承载（`MultipartFormDataContent`，或自带 `Content-Type` 的 `ByteArrayContent`）——原始内容（`string` / `byte[]` / `Stream` / 字节块异步序列）一律在本地拒绝，因为库里看不出这些字节里有没有分隔行。
+> - **XML / YAML 要有对应的序列化器**：只把 `ContentType` 改成 `application/xml` 而不注册 XML 序列化器，内置 JSON 序列化器会写出 JSON 字节却挂着 XML 的头，服务端按声明解析必然失败，因此直接报 `ERR_BAD_OPTION_VALUE`。注册用 `AxiosContent.Register(AxiosContentType.Xml, XmlContentSerializer.Instance)` 或 `Serialization.BodySerializers.Default = XmlContentSerializer.Instance`（[序列化](#序列化)）；`string` / `byte[]` 正文由你自己定型，不受这条限制。其它媒体类型（`text/plain`、自定义 vendor 类型）照旧交给当前序列化器。
 
 ```csharp
 await http.PostAsync("users", new { name = "bob" });                    // JSON
@@ -409,7 +412,7 @@ await client.PostAsync(url, data, c => c.Compression = AxiosCompression.None);  
 ```
 
 - 算法：`Gzip` / `Deflate` / `Brotli`（`br`），压缩级别固定 `Fastest`——HTTP 的瓶颈通常在网络，省 CPU 比压到最小更划算。`Deflate` 发的是 RFC 1950 的 zlib 包装（RFC 7230 里的 `deflate` 指的就是它），不是裸 DEFLATE：Java / Tomcat 与多数网关只认 zlib。
-- 只作用于**库按字节缓冲出来的正文**：对象 / 标量 / `string` / `byte[]` / `Memory<byte>` / 表单编码。压缩后 `Content-Length` 是压缩后长度，`Limits.MaxRequestBytes` 也按压缩后字节数校验。
+- 只作用于**库按字节缓冲出来的正文**：对象 / 标量 / `string` / `byte[]` / `Memory<byte>` / 表单编码。压缩后 `Content-Length` 是压缩后长度，`Limits.MaxRequestBytes` 也按压缩后字节数校验。空正文（0 字节）不压、也不写 `Content-Encoding`：压出来只剩几十字节帧头，比原文还大。
 - 拒绝（`ERR_BAD_OPTION_VALUE`）：`Stream` 与流式正文（没有完整长度可压，要压缩请先压好再传）、调用方自带的 `HttpContent`（压缩与编码归内容自己）、multipart（部件里可能含流式文件）、以及同时手写 `Content-Encoding` 头（与 `Compression` 二选一）。
 - 服务端必须自己按 `Content-Encoding` 解压请求体（ASP.NET Core 等框架默认不解压请求体）；对端不支持时不要开启。
 

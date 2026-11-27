@@ -78,6 +78,39 @@ public sealed class SerializerRegistryTests
     }
 
     [Fact]
+    public async Task NonJsonContentType_WithoutRegisteredSerializer_FailsBadOptionValue()
+    {
+        await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
+        using var client = new AxiosClient();
+
+        // 只设 ContentType=Xml、不为它注册序列化器：选中的是内置 JSON 序列化器，写出的字节是 JSON，
+        // 头却声明 application/xml —— 服务端按声明解析必然失败，这属于选项错误而不是网络错误。
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(
+            server.Url + "x",
+            new XmlOrder { Id = 1, Name = "pen" },
+            c => c.ContentType = AxiosContentType.Xml));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.Contains("没有为它注册", ex.Message);
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
+    public async Task NonJsonContentType_WithStringBody_IsPassedThrough()
+    {
+        await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
+        using var client = new AxiosClient();
+
+        // 文本 / 二进制正文由调用方自己定型，不经序列化器，因此不受上面那条校验影响。
+        await client.PostAsync(
+            server.Url + "x",
+            """<Order Id="1"/>""",
+            c => c.ContentType = AxiosContentType.Xml);
+
+        Assert.Equal("""<Order Id="1"/>""", Body(server.Received[0]));
+    }
+
+    [Fact]
     public async Task ExplicitInstanceInjection_BeatsRegistry()
     {
         RegisterForTest("application/x-test-xml", XmlContentSerializer.Instance);

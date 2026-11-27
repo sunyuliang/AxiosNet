@@ -55,15 +55,16 @@ internal static class RequestBodyFactory
             EnsureCompressible(data, mediaType, config);
         }
 
-        // multipart + 原始内容：没有 boundary 无法解析。
+        // multipart + 原始内容：库没法替调用方补分隔行、Content-Disposition 与尾分隔符，
+        // 带不带 boundary 都只会发出一条服务端解析不了的正文，因此一律在本地拒绝。
         if (data is not null and not HttpContent
             && IsRawContent(data)
-            && MediaTypes.Is(mediaType, MultipartMediaType)
-            && RequestContentType.ExtractBoundary(mediaType) is null)
+            && MediaTypes.Is(mediaType, MultipartMediaType))
         {
             throw AxiosException.InvalidOption(
                 "Content-Type 为 multipart/form-data 时，data 不能是原始内容"
-                + "（string / byte[] / Memory / Stream / IAsyncEnumerable）：请传入对象或字典由库组装 multipart 字段，"
+                + "（string / byte[] / Memory / Stream / IAsyncEnumerable）：原文里不会有分隔行与 Content-Disposition，"
+                + "即使 ContentType 自带 boundary，服务端也无法解析。请传入对象或字典由库组装 multipart 字段，"
                 + "或用 HttpContent（如 MultipartFormDataContent）承载预序列化的 multipart 正文。", config);
         }
 
@@ -283,6 +284,18 @@ internal static class RequestBodyFactory
                 config);
             ValidateDeclaredCharset(scalar, config, encoding);
             return scalar;
+        }
+
+        // 声明成 XML / YAML 却用内置 JSON 序列化器写正文：这两族是库里有专用序列化器的结构化格式，
+        // 写出 JSON 字节挂着 XML 头服务端必然解析失败，属于选项错误（其它媒体类型仍交给当前序列化器）。
+        // 位置在两条出口之前：JSON 序列化器会走 SerializeToBytes 的零拷贝出口，放到字节分支后面就永远轮不到。
+        if (config.ContentTypeSet && MediaTypes.IsXmlOrYaml(mediaType) && ReferenceEquals(serializer, SystemTextJsonSerializer.Instance))
+        {
+            throw AxiosException.InvalidOption(
+                $"ContentType 是 {mediaType}，但没有为它注册 IContentSerializer：内置 JSON 序列化器只会写 JSON 字节，"
+                + "服务端按声明的媒体类型解析必然失败。请用 AxiosContent.Register / "
+                + "Serialization.BodySerializers.Register 注册该媒体类型的序列化器（内置的有 XmlContentSerializer），"
+                + "或把 ContentType 改回 JSON，或由你自己序列化后用 string / byte[] 传入。", config);
         }
 
         // 二进制格式的请求出口：非 null 表示该格式以字节为正文，原样发送。

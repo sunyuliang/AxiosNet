@@ -78,6 +78,20 @@ public sealed class CompressionTests
     }
 
     [Fact]
+    public async Task EmptyBody_IsNotCompressed()
+    {
+        await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
+        using var client = new AxiosClient();
+
+        // 空正文压出来只有几十字节的帧头：比原文大，服务端还得多解一次，因此不压也不写 Content-Encoding。
+        await client.PostAsync(server.Url + "empty", "", c => c.Compression = AxiosCompression.Gzip);
+
+        var received = server.Received[0];
+        Assert.False(received.Headers.ContainsKey("content-encoding"));
+        Assert.Empty(received.Body);
+    }
+
+    [Fact]
     public async Task NotEnabled_LeavesBodyUntouched()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));

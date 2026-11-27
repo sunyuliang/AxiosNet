@@ -1091,15 +1091,49 @@ public sealed class FormAndMultipartTests
         Assert.Empty(server.Received);
     }
 
-    [Fact]
-    public async Task RawBytes_WithDeclaredBoundary_ArePassedThroughAsIs()
+    [Theory]
+    [InlineData("string")]
+    [InlineData("bytes")]
+    [InlineData("stream")]
+    [InlineData("chunks")]
+    public async Task RawContent_WithDeclaredBoundary_IsStillRejected(string shape)
     {
-        // 带上 boundary 即视为「预序列化的 multipart 正文」，按调用方断言原样发送
+        // 自带 boundary 不代表正文就是合法 multipart：原始内容里有没有分隔行 / Content-Disposition
+        // 库根本看不出来，按调用方的断言原样发出只会在服务端变成一条解析不了的正文。
+        // 预序列化的 multipart 正文请用 HttpContent（MultipartFormDataContent 或自带 Content-Type 的内容）。
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient();
+        const string payload = "--xyz\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nb\r\n--xyz--\r\n";
+
+        object body = shape switch
+        {
+            "string" => payload,
+            "bytes" => Encoding.UTF8.GetBytes(payload),
+            "stream" => new MemoryStream(Encoding.UTF8.GetBytes(payload)),
+            _ => RawChunks(Encoding.UTF8.GetBytes(payload))
+        };
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
+            client.PostAsync(server.Url + "x", body, c => c.ContentType = "multipart/form-data; boundary=xyz"));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.Contains("boundary", ex.Message);
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
+    public async Task PreSerializedMultipart_ThroughHttpContent_IsSentAsIs()
+    {
+        // 原始内容被上面那条拦掉之后，「自己拼好的 multipart 正文」这条出口只剩 HttpContent。
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
         var payload = Encoding.UTF8.GetBytes("--xyz\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nb\r\n--xyz--\r\n");
 
-        await client.PostAsync(server.Url + "x", payload, c => c.ContentType = "multipart/form-data; boundary=xyz");
+        using var content = new ByteArrayContent(payload);
+        content.Headers.ContentType = new MediaTypeHeaderValue("multipart/form-data") { CharSet = null };
+        content.Headers.ContentType.Parameters.Add(new NameValueHeaderValue("boundary", "xyz"));
+
+        await client.PostAsync(server.Url + "x", content, c => c.ContentType = AxiosContentType.MultipartFormData);
 
         var sent = server.Received[0];
         Assert.Contains("boundary=xyz", sent.Headers.GetValueOrDefault("Content-Type"));
@@ -1807,6 +1841,13 @@ public sealed class FormAndMultipartTests
         }
 
         return count;
+    }
+
+    /// <summary>把字节包成单块异步序列，用来覆盖流式正文形态。</summary>
+    private static async IAsyncEnumerable<byte[]> RawChunks(byte[] content)
+    {
+        await Task.Yield();
+        yield return content;
     }
 
     private static HttpContent BuildMultipart(byte[] fileBytes)

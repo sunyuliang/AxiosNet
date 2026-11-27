@@ -171,8 +171,11 @@ Browse by capability; each section covers one request shape, and every option li
 | --- | --- | --- | --- |
 | `application/json` (default) | Current serializer emits JSON | Raw text (`42`, `true`, `Paid`) | Sent as-is |
 | `application/x-www-form-urlencoded` | Key-value form (`a[b]=v`, `a[]=v`, nulls skipped) | Ignored (empty body) | Sent as-is |
-| `multipart/form-data` | Fields + file parts | Throws `ERR_BAD_OPTION_VALUE` (put it in an object field) | Throws `ERR_BAD_OPTION_VALUE` (`HttpContent` passes through) |
-| Anything else (`application/xml` / `yaml`…) | Current serializer | Raw text | Sent as-is |
+| `multipart/form-data` | Fields + file parts | Throws `ERR_BAD_OPTION_VALUE` (put it in an object field) | Throws `ERR_BAD_OPTION_VALUE` (raw content is always rejected; `HttpContent` passes through) |
+| Anything else (`application/xml` / `yaml`…) | Current serializer; throws `ERR_BAD_OPTION_VALUE` when the media type is in the XML / YAML family and no serializer is registered for it | Raw text | Sent as-is |
+
+> - **The library builds the multipart body**: put fields and files into an object or dictionary. A multipart body you assembled yourself (including a hand-written boundary) must travel as `HttpContent` (`MultipartFormDataContent`, or a `ByteArrayContent` that carries its own `Content-Type`) — raw content (`string` / `byte[]` / `Stream` / async byte chunks) is always rejected locally, because the library cannot tell whether those bytes contain separator lines.
+> - **XML / YAML need a matching serializer**: setting `ContentType` to `application/xml` without registering an XML serializer makes the built-in JSON serializer emit JSON bytes under an XML header, which the server cannot parse per its own declaration — hence `ERR_BAD_OPTION_VALUE`. Register one with `AxiosContent.Register(AxiosContentType.Xml, XmlContentSerializer.Instance)` or `Serialization.BodySerializers.Default = XmlContentSerializer.Instance` (see [Serialization](#serialization)); `string` / `byte[]` bodies are shaped by you and are not affected. Other media types (`text/plain`, custom vendor types) still go to the current serializer.
 
 ```csharp
 await http.PostAsync("users", new { name = "bob" });                    // JSON
@@ -407,7 +410,7 @@ await client.PostAsync(url, data, c => c.Compression = AxiosCompression.None);  
 ```
 
 - Algorithms: `Gzip` / `Deflate` / `Brotli` (`br`), always at `CompressionLevel.Fastest` — HTTP is usually network-bound, so saving CPU beats squeezing the last byte. `Deflate` emits the RFC 1950 zlib wrapper (which is what RFC 7230 means by `deflate`), not raw DEFLATE — Java / Tomcat and most gateways only accept zlib.
-- Only bodies the library buffers as bytes are compressed: objects / primitives / `string` / `byte[]` / `Memory<byte>` / form encoding. `Content-Length` (and the `Limits.MaxRequestBytes` check) then reflect the compressed size.
+- Only bodies the library buffers as bytes are compressed: objects / primitives / `string` / `byte[]` / `Memory<byte>` / form encoding. `Content-Length` (and the `Limits.MaxRequestBytes` check) then reflect the compressed size. An empty (0-byte) body is left alone — no compression, no `Content-Encoding` — since the output would be a few dozen bytes of frame header, larger than the original.
 - Rejected with `ERR_BAD_OPTION_VALUE`: `Stream` and streaming bodies (no full length to compress — compress upstream instead), caller-supplied `HttpContent` (encoding belongs to the content), multipart (parts may stream files), and a hand-written `Content-Encoding` header (mutually exclusive with `Compression`).
 - The server must decompress request bodies by `Content-Encoding` itself (ASP.NET Core and most frameworks don't do it by default); don't enable this against a peer that can't.
 

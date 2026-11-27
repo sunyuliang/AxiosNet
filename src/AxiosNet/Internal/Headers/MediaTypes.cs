@@ -43,6 +43,19 @@ internal static class MediaTypes
             || SpanComparisons.EndsWithIgnoreCase(main, JsonSuffix);
     }
 
+    /// <summary>是否为 XML / YAML 族：这两类结构化格式库里有专用序列化器，用 JSON 序列化器写它们必然是错的。</summary>
+    public static bool IsXmlOrYaml(string? mediaType)
+    {
+        var main = MainValue(mediaType);
+        return SpanComparisons.EqualsIgnoreCase(main, AxiosContentType.Xml)
+            || SpanComparisons.EqualsIgnoreCase(main, "text/xml")
+            || SpanComparisons.EndsWithIgnoreCase(main, XmlSuffix)
+            || SpanComparisons.EqualsIgnoreCase(main, Yaml)
+            || SpanComparisons.EqualsIgnoreCase(main, XYaml)
+            || SpanComparisons.EqualsIgnoreCase(main, "text/yaml")
+            || SpanComparisons.EndsWithIgnoreCase(main, YamlSuffix);
+    }
+
     /// <summary>是否为文本类媒体类型（<c>null</c> / 空视为文本）。</summary>
     public static bool IsTextual(string? mediaType)
     {

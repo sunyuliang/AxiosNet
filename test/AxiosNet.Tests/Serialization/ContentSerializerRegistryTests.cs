@@ -281,15 +281,19 @@ public sealed class ContentSerializerRegistryTests
     public void SharedDefaultsAndClones_ShareTheSameTable()
     {
         var defaults = new AxiosConfig();
+
+        // 构造时已经建出来的注册表按引用共享（Clone 不深拷贝这张表）。
+        defaults.Serialization.BodySerializers.Register("application/x-inst-shared", new MarkerSerializer("shared"));
+
         using var first = new AxiosClient(defaults);
         using var second = new AxiosClient(defaults);
 
         Assert.Same(first.Defaults.Serialization.BodySerializers, second.Defaults.Serialization.BodySerializers);
 
-        // Clone() 复制的是同一张表（不是深拷贝）：往克隆出来的配置上登记，原实例也看得见。
-        defaults.Clone().Serialization.BodySerializers!.Register("application/x-inst-shared", new MarkerSerializer("shared"));
+        // 克隆出来的是同一张表：往克隆上登记，原实例也看得见。
+        defaults.Clone().Serialization.BodySerializers!.Register("application/x-inst-clone", new MarkerSerializer("clone"));
 
-        Assert.Equal(1, first.Defaults.Serialization.BodySerializers.Count);
+        Assert.Equal(2, first.Defaults.Serialization.BodySerializers.Count);
     }
 
 // 测试辅助
