@@ -686,7 +686,7 @@ await client.GetAsync("maybe-404", c => c.ValidateStatus = s => s is >= 200 and 
 | `CancellationToken` | `default` | External cancellation |
 | `Response` | `null` | Readable during the response phase (status / headers / media type) |
 | `ShortCircuit` | `null` | Deliver a response without sending (this request only) |
-| `ValidateStatus` | `null` (2xx) | Returning `false` throws `AxiosException` |
+| `ValidateStatus` | `null` (2xx) | Returning `false` throws `AxiosException`; an exception thrown *by* the delegate is normalized to `ERR_BAD_RESPONSE` too (`Cause` keeps the original exception), never leaked raw |
 | `Caching` | `null` | Response cache (`AxiosCache`): hits send nothing and are reused across requests (options live in `AxiosCacheOptions`) |
 
 > `Response` is read-only outside the response phase, and `Caching` is a group entry (its `AxiosCacheOptions` hold 10 leaves); neither counts toward the 13 top-level configurable leaves.

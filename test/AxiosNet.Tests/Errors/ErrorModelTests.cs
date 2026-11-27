@@ -171,6 +171,22 @@ public sealed class ErrorModelTests
         Assert.Equal(1, calls);
     }
 
+    [Fact]
+    public async Task ValidateStatus_ThrowingDelegate_IsNormalizedToAxiosException()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url, c =>
+            c.ValidateStatus = _ => throw new InvalidOperationException("validate boom")));
+
+        // 委托异常属于请求管线：错误码 / 配置 / Cause 都按统一错误模型给出，调用方 catch (AxiosException) 接得住。
+        Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
+        Assert.NotNull(ex.Config);
+        Assert.IsType<InvalidOperationException>(ex.Cause);
+        Assert.Contains(nameof(AxiosConfig.ValidateStatus), ex.Message, StringComparison.Ordinal);
+    }
+
 // 池级错误也带 Config
 
     [Fact]

@@ -690,7 +690,7 @@ await client.GetAsync("maybe-404", c => c.ValidateStatus = s => s is >= 200 and 
 | `CancellationToken` | `default` | 外部取消 |
 | `Response` | `null` | 响应阶段可读（状态码 / 头 / 媒体类型） |
 | `ShortCircuit` | `null` | 短路响应：不发请求直接交付（只对本次请求生效） |
-| `ValidateStatus` | `null`（2xx） | 返回 `false` 抛 `AxiosException` |
+| `ValidateStatus` | `null`（2xx） | 返回 `false` 抛 `AxiosException`；委托自己抛异常同样归一为 `ERR_BAD_RESPONSE`（`Cause` 保留原异常），不漏裸异常 |
 | `Caching` | `null` | 响应缓存（`AxiosCache`）：命中不发请求，跨请求复用（配置项见 `AxiosCacheOptions`） |
 
 > 表中 `Response` 只在响应阶段可读、`Caching` 是分组入口（`AxiosCacheOptions` 下另有 10 个叶子），二者都不计入顶层的 13 个可配置叶子。

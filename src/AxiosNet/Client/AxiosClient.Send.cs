@@ -357,7 +357,17 @@ public sealed partial class AxiosClient
     {
         try
         {
-            var statusAccepted = IsStatusAccepted(ctx.Config, (int)responseMessage.StatusCode);
+            // 调用方的 validateStatus 委托属于请求管线：它抛的异常同样归一为 AxiosException，不漏裸异常。
+            bool statusAccepted;
+            try
+            {
+                statusAccepted = IsStatusAccepted(ctx.Config, (int)responseMessage.StatusCode);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException and not AxiosException)
+            {
+                throw AxiosException.CallbackFailed(
+                    ctx.Config, request, nameof(AxiosConfig.ValidateStatus), ex, upload: false);
+            }
 
             var response = await ResponseReader.ReadAsync(
                     responseMessage,
