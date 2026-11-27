@@ -8,16 +8,22 @@ internal sealed class AsyncEnumerableBodyContent : HttpContent
 {
     private readonly Func<CancellationToken, IAsyncEnumerator<ReadOnlyMemory<byte>>> _open;
 
-    private AsyncEnumerableBodyContent(Func<CancellationToken, IAsyncEnumerator<ReadOnlyMemory<byte>>> open)
-        => _open = open;
+    // 生产端失败时要带出去的生效配置（错误模型要求失败都读得到 Config）。
+    private readonly AxiosConfig _config;
+
+    private AsyncEnumerableBodyContent(Func<CancellationToken, IAsyncEnumerator<ReadOnlyMemory<byte>>> open, AxiosConfig config)
+    {
+        _open = open;
+        _config = config;
+    }
 
     /// <summary><c>IAsyncEnumerable&lt;byte[]&gt;</c>：直接按块转发（空块跳过）。</summary>
-    public static AsyncEnumerableBodyContent FromByteChunks(IAsyncEnumerable<byte[]> chunks)
-        => new(ct => Forward(chunks, ct));
+    public static AsyncEnumerableBodyContent FromByteChunks(IAsyncEnumerable<byte[]> chunks, AxiosConfig config)
+        => new(ct => Forward(chunks, ct), config);
 
     /// <summary><c>IAsyncEnumerable&lt;ReadOnlyMemory&lt;byte&gt;&gt;</c>：直接按块转发。</summary>
-    public static AsyncEnumerableBodyContent FromMemoryChunks(IAsyncEnumerable<ReadOnlyMemory<byte>> chunks)
-        => new(chunks.GetAsyncEnumerator);
+    public static AsyncEnumerableBodyContent FromMemoryChunks(IAsyncEnumerable<ReadOnlyMemory<byte>> chunks, AxiosConfig config)
+        => new(chunks.GetAsyncEnumerator, config);
 
     // 无令牌重载在 netstandard2.0 上是唯一入口：把写出逻辑抽成共用核心，两个重载只是令牌不同。
     protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
@@ -39,7 +45,7 @@ internal sealed class AsyncEnumerableBodyContent : HttpContent
         var enumerator = _open(cancellationToken);
         await using (enumerator.ConfigureAwait(false))
         {
-            while (await enumerator.MoveNextAsync().ConfigureAwait(false))
+            while (await MoveNextAsync(enumerator).ConfigureAwait(false))
             {
                 var chunk = enumerator.Current;
                 if (chunk.IsEmpty)
@@ -49,6 +55,20 @@ internal sealed class AsyncEnumerableBodyContent : HttpContent
 
                 await stream.WriteAsync(chunk, cancellationToken).ConfigureAwait(false);
             }
+        }
+    }
+
+    /// <summary>推进一格；生产端（调用方的迭代器）抛的异常归成 <c>ERR_BAD_REQUEST</c>，写出侧的 IO 失败照常上抛。</summary>
+    private async ValueTask<bool> MoveNextAsync(IAsyncEnumerator<ReadOnlyMemory<byte>> enumerator)
+    {
+        try
+        {
+            return await enumerator.MoveNextAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+        {
+            // 这里是「正文没造出来」，不是网络故障：原始异常进 Cause，调用方看得到业务原因。
+            throw AxiosException.StreamingBodyFailed(_config, ex);
         }
     }
 

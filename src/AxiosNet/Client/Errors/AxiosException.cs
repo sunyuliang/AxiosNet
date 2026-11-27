@@ -591,9 +591,23 @@ public class AxiosException : Exception
         };
     }
 
-    /// <summary>响应侧 <c>transformResponse</c> 抛错，原始异常在 <see cref="Cause"/> 里。</summary>
-    internal static AxiosException ResponseTransformFailed(AxiosConfig? config, HttpRequestMessage? request, Exception inner)
+    /// <summary>流式正文的生产端（调用方的 <c>IAsyncEnumerable</c>）在写出期间抛异常：<c>ERR_BAD_REQUEST</c>，原始异常在 <see cref="Cause"/>。</summary>
+    /// <remarks>
+    /// 与网络故障分开：正文根本没造出来，重发也不会成功。<paramref name="config"/> 允许为 <c>null</c>（装配阶段还没定下生效配置）。
+    /// </remarks>
+    internal static AxiosException StreamingBodyFailed(AxiosConfig? config, Exception inner)
     {
+        return new AxiosException(
+            $"Request body could not be produced while streaming: {inner.Message}",
+            ErrBadRequest,
+            config,
+            request: null,
+            response: null,
+            innerException: inner);
+    }
+
+    /// <summary>响应侧 <c>transformResponse</c> 抛错，原始异常在 <see cref="Cause"/> 里。</summary>
+    internal static AxiosException ResponseTransformFailed(AxiosConfig? config, HttpRequestMessage? request, Exception inner)    {
         return new AxiosException(
             "Response data could not be transformed by transformResponse",
             ErrBadResponse,

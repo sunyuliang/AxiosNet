@@ -114,10 +114,10 @@ internal static class RequestBodyFactory
 
             // 流式正文：按块写出、不缓冲，长度未知。
             case IAsyncEnumerable<byte[]> chunks:
-                return CreateStreaming(AsyncEnumerableBodyContent.FromByteChunks(chunks), mediaType, config);
+                return CreateStreaming(AsyncEnumerableBodyContent.FromByteChunks(chunks, config), mediaType, config);
 
             case IAsyncEnumerable<ReadOnlyMemory<byte>> chunks:
-                return CreateStreaming(AsyncEnumerableBodyContent.FromMemoryChunks(chunks), mediaType, config);
+                return CreateStreaming(AsyncEnumerableBodyContent.FromMemoryChunks(chunks, config), mediaType, config);
 
             // 声明式 API 的默认正文：未标注成员按键名聚合，按 Content-Type 选 JSON / 表单。
             case AggregateBody aggregate:

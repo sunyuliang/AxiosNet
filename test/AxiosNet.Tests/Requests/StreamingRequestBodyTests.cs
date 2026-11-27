@@ -297,6 +297,50 @@ public sealed class StreamingRequestBodyTests
     }
 
     [Fact]
+    public async Task StreamingBody_ProducerThrows_ReportsBadRequestWithOriginalCause()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient();
+
+        static async IAsyncEnumerable<byte[]> Broken()
+        {
+            await Task.Yield();
+            yield return new byte[] { 1, 2, 3 };
+            throw new InvalidOperationException("producer boom");
+        }
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
+            client.PostAsync(server.Url + "x", Broken(), c => c.ContentType = AxiosContentType.OctetStream));
+
+        // 生产端（调用方的迭代器）失败属于「请求正文没造出来」：ERR_BAD_REQUEST，原始异常必须在 Cause 链上。
+        Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
+        Assert.NotNull(ex.Config);
+        Assert.Contains("producer boom", FlattenMessages(ex), StringComparison.Ordinal);
+    }
+
+    /// <summary>把异常链（含 <see cref="AggregateException"/> 展开）的消息拼起来，用于断言原始原因没被吞掉。</summary>
+    private static string FlattenMessages(Exception? ex)
+    {
+        var text = new StringBuilder();
+        while (ex is not null)
+        {
+            text.Append(ex.Message).Append('|');
+
+            if (ex is AggregateException aggregate)
+            {
+                foreach (var inner in aggregate.InnerExceptions)
+                {
+                    text.Append(FlattenMessages(inner));
+                }
+            }
+
+            ex = ex.InnerException;
+        }
+
+        return text.ToString();
+    }
+
+    [Fact]
     public async Task StreamingBody_HonorsCallerCancellation()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));

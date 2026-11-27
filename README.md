@@ -315,6 +315,7 @@ await http.PostAsync<UploadResult>("ingest", ReadChunks(file), c =>
 - **一次性**：序列被消费后无法回拨，所以开启重试或备用端点时在**发出前**抛 `ERR_BAD_OPTION_VALUE`（不需要重发就关掉它们）。并发对冲不报错：它只在正文能安全并发重放（内存缓冲）时才生效，流式正文按单次发送处理。要可重放，请改用 `byte[]` 或可 seek 的流。
 - **块大小由调用方定**：库把每块原样写出，不再切分或合并；64–256 KB 是常见甜点，过小的块会放大 chunked 框架自身开销。
 - **只认字节块**：`IAsyncEnumerable<T>`（如 `IAsyncEnumerable<Order>`）不是正文，直接报 `ERR_BAD_OPTION_VALUE` 并给出指引；要发 JSON 数组请先写成 `Stream` 或 `byte[]`。
+- **生产端抛异常 → `ERR_BAD_REQUEST`**：迭代器在 `yield` 之后抛错属于「正文没造出来」，原始异常在 `Cause`（`Config` 一并带上），不再是笼统的 `ERR_NETWORK`；写出侧的网络失败仍是 `ERR_NETWORK`。
 - **取消**：请求令牌会传给你的迭代器（签名里用 `[EnumeratorCancellation]` 接住），取消即停在上一次 `yield` 之后。
 - **307 / 308 重定向**：默认跟随重定向，这两个状态码会把正文再发一遍——库会重新枚举一次序列，所以生产者必须能重启（迭代器重新 `GetAsyncEnumerator`，或自定义实现每次返回新枚举器）。一次性来源（例如直接转发一条已消费的网络流）请把 `AxiosClientOptions.MaxRedirects` 设为 `0`（等价于池的 `AllowAutoRedirect = false`）。
 - **`PipeReader`**：net6 / net8 的基础框架不含 `System.IO.Pipelines`，库不为此引依赖；用 `pipe.Reader.AsStream()` 包成 `Stream` 传入即可（走不可 seek 流路径，同样一块一块写出）。
