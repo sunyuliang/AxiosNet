@@ -543,7 +543,7 @@ logger.LogInformation("raw body: {Body}", response.RawText);
 ```
 
 - `RawBody` is a read-only view rather than a `byte[]`: the underlying array may be shared with a cache entry, so handing it out would let callers poison the cache; a `byte[]` shaped `Data` shares the same array, so mutating `Data` mutates it too. An empty body is length 0, not `null`.
-- **You pay for what you keep**: a successful response parsed into an object drops its bytes; turn `CaptureRawResponseBody` on when you need them. Error responses are exempt — the bytes are already in hand — but anything over 64 KB keeps only the text so the whole error body never outlives the call. For durable archives, copy inside `OnRawResponse`.
+- **You pay for what you keep**: a successful response parsed into an object drops its bytes; turn `CaptureRawResponseBody` on when you need them. Error responses are exempt — the bytes are already in hand — but anything over 64 KB keeps only the text (which stays complete) so the whole error body never outlives the call. With `CaptureRawResponseBody` explicitly on, that cap does not apply: keeping the bytes is the whole point of the switch, so an oversized error body is retained in `RawBody` in full. For durable archives, copy inside `OnRawResponse`.
 - Streaming responses (`ResponseType.Stream`) have no full byte array, so there is no `RawBody` even when enabled; short-circuit / cache-hit bodies are not affected. A failed streaming response rescues up to 64 KB of the error body, readable as both bytes and text.
 - On failure the thrown exception carries a shortcut: `AxiosException.ResponseBody` is exactly `Response.RawText`, so no null check on `Response` is needed.
 

@@ -545,7 +545,7 @@ logger.LogInformation("raw body: {Body}", response.RawText);
 ```
 
 - `RawBody` 是只读视图而不是 `byte[]`：底层数组可能与缓存条目共用，交出去改了就污染缓存；`byte[]` 形态的 `Data` 与它同数组，改 `Data` 等于改它。空正文是长度 0，不是 `null`。
-- **谁开谁付内存**：解析成对象的成功响应，字节读完即弃，要留下就显式开 `CaptureRawResponseBody`；错误响应不受此限——字节本来就在手上，但超过 64 KB 的只留文本，避免整段错误体常驻。长期留档用 `OnRawResponse` 自己复制。
+- **谁开谁付内存**：解析成对象的成功响应，字节读完即弃，要留下就显式开 `CaptureRawResponseBody`；错误响应不受此限——字节本来就在手上，但超过 64 KB 的只留文本（`RawText` 仍完整），避免整段错误体常驻。显式打开 `CaptureRawResponseBody` 时这条上限不生效：开关的意图就是留字节，超大的错误体同样整段留在 `RawBody`。长期留档用 `OnRawResponse` 自己复制。
 - 流式响应（`ResponseType.Stream`）没有完整字节，开了也没有 `RawBody`；短路 / 缓存命中的正文不受此限。流式**失败**会抢救最多 64 KB 错误体，字节与文本都读得到。
 - 失败时已抛出的异常上也有一份捷径：`AxiosException.ResponseBody` 就是 `Response.RawText`，不必先判空 `Response`。
 
