@@ -1,4 +1,4 @@
-#if !NETSTANDARD2_0
+﻿#if !NETSTANDARD2_0
 using System.Net.Security;
 using System.Security.Authentication;
 
@@ -37,7 +37,7 @@ internal static partial class DefaultHandlerFactory
             KeepAlivePingPolicy = o.KeepAlivePingPolicy,
             UseCookies = transport.UseCookies,
             UseProxy = transport.Proxy is not null,
-            Proxy = transport.Proxy,
+            Proxy = ResolveProxy(transport.Proxy, transport.Credentials),
             Credentials = transport.Credentials
         };
 

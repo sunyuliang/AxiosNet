@@ -1,4 +1,4 @@
-#if NETSTANDARD2_0
+﻿#if NETSTANDARD2_0
 using System.Security.Authentication;
 
 namespace AxiosNet.Pooling;
@@ -30,7 +30,7 @@ internal static partial class DefaultHandlerFactory
             MaxResponseHeadersLength = o.MaxResponseHeadersLength,
             UseCookies = transport.UseCookies,
             UseProxy = transport.Proxy is not null,
-            Proxy = transport.Proxy,
+            Proxy = ResolveProxy(transport.Proxy, transport.Credentials),
             Credentials = transport.Credentials,
 
             SslProtocols = transport.EnabledSslProtocols ?? SslProtocols.None

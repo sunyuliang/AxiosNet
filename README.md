@@ -1049,7 +1049,7 @@ HttpConnectionPool.Release("orders");   // 摘除并优雅释放；此后同名�
 | `MaxEndpointCount` | 1024 | origin 节点上限，满了先驱逐最久未用的空闲节点；若全部在途（无可驱逐），新建节点抛 `ERR_POOL_EXHAUSTED`（请求未发出，可观测、默认不自动重发，降扇出 / 调大上限 / `Clear()` 回收后再重试） |
 | `UseCookies` | `false` | 默认档打开后有一份 `CookieContainer`，可通过 `pool.Cookies` 读写（未开启时为 `null`），登出用 `pool.ClearCookies()`；命名传输档各自一份，见[传输档](#传输档) |
 | `CookieCapacity` / `CookiePerDomainCapacity` / `CookieMaxCookieSize` | `300` / `20` / `4096` | Cookie 容器容量（总条数 / 单域名条数 / 单条字节数），超出按容器规则淘汰最早的、超长 cookie 直接丢弃；仅 `UseCookies` 打开时生效 |
-| `Proxy` / `Credentials` | `null` | 不设代理时**不使用**系统 / 环境代理；要走系统代理请设 `HttpClient.DefaultProxy` |
+| `Proxy` / `Credentials` | `null` | 不设代理时**不使用**系统 / 环境代理；要走系统代理请设 `HttpClient.DefaultProxy`。`Credentials` 同时用于源站认证与「代理自己没配凭据时的 407 挑战」 |
 | `ServerCertificateCustomValidationCallback` / `EnabledSslProtocols` / `ConfigureSslOptions` | `null` | 证书校验、TLS 版本、客户端证书 |
 | `HandlerFactory` | `null` | 每个 origin 创建 Handler 时调用，见[自定义 Handler](#自定义-handler) |
 
@@ -1066,6 +1066,7 @@ HttpConnectionPool.Release("orders");   // 摘除并优雅释放；此后同名�
 - 容器容量默认 300 条 / 单域 20 条 / 单条 4096 字节，超出会静默淘汰最早的；可用 `CookieCapacity` / `CookiePerDomainCapacity` / `CookieMaxCookieSize` 调整。
 - **Trailers 目前不读取**：chunked 响应的尾部头（校验和、配额）停留在 `HttpResponseMessage.TrailingHeaders`，没有暴露到 `AxiosResponse`。需要时用 `HandlerFactory` 包一层在正文读完后取，或直接注入自定义 Handler。
 - **代理 / 凭据默认是池级单份**：`Proxy` 落在 Handler 实例上，按请求改代理会抛 `ERR_BAD_OPTION_VALUE`。要多出口 IP / 多租户会话，用下面的[传输档](#传输档)在同一条池里挂多套出口，而不是每个出口各建一条池。
+- **代理认证的凭据位置**：`Credentials` 会一起用于源站与代理。代理实例自己配了 `IWebProxy.Credentials` 时以它为准（库只在你没配时补位，不改写你传入的实例）；需要用 NTLM / Negotiate 或与源站不同的代理账号，请直接写 `new WebProxy(...) { Credentials = ... }`。
 - **命名共享池**（用法 4）解决「多客户端想复用连接又不方便传池对象」：key 由调用方给，**不做配置指纹** —— `HandlerFactory` / `ConnectCallback` / `Proxy` / `Credentials` / 证书回调这类引用成员没有可靠的结构等价，两份「长得一样」的配置宁可报错也不共用一条池。
 - 命名池的规则只有三条：
   - 同名取同一条；

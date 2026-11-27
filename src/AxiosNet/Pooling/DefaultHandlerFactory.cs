@@ -23,4 +23,17 @@ internal static partial class DefaultHandlerFactory
         ConnectionTransportOptions transport,
         CookieContainer? cookieContainer = null)
         => CreateCore(o, transport, cookieContainer);
+
+    /// <summary>代理：调用方没给代理单独配凭据时，把实例级凭据补给它。</summary>
+    /// <remarks>
+    /// Handler 的 <c>Credentials</c> 只用于源站认证，代理 407 只读 <see cref="IWebProxy.Credentials"/>；
+    /// 「代理地址 + 凭据」并排配置时不补这一层就会每次 407（且被归成 4xx，重试 / 熔断都按「目标服务器拒绝」处理）。
+    /// </remarks>
+    /// <param name="proxy">配置的代理；<c>null</c> 表示直连。</param>
+    /// <param name="credentials">实例级凭据；<c>null</c> 时不补。</param>
+    /// <returns>实际交给 Handler 的代理。</returns>
+    internal static IWebProxy? ResolveProxy(IWebProxy? proxy, ICredentials? credentials)
+        => proxy is not null && credentials is not null && proxy.Credentials is null
+            ? new ProxyCredentialsFallback(proxy, credentials)
+            : proxy;
 }
