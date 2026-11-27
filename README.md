@@ -1333,7 +1333,7 @@ AxiosTelemetry.Sink = AxiosTelemetrySink.Off;   // 或者彻底关掉内置观�
 ```
 
 - `AxiosRequestTrace` 是 `StartRequest` 交出的观测句柄（结构体，默认值 = 不观测），`Stop` / `SetRequestBodySize` 按它派发回创建它的那个实现；`State` 放实现自己的载体（内置实现放的是 `Activity`）。成功 / 失败上报也派给**本次请求开头认下的那个实现**，所以一条请求的观测不会在换实现时被劈成两家。
-- 实现要自己保证线程安全；**抛异常不影响请求**：派发层（`AxiosTelemetry.Dispatch`）把违约异常就地吞掉——一条 200 不会因为观测写错变成异常，真正的失败原因也不会被观测异常盖掉，在途计数照常归零（`EnterRequest` 抛了就不补 `ExitRequest`，水位不会变负）。
+- 实现要自己保证线程安全；**抛异常不影响请求**：派发层（`AxiosTelemetry.Dispatch`）把违约异常就地吞掉——一条 200 不会因为观测写错变成异常，真正的失败原因也不会被观测异常盖掉，在途计数照常归零（`EnterRequest` 抛了就不补 `ExitRequest`，水位不会变负）。**唯一不吞的是 `OutOfMemoryException`**（`GuardedTelemetrySink` 有意放行：内存已见底时继续往下跑只会把问题放大），它会原样冒到调用方，让那次请求失败。
 - `IsEnabled` 只管**请求级生命周期**（开句柄、成功 / 失败上报）；缓存命中、重试、闸门拒绝、池与租约这些事件不看它，覆写就收得到。要整体静音请用 `AxiosTelemetrySink.Off`。
 - 换掉之后 `AxiosTelemetry.ActivitySourceName` / `MeterName` / `DiagnosticListenerName` 那些订阅方式就不再有产出；`Observability.Capture` 是否生效也交给实现自己判（`IsEnabled` 收到的是本次请求的生效配置）。
 - **扩展方式**：跟着库升级只需重编译，但新版本可能给 `IAxiosTelemetrySink` 加成员（`netstandard2.0` 资产没有默认接口实现）。请派生 `AxiosTelemetrySink`（全空基类）而不是自己实现接口——基类补成员不会让你的实现编译失败。
