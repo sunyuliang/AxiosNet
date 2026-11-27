@@ -1279,6 +1279,7 @@ builder.Services.AddOpenTelemetry()
 - The five cache counters (`cache.hits` / `misses` / `stores` / `store_failures` / `revalidations`) carry no tags either — none of these carries a host.
 - `request.duration` is the logical request duration (including retries, backoff and the cache store write); `active_requests` drops when the request ends (headers for streaming), while `active_leases` waits for the body stream — use the latter to see how much concurrency a long download holds.
 - Pool metrics describe the pool as a resource and are unaffected by `Observability.Capture = TelemetryCapture.Off`.
+- Metric callbacks are **synchronous**: `Instrument.Record` / `Add` runs every `MeterListener` inline, so a subscriber doing heavy work (disk writes, a blocking RPC, `Thread.Sleep`) adds that time straight to the request — an inherent `System.Diagnostics.Metrics` model the library cannot work around. Offload or sample on the subscriber side.
 - `pool.active_pools` counts live pools (+1 on creation, -1 on `Dispose`) and `pool.shared_pools` counts entries in the named registry: a rising `active_pools` means some code keeps building pools — typically a client per request.
 
 **Events** (`DiagnosticListener` named `AxiosNet.DiagnosticListener`): `AxiosNet.RequestStart` / `RequestStop` / `RequestFailed` / `Retry`, with public payload types (`AxiosRequestStartEvent` / `StopEvent` / `FailedEvent` / `AxiosRetryContext`).

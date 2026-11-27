@@ -1283,6 +1283,7 @@ builder.Services.AddOpenTelemetry()
 - 缓存五件套（`cache.hits` / `misses` / `stores` / `store_failures` / `revalidations`）同样不带标签 —— 上面这些都不带 host。
 - `request.duration` 是逻辑请求耗时（含重试、退避与缓存落库等待）；`active_requests` 请求结束即减（流式到响应头），`active_leases` 要等正文流释放——「长下载占了多少并发额度」看后者。
 - 池域指标描述池这个资源，不受 `Observability.Capture = TelemetryCapture.Off` 影响。
+- 指标回调是**同步**的：`Instrument.Record` / `Add` 当场走完所有 `MeterListener`，订阅方在回调里做重活（写盘、同步 RPC、`Thread.Sleep`）会直接加进这条请求的耗时——这是 `System.Diagnostics.Metrics` 的固有模型，库绕不过去，请在订阅侧自己转后台或做采样。
 - `pool.active_pools` 是存活池数（建 +1 / `Dispose` -1），`pool.shared_pools` 是命名池表的条目数：前者持续上涨 = 有代码在反复建池（典型是「按请求 new 客户端」）。
 
 **Events**（`DiagnosticListener` 名 `AxiosNet.DiagnosticListener`）：`AxiosNet.RequestStart` / `RequestStop` / `RequestFailed` / `Retry`，载荷是公开类型（`AxiosRequestStartEvent` / `StopEvent` / `FailedEvent` / `AxiosRetryContext`）。
