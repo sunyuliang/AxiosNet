@@ -2690,19 +2690,17 @@ Intentional differences from axios:
 using AxiosNet.DependencyInjection;
 using AxiosNet.WebAPI.DependencyInjection;
 
-builder.Services.AddAxiosClient(config =>                    // core client only
-{
-    config.BaseAddress = "https://api.example.com";
-    config.Timeout = TimeSpan.FromSeconds(10);
-});
-
-builder.Services.AddAxiosClient(                             // ...and swap the attempt pipeline
-    configure: config => config.Timeout = TimeSpan.FromSeconds(10),
+// Pick ONE of the two AddAxiosClient shapes below: under TryAdd semantics the first
+// successful registration wins and later calls are skipped entirely (their configure
+// side effects do not run either). Combine what you need into a single call.
+builder.Services.AddAxiosClient(                             // core client + instance options + attempt pipeline
+    configure: config =>
+    {
+        config.BaseAddress = "https://api.example.com";
+        config.Timeout = TimeSpan.FromSeconds(10);
+    },
+    options: new AxiosClientOptions { WithCredentials = true, MaxInFlight = 32 },
     pipeline: AxiosAttemptPipeline.Default.Append(auditAttempt));
-
-builder.Services.AddAxiosClient(                             // instance-level options: proxy / cookies / redirects / pool / capacity
-    configure: config => config.BaseAddress = "https://api.example.com",
-    options: new AxiosClientOptions { WithCredentials = true, MaxInFlight = 32 });
 
 builder.Services.AddApiClient("https://api.example.com",     // declarative client with its own transport
     configureDefaults: config => config.Timeout = TimeSpan.FromSeconds(10),
@@ -2723,7 +2721,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Cr
 | `AddApiClient(name, baseAddress, ...)` | Singleton `IApiClientResolver` + named site |
 | `AddApiInterface<T>()` / `AddApiInterface<T>(name)` | Singleton interface proxy (default / named site) |
 
-- TryAdd semantics: already registered means not registered twice, so no second pool is created.
+- TryAdd semantics: already registered means not registered twice, so no second pool is created. **Repeating the same registration only applies the first call** — `configure` / `options` / `pipeline` from later calls are skipped outright (`configure` side effects included), which is why the snippet above is "pick one". The same holds for `AddApiClient`: a later `AddApiClient(configure)` will not apply `configure` to an already-registered instance.
 - `IApiCredentialProvider` / `IApiErrorFactory` from the container attach automatically; explicit values in `configure` win.
 - Lifetime belongs to the container: disposing an injected `ApiClient` does not dispose the shared underlying client.
 - Multi-site via `IApiClientResolver.Get(name)` / `TryGet` / `Names`; on .NET 8+ keyed services (`AddKeyedSingleton` + `[FromKeyedServices]`) work too.

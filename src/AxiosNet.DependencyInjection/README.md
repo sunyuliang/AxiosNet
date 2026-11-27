@@ -17,16 +17,15 @@ dotnet add package AxiosNet.DependencyInjection
 ```csharp
 using AxiosNet.DependencyInjection;
 
-builder.Services.AddAxiosClient(config =>
-{
-    config.BaseAddress = "https://api.example.com";
-    config.Timeout = TimeSpan.FromSeconds(10);
-});
-
 // 实例级选项（代理 / 凭据 / Cookie / 重定向次数 / 自建池 / 并发容量）走第二个参数：
-// 它们决定连接层与闸门形态，构造期固化，写不进上面的 configure 回调。
+// 它们决定连接层与闸门形态，构造期固化，写不进 configure 回调。两项要一起用就写在同一次调用里
+// ——TryAdd 语义下第二次 AddAxiosClient 整体不执行（连 configure 的副作用一起跳过）。
 builder.Services.AddAxiosClient(
-    configure: config => config.BaseAddress = "https://api.example.com",
+    configure: config =>
+    {
+        config.BaseAddress = "https://api.example.com";
+        config.Timeout = TimeSpan.FromSeconds(10);
+    },
     options: new AxiosClientOptions { WithCredentials = true, MaxInFlight = 32 });
 
 // 之后直接注入使用

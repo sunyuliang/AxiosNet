@@ -2692,25 +2692,22 @@ AOT 下不可用的能力：
 using AxiosNet.DependencyInjection;
 using AxiosNet.WebAPI.DependencyInjection;
 
-builder.Services.AddAxiosClient(config =>                    // 只要核心客户端
-{
-    config.BaseAddress = "https://api.example.com";
-    config.Timeout = TimeSpan.FromSeconds(10);
-});
-
-builder.Services.AddAxiosClient(                             // 顺带换掉尝试管线
-    configure: config => config.Timeout = TimeSpan.FromSeconds(10),
+// 下面三段是「三选一」：TryAdd 语义下第一段注册成功后，后两段整体不执行
+// （连 configure 的副作用一起跳过）。要同时用上管线与实例级选项，写在同一次调用里。
+builder.Services.AddAxiosClient(                             // 核心客户端 + 实例级选项 + 尝试管线
+    configure: config =>
+    {
+        config.BaseAddress = "https://api.example.com";
+        config.Timeout = TimeSpan.FromSeconds(10);
+    },
+    options: new AxiosClientOptions { WithCredentials = true, MaxInFlight = 32 },
     pipeline: AxiosAttemptPipeline.Default.Append(auditAttempt));
-
-builder.Services.AddAxiosClient(                             // 实例级选项：代理 / Cookie / 重定向 / 池 / 并发容量
-    configure: config => config.BaseAddress = "https://api.example.com",
-    options: new AxiosClientOptions { WithCredentials = true, MaxInFlight = 32 });
 
 builder.Services.AddApiClient("https://api.example.com",     // 声明式，自建底层客户端
     configureDefaults: config => config.Timeout = TimeSpan.FromSeconds(10),
     configure: client => client.CredentialProvider = CredentialProviders.Fixed(token));
 
-builder.Services.AddApiClient(                               // 声明式做门面，复用上面的 AxiosClient 单例
+builder.Services.AddApiClient(                               // 声明式做门面，复用容器里的 AxiosClient 单例
     configure: client => client.CredentialProvider = CredentialProviders.Fixed(token));
 
 builder.Services.AddApiClient("a", "https://a.example.com", configure: c => c.CredentialProvider = providerA);   // 多站点
@@ -2725,7 +2722,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Cr
 | `AddApiClient(name, baseAddress, ...)` | 单例 `IApiClientResolver` + 命名站点 |
 | `AddApiInterface<T>()` / `AddApiInterface<T>(name)` | 单例接口代理（默认 / 命名站点） |
 
-- TryAdd 语义：已注册不重复注册，不会建出第二条池。
+- TryAdd 语义：已注册不重复注册，不会建出第二条池。**同一种注册连续写多次时，只有第一次生效**——后续调用的 `configure` / `options` / `pipeline` 全部被跳过（`configure` 的副作用也不会执行），所以上面那段示例是「三选一」，把要用的项合到一次调用里。同理 `AddApiClient(baseAddress, ...)` 之后再 `AddApiClient(configure)` 不会把 `configure` 应用到已注册的实例上。
 - 容器里的 `IApiCredentialProvider` / `IApiErrorFactory` 自动挂到 `ApiClient`，`configure` 里显式设置的优先。
 - 生命周期归容器：`using` 掉注入的 `ApiClient` 不会释放共享的底层客户端。
 - 多站点用 `IApiClientResolver.Get(name)` / `TryGet` / `Names`；.NET 8+ 也可用键名服务（`AddKeyedSingleton` + `[FromKeyedServices]`）。
