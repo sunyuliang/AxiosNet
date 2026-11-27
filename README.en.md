@@ -2449,6 +2449,10 @@ It is the same source compiled with the `NETSTANDARD2_0` branches. Public entry 
 | Method-level `[AsyncMethodBuilder]` (pooled `ValueTask`) | enabled | not enabled |
 | Trimming / AOT annotations and analyzers | enabled | compile-time empty annotations only, no analyzers |
 
+Decompression is performed by the underlying handler, so two of its own limits apply and the library does not work around them:
+- **Stacked `Content-Encoding` (e.g. `gzip, gzip`) unwraps only the outermost layer**; the inner bytes are delivered as the body. RFC allows stacked encodings, but `SocketsHttpHandler` / `HttpClientHandler` handle a single one. Inject a handler that implements decompression yourself if you need stacking.
+- **An encoding the client never asked for is delivered as-is**: the library does not send `Accept-Encoding`, so a server that returns `br` anyway gets no decompression (the compatibility asset especially), and you receive compressed bytes. Use `ResponseType.ArrayBuffer` and handle them yourself, or inject a handler with the matching capability.
+
 Dependencies are declared only in the `netstandard2.0` group: nine first-party Microsoft BCL compatibility packages
 (`System.Text.Json`, `System.Net.Http.Json`, `System.Memory`, `System.Threading.Tasks.Extensions`,
 `Microsoft.Bcl.AsyncInterfaces`, `System.Diagnostics.DiagnosticSource`, `System.Reflection.DispatchProxy`,

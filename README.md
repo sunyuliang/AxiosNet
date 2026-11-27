@@ -2455,6 +2455,10 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 | 方法级 `[AsyncMethodBuilder]`（池化 `ValueTask`） | 启用 | 不启用 |
 | 裁剪 / AOT 标注与分析器 | 启用 | 只在编译期补空标注，不跑分析器 |
 
+自动解压由底层 Handler 完成，因此有两处它自己的边界，库不介入：
+- **多重 `Content-Encoding`（如 `gzip, gzip`）只解最外一层**，内层字节按正文原样交付——RFC 允许堆叠编码，但 `SocketsHttpHandler` / `HttpClientHandler` 只处理单个编码。要支持堆叠编码请注入自己实现解压的 Handler。
+- **收到未声明的编码时原样交付**：库不自动发送 `Accept-Encoding`，服务端若仍回了 `br` 之类，客户端不会解压（兼容资产尤其如此），拿到的是压缩字节。用 `ResponseType.ArrayBuffer` 自行处理，或注入带相应解压能力的 Handler。
+
 依赖只进 `netstandard2.0` 依赖组：9 个微软第一方 BCL 兼容包（`System.Text.Json`、`System.Net.Http.Json`、
 `System.Memory`、`System.Threading.Tasks.Extensions`、`Microsoft.Bcl.AsyncInterfaces`、
 `System.Diagnostics.DiagnosticSource`、`System.Reflection.DispatchProxy`、
