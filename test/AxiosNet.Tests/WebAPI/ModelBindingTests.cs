@@ -71,21 +71,15 @@ public sealed class ModelBindingTests
 
         var request = new DateOnlyBodyCandidateRequest { When = new DateOnly(2026, 10, 22) };
 
-#if NET8_0_OR_GREATER
         await client.RequestFullAsync(request);
 
         var received = Assert.Single(server.Received);
 
-        // 标量也按成员键聚合：{ "when": "2026-10-22" }
+        // 标量也按成员键聚合：{ "when": "2026-10-22" }。
+        // 两张现代资产一致——net6.0 的框架 STJ 没有 DateOnly 转换器，由库在默认选项里补上。
         Assert.Null(received.Query);
         var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
         Assert.Equal("2026-10-22", json.GetProperty("when").GetString());
-#else
-        // net6.0 的 System.Text.Json 不支持 DateOnly：聚合正文按序列化器能力报错（显式 [Body] 同）。
-        var error = await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(request));
-        Assert.Contains("DateOnly", error.ToString());
-        Assert.Empty(server.Received);
-#endif
     }
 
     [Fact]

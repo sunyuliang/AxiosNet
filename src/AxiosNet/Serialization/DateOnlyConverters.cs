@@ -15,6 +15,7 @@ namespace AxiosNet.Serialization;
 /// </remarks>
 internal sealed class DateOnlyConverter : JsonConverter<DateOnly>
 {
+    /// <summary>读 <c>yyyy-MM-dd</c>；其它形态按不变文化解析，失败即 <see cref="JsonException"/>。</summary>
     public override DateOnly Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         var text = reader.GetString();
@@ -26,6 +27,7 @@ internal sealed class DateOnlyConverter : JsonConverter<DateOnly>
         throw new JsonException($"'{text}' 不是合法的 DateOnly（期望 yyyy-MM-dd）。");
     }
 
+    /// <summary>写 <c>yyyy-MM-dd</c>。</summary>
     public override void Write(Utf8JsonWriter writer, DateOnly value, JsonSerializerOptions options)
         => writer.WriteStringValue(value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
 }
@@ -33,6 +35,7 @@ internal sealed class DateOnlyConverter : JsonConverter<DateOnly>
 /// <summary>net6.0 目标的 <c>TimeOnly</c> 转换器（形态见 <see cref="DateOnlyConverter"/>）。</summary>
 internal sealed class TimeOnlyConverter : JsonConverter<TimeOnly>
 {
+    /// <summary>读时刻文本；形态不合法即 <see cref="JsonException"/>。</summary>
     public override TimeOnly Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         var text = reader.GetString();
@@ -44,6 +47,7 @@ internal sealed class TimeOnlyConverter : JsonConverter<TimeOnly>
         throw new JsonException($"'{text}' 不是合法的 TimeOnly。");
     }
 
+    /// <summary>按 <see cref="TimeFormat"/> 选定的形态写出。</summary>
     public override void Write(Utf8JsonWriter writer, TimeOnly value, JsonSerializerOptions options)
         => writer.WriteStringValue(value.ToString(TimeFormat(value), CultureInfo.InvariantCulture));
 
