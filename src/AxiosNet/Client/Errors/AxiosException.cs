@@ -692,6 +692,24 @@ public class AxiosException : Exception
             null);
     }
 
+    /// <summary>响应头声明的长度已超过 <c>Limits.MaxResponseBytes</c>（流式路径的前置拒绝，正文尚未读取）。</summary>
+    /// <remarks>
+    /// 与 <see cref="MaxResponseBytes"/> 分开措辞：这里判的是 <c>Content-Length</c>，不是真实字节数，
+    /// 声明值偏大时有可能误拒。缓冲路径因此不做这项预检，只按真实字节判。
+    /// </remarks>
+    internal static AxiosException MaxResponseBytesDeclared(AxiosConfig config, HttpRequestMessage? request, long declared, long limit)
+    {
+        return new AxiosException(
+            $"MaxResponseBytes limit of {limit} exceeded by the declared Content-Length ({declared} bytes); "
+            + "the body was not read. Set Limits.MaxResponseBytes above the declared size, or use a non-stream "
+            + "response type to have the real byte count decide.",
+            ErrBadResponse,
+            config,
+            request,
+            null,
+            null);
+    }
+
     /// <summary>响应体超过单数组上限（<see cref="PlatformCompat.ArrayMaxLength"/>，约 2GB），无法装进 <c>Response.Data</c>。</summary>
     internal static AxiosException ResponseTooLarge(AxiosConfig config, HttpRequestMessage request, long actual)
     {

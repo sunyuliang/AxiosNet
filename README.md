@@ -480,7 +480,7 @@ await http.PostAsync("upload", payload, c =>
 - 回调**同步**执行，耗时逻辑自行转后台；报告节流 50 ms 一次。
 - 只在 `Loaded` 推进时上报：读到结尾不会补一条 `Loaded` 与上一条相同的「完成事件」（`Total` 已知且已传满时本就是最后一条），按事件数当块数、或拿相邻 `Loaded` 差算块大小的实现不会多算一次。
 - 回调抛异常会中断请求：上传阶段 `ERR_BAD_REQUEST`、下载阶段 `ERR_BAD_RESPONSE`，原异常在 `Cause`。上传进度回调是在正文写出一块之后才触发，**已写出的字节收不回来**（服务端可能已经收到该请求，别无条件重放）；只有 `OnSendingRequest` 失败才是「一个字节都没发出」。
-- `Limits.MaxResponseBytes`：普通响应边读边累计越界即中止；`ResponseType.Stream` 先按声明长度预检，再读取时累计。
+- `Limits.MaxResponseBytes`：普通响应边读边累计，越界即中止，判据是**真实字节数**——声明 `Content-Length: 100`、实际只有 10 字节时不会因为声明值偏大而误拒（错误消息里的字节数也是真实的 10）。`ResponseType.Stream` 额外先按声明长度预检一次（正文还没读就能拒掉），那一处判的是 `Content-Length`，消息会写明「declared Content-Length」，与真实越界区分开。
 - `Limits.MaxResponseBytes` 默认 `null`（不限，与 axios 的 `maxContentLength = -1` 同口径），库不会为此发告警或日志：缓冲型响应（非 `ResponseType.Stream`）会把整个正文读进内存，对不可信或体量未知的下游，生产环境请显式设上限。
 - `Content-Length` 只是提示，不是截断依据——**在库能控制的那一层**。库自己的读取逻辑按真实字节走：读到声明值后还会再探一次确认没有尾部，`Limits.MaxResponseBytes` 也始终按真实字节判（声明 1 KB、实际 200 KB 时照样越界报错）。声明值偏短时能否读到尾部，取决于交付字节的那一层：注入的 Handler 若交出完整正文，库会全部读完；但默认的 `SocketsHttpHandler` 自己按 `Content-Length` 分帧，声明 5 字节、实际 10 字节时它只交付前 5 字节并丢弃连接——这时库拿到的流本身就是截断的，无法自行补救（HTTP/1.1 上多出来的字节属于下一帧，读它才是错误的）。需要容忍代理改写长度时，请注入自己控制分帧的 Handler。
 - `Limits.MaxRequestBytes` 只对能算出长度的正文生效（JSON / 表单 / `byte[]` / 可 seek 流）；multipart 与长度未知的正文（不可 seek 的流、`IAsyncEnumerable` 异步序列）不拦截。

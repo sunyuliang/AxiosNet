@@ -11,24 +11,32 @@ namespace AxiosNet.Internal.Response;
 /// <summary>响应阶段：把 <see cref="System.Net.Http.HttpResponseMessage"/> 转成 <see cref="AxiosResponse"/>，含响应头、正文读取、responseType 与目标类型分派、序列化器选型。</summary>
 internal static class ResponseReader
 {
-    /// <summary>下载侧包装：按 <paramref name="declared"/> 预检 maxContentLength，再按需套进度 / 限速 / 长度上限流；都不需要时原样返回。</summary>
+    /// <summary>下载侧包装：按需按 <paramref name="declared"/> 预检长度上限，再套进度 / 限速 / 长度上限流；都不需要时原样返回。</summary>
     /// <param name="stream">响应正文流。</param>
     /// <param name="declared">响应头声明的正文长度（<c>null</c> = 未声明，如 chunked）。</param>
     /// <param name="request">请求消息（错误上下文用）。</param>
     /// <param name="config">本次请求的生效配置。</param>
+    /// <param name="precheckDeclared">
+    /// 是否用声明长度做前置预检。只有把流原样交给调用方时才值得做（避免为一个注定超限的下载建立读取管线）；
+    /// 缓冲路径不预检——它按真实字节计数，声明值偏大时预检会误拒一份其实不超限的正文。
+    /// </param>
     private static Stream WrapDownloadStream(
         Stream stream,
         long? declared,
         HttpRequestMessage request,
-        AxiosConfig config)
+        AxiosConfig config,
+        bool precheckDeclared)
     {
         var limits = config.LimitsOrNull;
         var callbacks = config.ObservabilityOrNull;
 
-        if (limits?.MaxResponseBytes is long limit && declared is long length && length > limit)
+        if (precheckDeclared
+            && limits?.MaxResponseBytes is long limit
+            && declared is long length
+            && length > limit)
         {
             stream.Dispose();
-            throw AxiosException.MaxResponseBytes(config, request, length, limit);
+            throw AxiosException.MaxResponseBytesDeclared(config, request, length, limit);
         }
 
         var maxRate = config.TransportOrNull?.MaxRate;
@@ -290,15 +298,17 @@ internal static class ResponseReader
                     responseStream,
                     message.Content.Headers.ContentLength,
                     request,
-                    config);
+                    config,
+                    // 流式：正文原样交给调用方，值得用声明长度先挡一次（省掉建立读取管线）。
+                    precheckDeclared: true);
             }
             else
             {
                 Stream responseStream = await message.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
 
-                // 声明长度：预检、进度流期望总量与预分配容量共用。
+                // 声明长度：进度流期望总量与预分配容量共用；上限只按真实字节判，不做声明预检。
                 var declared = message.Content.Headers.ContentLength;
-                var downloadStream = WrapDownloadStream(responseStream, declared, request, config);
+                var downloadStream = WrapDownloadStream(responseStream, declared, request, config, precheckDeclared: false);
                 byte[] bytes;
                 try
                 {

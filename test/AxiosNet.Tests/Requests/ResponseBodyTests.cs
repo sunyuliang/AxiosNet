@@ -83,6 +83,34 @@ public sealed class ResponseBodyTests
         Assert.NotNull(ex.Response.GetHeader("Content-Type"));
     }
 
+    /// <summary>
+    /// 缓冲路径的上限只按真实字节判：声明 100、实际 10、上限 50 时必须正常交付，
+    /// 不能因为 `Content-Length` 偏大就误拒一份其实不超限的正文。
+    /// </summary>
+    [Fact]
+    public async Task MaxResponseBytes_BufferedPath_UsesRealBytesNotDeclaredLength()
+    {
+        // 注入 Handler：声明值偏大而正文只有 10 字节（走网络时 BCL 会按声明截断，掩盖被测的判定）。
+        using var client = new AxiosClient(handler: new BodyHandler(Encoding.ASCII.GetBytes("0123456789"), declaredLength: 100));
+
+        var response = await client.GetAsync<string>(BlobUrl, c => c.Limits.MaxResponseBytes = 50);
+
+        Assert.Equal("0123456789", response.Data);
+    }
+
+    /// <summary>同一条正文真的越界时仍要拒，且消息报的是真实字节数（10），不是声明值（100）。</summary>
+    [Fact]
+    public async Task MaxResponseBytes_BufferedPath_RealOverflowReportsRealBytes()
+    {
+        using var client = new AxiosClient(handler: new BodyHandler(Encoding.ASCII.GetBytes("0123456789"), declaredLength: 100));
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
+            client.GetAsync<string>(BlobUrl, c => c.Limits.MaxResponseBytes = 8));
+
+        Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
+        Assert.Contains("got 10 bytes", ex.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task MaxResponseBytes_DeclaredLengthExceedsLimit_StreamResponseRejectsBeforeReturning()
     {
