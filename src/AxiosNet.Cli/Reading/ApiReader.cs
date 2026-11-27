@@ -743,7 +743,7 @@ internal sealed class ApiReader
         var resolved = _refs.Resolve(schema, location);
         if (resolved is not { IsObject: true })
         {
-            return (false, ParameterProblem.Unknown, detail: null);
+            return (false, ParameterProblem.Unknown, Detail: null);
         }
 
         var shape = SchemaShape.Of(resolved);
@@ -758,23 +758,23 @@ internal sealed class ApiReader
         return shape.Kind switch
         {
             // enum 在映射里先于对象 / 数组分支，结果一定是枚举或基础类型（都是标量）。
-            SchemaShapeKind.Enum => (true, ParameterProblem.None, detail: null),
+            SchemaShapeKind.Enum => (true, ParameterProblem.None, Detail: null),
 
             // 数组：落成集合参数，按数组口径报错。
-            SchemaShapeKind.Array => (false, ParameterProblem.Array, detail: null),
+            SchemaShapeKind.Array => (false, ParameterProblem.Array, Detail: null),
 
             // 二进制：format=byte / binary 与 file 都映射成 byte[]，同样不是标量。
             SchemaShapeKind.Primitive => IsScalarPrimitive(shape)
-                ? (true, ParameterProblem.None, detail: null)
-                : (false, ParameterProblem.Binary, detail: null),
+                ? (true, ParameterProblem.None, Detail: null)
+                : (false, ParameterProblem.Binary, Detail: null),
 
             // oneOf / anyOf 降级成 JsonElement。
-            SchemaShapeKind.Union => (false, ParameterProblem.Union, detail: null),
+            SchemaShapeKind.Union => (false, ParameterProblem.Union, Detail: null),
 
-            SchemaShapeKind.ClassLike => (false, ParameterProblem.Object, detail: null),
+            SchemaShapeKind.ClassLike => (false, ParameterProblem.Object, Detail: null),
 
             // 其余未知形态同样降级，运行时不算标量。
-            _ => (false, ParameterProblem.Unknown, detail: null)
+            _ => (false, ParameterProblem.Unknown, Detail: null)
         };
     }
 

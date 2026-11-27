@@ -1320,7 +1320,7 @@ public sealed class TelemetryTests
         var start = Assert.IsType<AxiosRequestStartEvent>(
             Assert.Single(probe.Events, e => e.Name == AxiosTelemetry.RequestStartEventName).Payload);
         Assert.Equal(HttpMethod.Get, start.Method);
-        Assert.Equal("/" + path, start.Uri.AbsolutePath);
+        Assert.Equal("/" + path, start.Uri?.AbsolutePath);
         Assert.Same(response.Config, start.Config);
 
         var stop = Assert.IsType<AxiosRequestStopEvent>(

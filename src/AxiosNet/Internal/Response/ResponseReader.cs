@@ -252,7 +252,7 @@ internal static class ResponseReader
     }
 
     /// <summary>读响应并转成 <see cref="AxiosResponse"/>：状态码与响应头 → 正文 → 按 responseType 与目标类型分派为 Data。</summary>
-    /// <param name="info">调用方已建好并写进 <see cref="AxiosConfig.Response"/> 的响应上下文（与本次 <paramref name="message"/> 同源）。</param>
+    /// <remarks><c>info</c> 是调用方用 <see cref="ReadInfo"/> 建好、并已写进 <see cref="AxiosConfig.Response"/> 的响应上下文，必须与本次 <c>message</c> 同源。</remarks>
     // netstandard2.0 不支持方法级 AsyncMethodBuilder（CS0592）：仅影响状态机分配策略，不改语义。
 #if !NETSTANDARD2_0
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]

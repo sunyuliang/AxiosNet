@@ -96,7 +96,7 @@ public sealed class TelemetryExample : IExample
                 {
                     events.Add(pair.Key switch
                     {
-                        AxiosTelemetry.RequestStartEventName => $"{pair.Key}: {((AxiosRequestStartEvent)pair.Value!).Method} {((AxiosRequestStartEvent)pair.Value!).Uri.AbsolutePath}",
+                        AxiosTelemetry.RequestStartEventName => $"{pair.Key}: {((AxiosRequestStartEvent)pair.Value!).Method} {((AxiosRequestStartEvent)pair.Value!).Uri?.AbsolutePath}",
                         AxiosTelemetry.RequestStopEventName => $"{pair.Key}: {((AxiosRequestStopEvent)pair.Value!).Response.Status} 用时 {((AxiosRequestStopEvent)pair.Value!).Elapsed.TotalMilliseconds:0}ms",
                         AxiosTelemetry.RequestFailedEventName => $"{pair.Key}: {((AxiosRequestFailedEvent)pair.Value!).ErrorCode}",
                         AxiosTelemetry.RetryEventName => $"{pair.Key}: 第 {((AxiosRetryContext)pair.Value!).Attempt} 次尝试失败（{((AxiosRetryContext)pair.Value!).ErrorCode}），{((AxiosRetryContext)pair.Value!).Delay.TotalMilliseconds:0}ms 后重试",
