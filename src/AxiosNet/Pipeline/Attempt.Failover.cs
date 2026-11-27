@@ -122,7 +122,13 @@ public static partial class Attempt
                     health!.RecordFailure(key, failover.FailureThreshold, failover.Cooldown, failover.MaxCooldown);
                 }
 
-                firstFailure ??= ex;
+                // 下一个端点会就地改写同一个响应对象：先把这条失败的响应钉住，
+                // 否则全部失败后交给外层的异常会「消息指首端点、Response 指尾端点」。
+                if (firstFailure is null)
+                {
+                    (ex as AxiosException)?.PinResponse();
+                    firstFailure = ex;
+                }
             }
             catch (AxiosException ex) when (key is not null && IsHealthyEvidence(ex))
             {

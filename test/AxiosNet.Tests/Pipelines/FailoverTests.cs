@@ -149,6 +149,34 @@ public sealed class FailoverTests
     }
 
     [Fact]
+    public async Task Failover_AllEndpointsFail_ExceptionDescribesOneEndpointOnly()
+    {
+        await using var primary = TestHttpServer.Start(_ => new TestResponse(500, Body: Encoding.UTF8.GetBytes("P500")));
+        await using var mirror = TestHttpServer.Start(_ => new TestResponse(503, Body: Encoding.UTF8.GetBytes("B503")));
+
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = primary.Url,
+            Resilience =
+            {
+                Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
+            }
+        });
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
+
+        // 抛出去的是首端点那条失败：消息、状态码、正文、请求地址必须同源。
+        // 备用端点会把同一个响应对象就地改写成 503，异常若还指着它，就会出现「消息说 500、Status 说 503」。
+        Assert.Contains("500", ex.Message);
+        Assert.Contains("P500", ex.Message);
+        Assert.Equal(500, ex.Status);
+        Assert.Equal("P500", ex.ResponseBody);
+        Assert.DoesNotContain("B503", ex.ResponseBody);
+        Assert.Equal(primary.Url + "x", ex.Request!.RequestUri!.ToString());
+        Assert.Equal(primary.Url + "x", ex.Response!.Request!.RequestUri!.ToString());
+    }
+
+    [Fact]
     public async Task Failover_PerRequestNullEndpoints_DisablesInstanceFailover()
     {
         await using var primary = TestHttpServer.Start(_ =>

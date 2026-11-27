@@ -629,6 +629,8 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 
 状态码被拒绝（4xx / 5xx）或正文解析失败时，`Message` 会附上响应正文片段（最多 512 字符，换行折成空格）：只打 `ex.Message` 也能看到服务端给出的原因。完整原文用 `ex.ResponseBody`（等价于 `ex.Response.RawText`）；`ToJson()` 里对应 `responseBody`。
 
+备用端点（[切换与对冲](#备用端点)）全部失败时抛出的是**首端点**那条失败：`Message` / `Request` / `Status` / `ResponseBody` 同属一次尝试，`Response` 是那一刻的快照，不会被后续端点改写。
+
 `Message` 里的 URL 只保留 `scheme` + host + port + path：query / fragment / userinfo 一律剥掉，**路径段本身不脱敏**——把凭据写进 path 的接口（如 `/api/token/{secret}`）会原样出现在消息里，这类接口的日志需要自己再脱敏。
 
 > **声明期错误与运行期错误分开归口**。声明**本身**非法——缺少路由特性（如 `[Get]`）、路径占位符 `{id}` 找不到对应的 `[Path]`（占位符未绑定）、正文声明冲突（无参 `[Body]` 与正文键 / `[Multipart]` 同用、聚合后键名重复）等——无论写在模型上还是接口上，都抛 `AxiosException`（`ERR_BAD_OPTION_VALUE`），原始异常在 `Cause`；源生成器已对其中两类提前到编译期（`AXA016` / `AXA017`）。声明合法、只是**运行时取值 / 格式化失败**（路径值为 `null`、格式化函数抛错等）按 `ERR_BAD_REQUEST` 抛 `AxiosException`。`catch (AxiosException)` 一处即可覆盖，唯一的另一条出口是 AOT 元数据缺失（`AxiosAotMetadataException`）。

@@ -122,6 +122,39 @@ public class AxiosResponse
     /// <summary>缓存落库用的正文缓冲：与 <see cref="RawBody"/> 指向同一块数组，落库或失败收尾后清空。</summary>
     internal byte[]? RawBodyBuffer { get; set; }
 
+    /// <summary>复制一份当前状态的响应，供异常对象长期持有。</summary>
+    /// <remarks>
+    /// 备用端点会就地改写同一个响应对象（状态码、正文、请求地址逐个覆盖），异常却要保留「它失败那一刻」的快照，
+    /// 否则一个异常里会同时出现首端点的消息与尾端点的状态码。只在失败路径调用。
+    /// </remarks>
+    internal AxiosResponse CopyForErrorDiagnostics()
+    {
+        var copy = new AxiosResponse
+        {
+            Data = Data,
+            Status = Status,
+            StatusText = StatusText,
+            ProtocolVersion = ProtocolVersion,
+            BodyBytes = BodyBytes,
+            CacheRevalidated = CacheRevalidated,
+            Config = Config,
+            Request = Request,
+            RawBodyBuffer = RawBodyBuffer,
+
+            // 后续尝试会整体换掉头字典，因此这里复制一份而不是共用。
+            Headers = new Dictionary<string, IEnumerable<string>>(Headers, StringComparer.OrdinalIgnoreCase),
+        };
+
+        // 字节是原始正文的唯一来源：先搬字节（会作废文本），已解码的文本再原样带过去。
+        copy.SetRawBody(_rawBody, _rawBodyCharSet, _rawBodyEncoding);
+        if (_rawText is { } text)
+        {
+            copy.RawText = text;
+        }
+
+        return copy;
+    }
+
     /// <summary>把非泛型响应复制成 <typeparamref name="TData"/> 的响应；只在响应拦截器换掉响应对象时使用。</summary>
     internal AxiosResponse<TData> AsTyped<TData>()
     {

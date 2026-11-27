@@ -71,6 +71,13 @@ public class AxiosException : Exception
     /// <summary>HTTP 状态码（有响应时可用，等价于 <c>Response.Status</c>）。</summary>
     public int? Status => Response?.Status;
 
+    /// <summary>把 <see cref="Response"/> 换成当前状态的独立副本。</summary>
+    /// <remarks>
+    /// 备用端点会把同一个响应对象就地改写成下一个端点结果；异常被记为「第一条失败」后仍持有该对象的话，
+    /// 最终抛出的异常会出现「消息 / <see cref="Request"/> 指首端点，<see cref="Status"/> / <see cref="ResponseBody"/> 指尾端点」。
+    /// </remarks>
+    internal void PinResponse() => Response = Response?.CopyForErrorDiagnostics();
+
     /// <summary>失败响应的正文原文（等价于 <c>Response.RawText</c>）。</summary>
     /// <remarks>状态码被拒绝或响应装配失败时保留；网络流式成功响应没有正文，为 <c>null</c>。</remarks>
     public string? ResponseBody => Response?.RawText;
