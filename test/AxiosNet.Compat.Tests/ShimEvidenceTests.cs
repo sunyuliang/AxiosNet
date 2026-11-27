@@ -30,12 +30,14 @@ public sealed class ShimEvidenceTests
 
         // NullStream 同步完成，这里用 GetResult 直接消费 ValueTask：
         // 避免把 ValueTask.AsTask() 自身的 Task 分配算进 shim 头上。
+#pragma warning disable xUnit1031 // 同步消费「已同步完成」的 ValueTask 是本用例的测量前提，不涉及等待真异步任务
         var newBytes = Measure(
             () => _ = NetStandard20Extensions.ReadAsync(stream, buffer.AsMemory(), default).GetAwaiter().GetResult(),
             Iterations);
         var oldBytes = Measure(
             () => _ = OldReadAsync(stream, buffer.AsMemory(), default).GetAwaiter().GetResult(),
             Iterations);
+#pragma warning restore xUnit1031
 
         // 基线：每次读都 new byte[buffer.Length]。
         Assert.True(oldBytes > 10L * 1024 * 1024, $"旧实现应分配 > 10MiB，实际 {oldBytes} 字节");

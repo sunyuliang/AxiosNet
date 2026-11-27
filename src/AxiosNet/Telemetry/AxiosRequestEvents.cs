@@ -1,4 +1,4 @@
-﻿namespace AxiosNet.Telemetry;
+namespace AxiosNet.Telemetry;
 
 /// <summary><c>AxiosNet.RequestStart</c> 事件的载荷：请求已成型（拦截器与 transformRequest 跑完、URL 已拼好），即将发送。</summary>
 /// <remarks><see cref="Config"/> 是本次请求独占的生效配置，事件结束后仍可安全读取。</remarks>

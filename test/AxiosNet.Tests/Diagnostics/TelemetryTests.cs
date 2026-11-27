@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Cache;
 using AxiosNet.Circuit;
 using AxiosNet.Pooling;

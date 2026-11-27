@@ -1,4 +1,4 @@
-﻿#if NETSTANDARD2_0
+#if NETSTANDARD2_0
 using System.Security.Authentication;
 
 namespace AxiosNet.Pooling;

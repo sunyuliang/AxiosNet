@@ -339,7 +339,7 @@ public sealed class HeadersTests
     // 丢更新。
 
     [Fact]
-    public void Headers_ConcurrentCloneAndSet_NeverLosesUpdate()
+    public async Task Headers_ConcurrentCloneAndSet_NeverLosesUpdate()
     {
         for (var round = 0; round < 20; round++)
         {
@@ -367,7 +367,7 @@ public sealed class HeadersTests
             });
 
             Volatile.Write(ref stop, 1);
-            cloner.Wait();
+            await cloner;
 
             foreach (var key in expected)
             {
@@ -377,7 +377,7 @@ public sealed class HeadersTests
     }
 
     [Fact]
-    public void TransformList_ConcurrentCloneAndAppend_NeverLosesAppend()
+    public async Task TransformList_ConcurrentCloneAndAppend_NeverLosesAppend()
     {
         for (var round = 0; round < 20; round++)
         {
@@ -403,7 +403,7 @@ public sealed class HeadersTests
             });
 
             Volatile.Write(ref stop, 1);
-            cloner.Wait();
+            await cloner;
 
             Assert.Equal(appends + 1, config.Serialization.TransformRequest.Count);
         }
@@ -462,7 +462,7 @@ public sealed class HeadersTests
         var cost = AverageBytes(20_000, () => config.Serialization.TransformRequest.Remove(static (_, _) => null));
 
         Assert.True(cost < 32, $"移除不存在的 transform 平均分配 {cost} B —— 疑似仍整份复制。");
-        Assert.Equal(1, shared.Serialization.TransformRequest.Count);
+        Assert.Single(shared.Serialization.TransformRequest);
     }
 
     [Fact]

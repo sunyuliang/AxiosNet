@@ -1,4 +1,4 @@
-﻿#if !NETSTANDARD2_0
+#if !NETSTANDARD2_0
 using System.Net.Security;
 using System.Security.Authentication;
 

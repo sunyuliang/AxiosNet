@@ -627,7 +627,7 @@ public sealed partial class CacheTests
         await Task.Delay(1500);
 
         var hit = await client.GetAsync<string>(server.Url + "aged");
-        Assert.Equal(1, server.Received.Count); // 确实是命中，而不是重新请求
+        Assert.Single(server.Received); // 确实是命中，而不是重新请求
 
         var age = int.Parse(hit.GetHeader("Age")!);
         Assert.True(age >= 4, $"Age 仍是 {age}，没有按 receivedAt 推进");

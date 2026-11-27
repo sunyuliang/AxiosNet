@@ -334,7 +334,7 @@ public sealed partial class CacheTests
         Assert.Equal(2, networkValues.Count);
 
         var hit = await client.GetAsync<string>(server.Url + "multi");
-        Assert.Equal(1, server.Received.Count);
+        Assert.Single(server.Received);
         Assert.Equal(networkValues, hit.Headers["WWW-Authenticate"].ToList());
     }
 

@@ -2,6 +2,10 @@
 using AxiosNet.Pooling;
 using AxiosNet.Tests.Infrastructure;
 
+// 本文件的用例测的就是「同步路径的字节分配」：改成 await 会把 async 状态机与 Task 算进被测开销，
+// 因此刻意用 GetAwaiter().GetResult() 同步消费（底层都是同步完成的 ValueTask）。
+#pragma warning disable xUnit1031
+
 namespace AxiosNet.Tests.Regression;
 
 /// <summary>
