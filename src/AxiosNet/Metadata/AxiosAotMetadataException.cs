@@ -47,7 +47,8 @@ public sealed class AxiosAotMetadataException : InvalidOperationException
     /// <summary>System.Text.Json 缺少该类型的源生成元数据。</summary>
     /// <remarks>
     /// 修复建议按资产分派：<c>TypeInfoResolver</c> 是 .NET 7 才有的属性，net6.0 的
-    /// <c>JsonSerializerOptions</c> 上没有它，在那里建议「设置 TypeInfoResolver」是写不出来的动作。
+    /// <c>JsonSerializerOptions</c> 上没有它；netstandard2.0 资产虽然引用 STJ 8.x（有该属性），
+    /// 但序列化路径只编了反射分支，同样接不进源生成元数据。两种资产都不能建议「去设置它」。
     /// </remarks>
     internal static AxiosAotMetadataException MissingJsonPropertyInfo(Type type)
         => new($"类型 {Describe(type)} 没有可用的 System.Text.Json 元数据："
@@ -62,6 +63,11 @@ public sealed class AxiosAotMetadataException : InvalidOperationException
     private const string JsonMetadataHint =
         "请把该类型加入 JsonSerializerContext 的 [JsonSerializable]，"
         + "并在 AxiosJson.Options（或实例 / 单次请求的 Serialization.JsonOptions）上设置 TypeInfoResolver。";
+#elif NETSTANDARD2_0
+    /// <summary>netstandard2.0 兼容资产：序列化路径只编了反射分支，接不进源生成元数据。</summary>
+    private const string JsonMetadataHint =
+        "netstandard2.0 兼容资产的序列化路径只走反射，不接入源生成元数据："
+        + "请改用自定义 IContentSerializer，或让项目多目标到 net8.0 以取得现代资产。";
 #else
     /// <summary>net6.0：该目标的 <c>JsonSerializerOptions</c> 没有 <c>TypeInfoResolver</c>，只能换序列化器或升目标框架。</summary>
     private const string JsonMetadataHint =

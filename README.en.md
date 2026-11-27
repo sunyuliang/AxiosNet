@@ -3,8 +3,8 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-3018%20passed-success)](#build-and-test)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2918%20passed-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-3031%20passed-success)](#build-and-test)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2930%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-93.4%25_(branch_87.7%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -243,13 +243,13 @@ c.Params = new[] { 1, 2 };            // root collection: [0]=1&[1]=2
 | `DateTime` / `DateTimeOffset` | UTC ISO with milliseconds (`Unspecified` treated as UTC) |
 | the same, as the raw scalar body | round-trip `"O"` form |
 | `DateOnly` | `yyyy-MM-dd` |
-| `TimeOnly` | `HH:mm:ss`, or `HH:mm:ss.fff` / round-trip form when there are sub-second digits |
+| `TimeOnly` | `HH:mm:ss`, or the 7-digit round-trip form when there are sub-second digits (`01:02:03.4560000`) |
 | `byte[]` | base64 |
 | anything else | `IFormattable` + `InvariantCulture` |
 
 Override per member with `[Format]`, or per instance with `AxiosConfig.Serialization.ValueText` (its second argument is the channel the value is written through — see [Value formatting](#value-formatting)).
 
-`DateOnly` / `TimeOnly` produce identical bytes on all three assets: net8.0 gets them from System.Text.Json itself, while net6.0 ships STJ 6.x without those converters, so the library registers them in the default options (`AxiosJson.Options` can be replaced wholesale — after that, these two are the caller's responsibility).
+`DateOnly` / `TimeOnly` produce identical bytes on all three assets: net8.0 gets them from System.Text.Json itself, while net6.0 ships STJ 6.x without those converters, so the library registers them in the default options (`AxiosJson.Options` can be replaced wholesale — after that, these two are the caller's responsibility). Reading follows net8.0 too: only `yyyy-MM-dd` and `HH:mm:ss` (with 1-7 optional fractional digits) are accepted, and culture-specific forms fail on both assets.
 
 ### Forms and uploads
 
@@ -2767,11 +2767,11 @@ Sources compile as **C# 12**: every project declares `<LangVersion>12.0</LangVer
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2810 / 2797 | `net8.0` / `net6.0` | 5607 |
+| `AxiosNet.Tests` (core + declarative) | 2822 / 2809 | `net8.0` / `net6.0` | 5631 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests` (OpenAPI generation) | 82 | `net8.0` | 82 |
-| `AxiosNet.Compat.Tests` (netstandard2.0 compat asset) | 57 / 52 | `net8.0` / `net472` | 109 |
-| **Total** | **3018 / 2918** | | **5936** |
+| `AxiosNet.Compat.Tests` (netstandard2.0 compat asset) | 58 / 52 | `net8.0` / `net472` | 110 |
+| **Total** | **3031 / 2930** | | **5961** |
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed".
 

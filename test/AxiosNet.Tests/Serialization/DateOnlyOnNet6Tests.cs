@@ -44,6 +44,23 @@ public sealed class DateOnlyOnNet6Tests
         Assert.Equal("01:02:03", json.GetProperty("at").GetString());
     }
 
+    /// <summary>
+    /// 带小数秒时两张资产同样逐字节一致：net8.0 不做毫秒截断，<c>456</c> 毫秒写 <c>.4560000</c>。
+    /// </summary>
+    [Fact]
+    public async Task AggregateBody_WithSubSecondTimeOnly_MatchesNet8ByteForByte()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new ApiClient(server.Url);
+
+        // 456 毫秒：net8.0 写 .4560000，不是 .456。
+        await client.RequestFullAsync(new TimeOnlyRequest { At = new TimeOnly(1, 2, 3, 456) });
+
+        var received = Assert.Single(server.Received);
+        var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
+        Assert.Equal("01:02:03.4560000", json.GetProperty("at").GetString());
+    }
+
     /// <summary>成员显式标了 <c>[Format]</c> 时按用户给的格式写出——文本形态由调用方选。</summary>
     [Fact]
     public async Task AggregateBody_WithFormattedDateOnly_WritesFormattedText()
@@ -72,6 +89,64 @@ public sealed class DateOnlyOnNet6Tests
 
         Assert.Equal(new DateOnly(2026, 10, 22), response.Data!.When);
     }
+
+    /// <summary>
+    /// 读入形态与 net8.0 一样严格：net8.0 只认 <c>yyyy-MM-dd</c>，区域性写法一律拒绝，
+    /// net6.0 的转换器不能因为用了宽松解析而把它读成合法日期。
+    /// </summary>
+    /// <param name="body">服务端返回的日期文本。</param>
+    [Theory]
+    [InlineData("2026/10/22")]
+    [InlineData("10/22/2026")]
+    [InlineData("2026-1-5")]
+    [InlineData("2026-10-22T00:00:00")]
+    public async Task AggregateBody_DateOnly_RejectsNonIsoFormsLikeNet8(string body)
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            Body: Encoding.UTF8.GetBytes($$"""{"when":"{{body}}"}"""),
+            ContentType: "application/json; charset=utf-8"));
+        using var client = new ApiClient(server.Url);
+
+        await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new DateOnlyRequest()));
+    }
+
+    /// <summary>
+    /// 读入形态与 net8.0 一样严格：net8.0 拒绝缺位数的 <c>1:02:03</c> 与超过 7 位的小数秒，
+    /// 接受 <c>000:02:03</c>（多余前导零）与 1-7 位小数秒。
+    /// </summary>
+    /// <param name="body">服务端返回的时刻文本。</param>
+    [Theory]
+    [InlineData("1:02:03")]
+    [InlineData("01:02")]
+    [InlineData("01:02:03.12345678")]
+    [InlineData("01:02:03 PM")]
+    public async Task AggregateBody_TimeOnly_RejectsNonIsoFormsLikeNet8(string body)
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            Body: Encoding.UTF8.GetBytes($$"""{"at":"{{body}}"}"""),
+            ContentType: "application/json; charset=utf-8"));
+        using var client = new ApiClient(server.Url);
+
+        await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new TimeOnlyRequest()));
+    }
+
+    /// <summary>net8.0 接受的两种宽松形态（多余前导零 / 1-7 位小数秒）在 net6.0 上也必须能读回。</summary>
+    /// <param name="body">服务端返回的时刻文本。</param>
+    /// <param name="expected">期望解析出的时刻。</param>
+    [Theory]
+    [InlineData("000:02:03", "00:02:03")]
+    [InlineData("01:02:03.4", "01:02:03.4")]
+    public async Task AggregateBody_TimeOnly_AcceptsFormsThatNet8Accepts(string body, string expected)
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            Body: Encoding.UTF8.GetBytes($$"""{"at":"{{body}}"}"""),
+            ContentType: "application/json; charset=utf-8"));
+        using var client = new ApiClient(server.Url);
+
+        var response = await client.RequestFullAsync(new TimeOnlyRequest());
+
+        Assert.Equal(TimeOnly.Parse(expected, System.Globalization.CultureInfo.InvariantCulture), response.Data!.At);
+    }
 }
 
 /// <summary>带 <c>DateOnly</c> 成员的响应模型。</summary>
@@ -89,9 +164,16 @@ public sealed class DateOnlyRequest : IApiRequest<DateOnlyResponse>
     public DateOnly When { get; set; }
 }
 
+/// <summary>带 <c>TimeOnly</c> 成员的响应模型。</summary>
+public sealed class TimeOnlyResponse
+{
+    /// <summary>时刻。</summary>
+    public TimeOnly At { get; set; }
+}
+
 /// <summary>带 <c>TimeOnly</c> 成员的请求模型。</summary>
 [Post("report-time")]
-public sealed class TimeOnlyRequest : IApiRequest<Person>
+public sealed class TimeOnlyRequest : IApiRequest<TimeOnlyResponse>
 {
     /// <summary>时刻。</summary>
     public TimeOnly At { get; set; }

@@ -595,22 +595,19 @@ public class AxiosException : Exception
         };
     }
 
-    /// <summary>把构造失败的原因说得能直接指向责任人：类型形态不支持 / 格式化抛错 / 其它。</summary>
-    /// <remarks>反射调用（兼容资产上的取值路径）会把真实原因包进 <see cref="System.Reflection.TargetInvocationException"/>，先剥掉再判。</remarks>
+    /// <summary>把构造失败的原因说得能直接指向责任人：取值绑定失败 / 其它。</summary>
+    /// <remarks>
+    /// 反射调用（兼容资产上的取值路径）会把真实原因包进 <see cref="System.Reflection.TargetInvocationException"/>，
+    /// 只有「被包起来的 <see cref="ArgumentException"/>」才判为取值绑定失败——那是 <c>CreateDelegate</c> 的签名不兼容。
+    /// 裸的 <see cref="ArgumentException"/> 多半来自调用方自己的 <c>Serialization.ValueText</c> 钩子，不能改写成库的能力边界。
+    /// </remarks>
     private static string Describe(Exception inner)
     {
-        var cause = inner is System.Reflection.TargetInvocationException { InnerException: { } unwrapped }
-            ? unwrapped
-            : inner;
-
-        return cause switch
-        {
-            // 默认展平遇到不能当标量处理的类型（如兼容资产上的 DateOnly）：这是库的能力边界，不是调用方的序列化器出错。
-            ArgumentException => $"查询参数里有无法展平为标量的值（{cause.Message}）："
+        return inner is System.Reflection.TargetInvocationException { InnerException: ArgumentException cause }
+            ? $"查询参数里有无法展平为标量的值（{cause.Message}）："
                 + "参数值需是基元类型 / 枚举 / string / 日期时间 / TimeSpan / Guid / Uri 或其可空形态，"
-                + "其它类型请先转成 string，或传自定义 paramsSerializer。",
-            _ => $"展开查询参数时失败（{cause.GetType().Name}）：{cause.Message}"
-        };
+                + "其它类型请先转成 string，或传自定义 paramsSerializer。"
+            : $"展开查询参数时失败（{inner.GetType().Name}）：{inner.Message}";
     }
 
     /// <summary>流式正文的生产端（调用方的 <c>IAsyncEnumerable</c>）在写出期间抛异常：<c>ERR_BAD_REQUEST</c>，原始异常在 <see cref="Cause"/>。</summary>

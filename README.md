@@ -3,8 +3,8 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-3018%20passed-success)](#构建与测试)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2918%20passed-success)](#构建与测试)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-3031%20passed-success)](#构建与测试)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2930%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-93.4%25_(branch_87.7%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -243,13 +243,13 @@ c.Params = new[] { 1, 2 };            // 根集合：[0]=1&[1]=2
 | `DateTime` / `DateTimeOffset` | UTC 毫秒 ISO（`Unspecified` 按 UTC） |
 | 同上，但作为裸标量正文 | 往返格式 `"O"` |
 | `DateOnly` | `yyyy-MM-dd` |
-| `TimeOnly` | `HH:mm:ss`，有小数秒时 `HH:mm:ss.fff` / 往返格式 |
+| `TimeOnly` | `HH:mm:ss`，有小数秒时 7 位往返格式（`01:02:03.4560000`） |
 | `byte[]` | base64 |
 | 其它 | `IFormattable` + `InvariantCulture` |
 
 按成员改写形态用 `[Format]`，按实例改写的钩子是 `AxiosConfig.Serialization.ValueText`（回调的第二个参数拿到值所在通道，见[值格式化](#值格式化)）。
 
-`DateOnly` / `TimeOnly` 在三张资产上写出同一份字节：net8.0 由 System.Text.Json 自带，net6.0 的框架 STJ 6.x 没有这两个转换器，由库在默认选项里补上（`AxiosJson.Options` 可整体替换，替换后这两项由调用方自己负责）。
+`DateOnly` / `TimeOnly` 在三张资产上写出同一份字节：net8.0 由 System.Text.Json 自带，net6.0 的框架 STJ 6.x 没有这两个转换器，由库在默认选项里补上（`AxiosJson.Options` 可整体替换，替换后这两项由调用方自己负责）。读入口径同样对齐 net8.0：只认 `yyyy-MM-dd` 与 `HH:mm:ss`（可选 1-7 位小数秒），区域性写法在两张资产上都报错。
 
 ### 表单与文件上传
 
@@ -2768,11 +2768,11 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 2810 / 2797 | `net8.0` / `net6.0` | 5607 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2822 / 2809 | `net8.0` / `net6.0` | 5631 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests`（OpenAPI 生成） | 82 | `net8.0` | 82 |
-| `AxiosNet.Compat.Tests`（netstandard2.0 兼容资产） | 57 / 52 | `net8.0` / `net472` | 109 |
-| **合计** | **3018 / 2918** | | **5936** |
+| `AxiosNet.Compat.Tests`（netstandard2.0 兼容资产） | 58 / 52 | `net8.0` / `net472` | 110 |
+| **合计** | **3031 / 2930** | | **5961** |
 
 表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。
 

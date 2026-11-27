@@ -274,6 +274,28 @@ public sealed class ParamsEdgeCaseTests
         Assert.DoesNotContain("paramsSerializer", ex.Message, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// 调用方自己的 <c>Serialization.ValueText</c> 钩子抛 <see cref="ArgumentException"/> 时，
+    /// 消息不能改写成「查询参数里有无法展平为标量的值」——那是库的能力边界，与用户的钩子无关，
+    /// 照那样写会把调用方引向错误方向（去改参数类型，而不是看自己的钩子）。
+    /// </summary>
+    [Fact]
+    public void Params_ValueTextHookThrowsArgumentException_IsNotBlamedOnFlattening()
+    {
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = "https://example.com/" });
+
+        var ex = Assert.Throws<AxiosException>(() => client.GetUri(c =>
+        {
+            c.Url = "search";
+            c.Params = new Dictionary<string, object?> { ["a"] = 1 };
+            c.Serialization.ValueText = (_, _) => throw new ArgumentException("业务侧说这个值不合法");
+        }));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.DoesNotContain("无法展平为标量", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("业务侧说这个值不合法", ex.Message, StringComparison.Ordinal);
+    }
+
     private static string BuildUri(object? parameters, Action<AxiosConfig>? configure = null)
     {
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = "https://example.com/" });
