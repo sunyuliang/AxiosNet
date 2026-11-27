@@ -636,7 +636,7 @@ The URL inside `Message` keeps only `scheme` + host + port + path: query / fragm
 | Code | Triggered by |
 | --- | --- |
 | `ERR_BAD_REQUEST` | 4xx; request body larger than `Limits.MaxRequestBytes`; request body serialization failure; upload progress callback threw; declarative request assembly failure (path / query / header / body read or formatting) |
-| `ERR_BAD_RESPONSE` | 5xx; response cannot be deserialized into the target type; body larger than `Limits.MaxResponseBytes`; generic argument vs `ResponseType` mismatch; download progress callback, raw response callback or `transformResponse` threw |
+| `ERR_BAD_RESPONSE` | 5xx; response cannot be deserialized into the target type; body larger than `Limits.MaxResponseBytes`; generic argument vs `ResponseType` mismatch; download progress callback or raw response callback threw; `transformResponse` threw a non-`AxiosException` |
 | `ECONNABORTED` | `Timeout` exceeded (including the streaming body phase), or the `Resilience.TotalTimeout` budget is exhausted |
 | `ERR_NETWORK` | Connection refused / DNS failure / connection dropped / truncated body |
 | `ERR_CANCELED` | `CancellationToken` cancelled, or the client was disposed |
@@ -923,6 +923,7 @@ await http.GetAsync("users/1", c => c.Serialization.TransformResponse.Add((d, _)
 - The chains are `IList<Func<object?, AxiosConfig, object?>>`; returning `null` is legal and keeps flowing.
 - Whatever `TransformRequest` returns is still encoded according to `ContentType`.
 - `TransformResponse` runs for `Json` / `Text` / `ArrayBuffer` / `Dynamic`; not for `Stream` (the data isn't read yet).
+- A plain exception is normalised to `ERR_BAD_RESPONSE` (the original sits in `Cause`); your own `AxiosException` subclass keeps its **own code**, yet status / headers / raw text are still attached (`error.Response`, `error.Status`, `error.ResponseBody`).
 
 #### Serialization
 

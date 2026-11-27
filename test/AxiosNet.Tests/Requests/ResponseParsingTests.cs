@@ -414,6 +414,35 @@ public sealed class ResponseParsingTests
     }
 
     [Fact]
+    public async Task GetAsync_TransformResponseThrowsCustomAxiosException_KeepsCodeAndAddsResponseContext()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { name = "ada" }));
+        using var client = new AxiosClient();
+
+        var thrown = await Record.ExceptionAsync(() => client.GetAsync<object>(
+            $"http://127.0.0.1:{server.Port}/",
+            c => c.Serialization.TransformResponse.Add((_, _) => throw new CustomCodeException())));
+
+        // 自定义错误码不被改写成 ERR_BAD_RESPONSE，异常类型原样上抛。
+        var ex = Assert.IsType<CustomCodeException>(thrown);
+        Assert.Equal("ERR_CUSTOM", ex.Code);
+        Assert.NotNull(ex.Response);
+        Assert.Equal(200, ex.Response!.Status);
+        Assert.Contains("ada", ex.ResponseBody);
+        Assert.NotNull(ex.Response.Config);
+        Assert.NotNull(ex.Response.Request);
+    }
+
+    /// <summary>模拟调用方在 transformResponse 里抛自己的错误码（<see cref="AxiosException"/> 构造函数 protected）。</summary>
+    private sealed class CustomCodeException : AxiosException
+    {
+        public CustomCodeException()
+            : base("custom transform failure", "ERR_CUSTOM", config: null, request: null, response: null, innerException: null)
+        {
+        }
+    }
+
+    [Fact]
     public async Task GetAsync_Enum_DefinedAndFlagsCombination_AreAccepted()
     {
         await using var server = TestHttpServer.Start(_ => BareText("Read,Write"));

@@ -211,6 +211,35 @@ public sealed class ShortCircuitTests
     }
 
     [Fact]
+    public async Task TransformResponse_CustomAxiosExceptionOnShortCircuit_CarriesResponseContext()
+    {
+        using var client = new AxiosClient();
+        const string url = "http://127.0.0.1:9/never";
+
+        var thrown = await Record.ExceptionAsync(() => client.GetAsync<Person>(url, c =>
+        {
+            c.ShortCircuit = AxiosShortCircuit.Json("""{"name":"a","age":1}""", 418);
+            c.Serialization.TransformResponse.Add((_, _) => throw new ShortCircuitCustomException());
+        }));
+
+        // 短路路径与网络路径同一口径：错误码保留、响应上下文补齐。
+        var ex = Assert.IsType<ShortCircuitCustomException>(thrown);
+        Assert.Equal("ERR_CUSTOM", ex.Code);
+        Assert.NotNull(ex.Response);
+        Assert.Equal(418, ex.Response!.Status);
+        Assert.Contains("a", ex.ResponseBody);
+    }
+
+    /// <summary>调用方自定义错误码的异常（<see cref="AxiosException"/> 构造函数 protected，只能派生）。</summary>
+    private sealed class ShortCircuitCustomException : AxiosException
+    {
+        public ShortCircuitCustomException()
+            : base("custom short-circuit failure", "ERR_CUSTOM", config: null, request: null, response: null, innerException: null)
+        {
+        }
+    }
+
+    [Fact]
     public async Task ResponseInterceptors_RunOnShortCircuit()
     {
         using var client = new AxiosClient();

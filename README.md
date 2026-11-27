@@ -638,7 +638,7 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 | Code | 触发场景 |
 | --- | --- |
 | `ERR_BAD_REQUEST` | 4xx；请求体超 `Limits.MaxRequestBytes`；请求体序列化失败；上传进度回调抛异常；声明式请求装配失败（路径 / 查询 / 请求头 / 正文取值或格式化） |
-| `ERR_BAD_RESPONSE` | 5xx；响应无法反序列化为目标类型；响应体超 `Limits.MaxResponseBytes`；泛型与 `ResponseType` 不匹配；下载进度回调 / 原始字节回调 / `transformResponse` 抛异常 |
+| `ERR_BAD_RESPONSE` | 5xx；响应无法反序列化为目标类型；响应体超 `Limits.MaxResponseBytes`；泛型与 `ResponseType` 不匹配；下载进度回调 / 原始字节回调抛异常；`transformResponse` 抛非 `AxiosException` 异常 |
 | `ECONNABORTED` | 超过 `Timeout`（含流式正文阶段），或 `Resilience.TotalTimeout` 总预算已耗尽 |
 | `ERR_NETWORK` | 连接被拒 / DNS 失败 / 连接中断 / 正文截断 |
 | `ERR_CANCELED` | `CancellationToken` 取消，或客户端已释放 |
@@ -927,6 +927,7 @@ await http.GetAsync("users/1", c => c.Serialization.TransformResponse.Add((d, _)
 - 链是 `IList<Func<object?, AxiosConfig, object?>>`，返回 `null` 合法，会继续往后传。
 - `TransformRequest` 的返回值仍按 `ContentType` 编码。
 - `TransformResponse` 在 `Json` / `Text` / `ArrayBuffer` / `Dynamic` 下执行，`Stream` 不执行（数据还没读）。
+- 抛普通异常归一为 `ERR_BAD_RESPONSE`（原生异常在 `Cause`）；抛自己的 `AxiosException` 派生类时**错误码保持不变**，但状态码 / 响应头 / 原文照样补齐（`error.Response`、`error.Status`、`error.ResponseBody`）。
 
 #### 序列化
 

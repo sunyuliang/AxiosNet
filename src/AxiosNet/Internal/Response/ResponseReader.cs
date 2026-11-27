@@ -317,14 +317,24 @@ internal static class ResponseReader
                     }
                 }
 
-                data = ConvertBody(
-                    config,
-                    request,
-                    dataType,
-                    bytes,
-                    rawContentType,
-                    lenient,
-                    out rawText);
+                try
+                {
+                    data = ConvertBody(
+                        config,
+                        request,
+                        dataType,
+                        bytes,
+                        rawContentType,
+                        lenient,
+                        out rawText);
+                }
+                catch (AxiosException ex) when (ex.Response is null)
+                {
+                    // 反序列化与 transformResponse 抛出的 AxiosException 一律补上下文：
+                    // 调用方自定义错误码（非 ERR_BAD_RESPONSE）时错误码保持不变，但状态码 / 响应头 / 原文不能丢。
+                    AttachResponseContext(ex, config, request, target, status, statusText, message.Version, headers, rawText, rawBody, bodyBytes);
+                    throw;
+                }
             }
         }
         catch (AxiosException ex) when (ex.Code == AxiosException.ErrBadResponse && ex.Response is null)
@@ -587,7 +597,7 @@ internal static class ResponseReader
 
         rawText = text;
 
-        // transformResponse：反序列化之后依次加工 Data；异常归一到 ERR_BAD_RESPONSE。
+        // transformResponse：反序列化之后依次加工 Data；普通异常归一到 ERR_BAD_RESPONSE。
         if (config.TransformResponseSnapshot is { } responseTransforms)
         {
             foreach (var transform in responseTransforms)
@@ -601,6 +611,8 @@ internal static class ResponseReader
                     // 转换失败时同样把原文补进异常响应。
                     rawText = EnsureText();
 
+                    // 调用方自己抛的 AxiosException 原样上抛（保留自定义错误码），
+                    // 响应上下文由调用方按 Response 为 null 时补；普通异常在这里归一。
                     if (ex is AxiosException)
                     {
                         throw;
@@ -669,7 +681,16 @@ internal static class ResponseReader
                 }
                 else
                 {
-                    data = ConvertBody(config, null, dataType, body, rawContentType, lenient, out rawText);
+                    try
+                    {
+                        data = ConvertBody(config, null, dataType, body, rawContentType, lenient, out rawText);
+                    }
+                    catch (AxiosException ex) when (ex.Response is null)
+                    {
+                        // 与网络路径同一口径：transformResponse 抛自定义 AxiosException 时也要带响应上下文。
+                        AttachResponseContext(ex, config, null, target, status, statusText, reply.ProtocolVersion, headers, rawText, reply.Body, bodyBytes, ownedBytes: true);
+                        throw;
+                    }
 
                     // 字节形态必须复制。
                     if (ReferenceEquals(data, body))
