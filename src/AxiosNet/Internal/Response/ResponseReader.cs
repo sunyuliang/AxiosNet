@@ -242,7 +242,17 @@ internal static class ResponseReader
         return trimmed;
     }
 
+    /// <summary>读取状态码与响应头，装配 <see cref="AxiosConfig.Response"/> 要用的只读上下文；正文还没开始读。</summary>
+    /// <remarks>调用方必须在写进 <see cref="AxiosConfig.Response"/> 之后再调用 <see cref="AxiosConfig.ValidateStatus"/>，委托里才读得到状态码与响应头。</remarks>
+    internal static AxiosResponseInfo ReadInfo(HttpResponseMessage message)
+    {
+        var status = (int)message.StatusCode;
+        var headers = new ResponseHeadersView(message.Headers, message.Content.Headers);
+        return new AxiosResponseInfo(status, StatusTextMap.Get(status), headers, ContentTypeHeader.ReadRaw(message.Content.Headers));
+    }
+
     /// <summary>读响应并转成 <see cref="AxiosResponse"/>：状态码与响应头 → 正文 → 按 responseType 与目标类型分派为 Data。</summary>
+    /// <param name="info">调用方已建好并写进 <see cref="AxiosConfig.Response"/> 的响应上下文（与本次 <paramref name="message"/> 同源）。</param>
     // netstandard2.0 不支持方法级 AsyncMethodBuilder（CS0592）：仅影响状态机分配策略，不改语义。
 #if !NETSTANDARD2_0
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -254,16 +264,15 @@ internal static class ResponseReader
         CancellationToken cancellationToken,
         Type? dataType,
         AxiosResponse? target,
-        bool lenient)
+        bool lenient,
+        AxiosResponseInfo info)
     {
-        var headers = new ResponseHeadersView(message.Headers, message.Content.Headers);
-
-        var status = (int)message.StatusCode;
-        var statusText = StatusTextMap.Get(status);
+        var headers = info.Headers;
+        var status = info.Status;
+        var statusText = info.StatusText;
 
         // Content-Type 只留原始值，媒体类型 / 字符集按需解析。
-        var rawContentType = ContentTypeHeader.ReadRaw(message.Content.Headers);
-        config.Response = new AxiosResponseInfo(status, statusText, headers, rawContentType);
+        var rawContentType = info.RawContentType;
 
         object? data;
         // 已解码正文（二进制 / 流为 null）。

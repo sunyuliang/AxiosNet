@@ -172,6 +172,32 @@ public sealed class ErrorModelTests
     }
 
     [Fact]
+    public async Task ValidateStatus_SeesThisResponseContext()
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            200,
+            Body: Encoding.UTF8.GetBytes("{\"ok\":true}"),
+            Headers: new Dictionary<string, string> { ["X-Trace"] = "abc" },
+            ContentType: "application/json; charset=utf-8"));
+        using var client = new AxiosClient();
+
+        AxiosResponseInfo? seen = null;
+        var response = await client.GetAsync(server.Url, c => c.ValidateStatus = _ =>
+        {
+            // 按次配置就是本次生效配置：委托里读到的响应上下文属于这一次响应。
+            seen = c.Response;
+            return true;
+        });
+
+        Assert.Equal(200, response.Status);
+        Assert.NotNull(seen);
+        Assert.Equal(200, seen!.Status);
+        Assert.Equal("abc", seen.GetHeader("X-Trace"));
+        Assert.Equal("application/json", seen.MediaType);
+        Assert.Equal("utf-8", seen.CharSet);
+    }
+
+    [Fact]
     public async Task ValidateStatus_ThrowingDelegate_IsNormalizedToAxiosException()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));

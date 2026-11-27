@@ -668,6 +668,8 @@ Custom accepted status codes (2xx by default):
 await client.GetAsync("maybe-404", c => c.ValidateStatus = s => s is >= 200 and < 500);
 ```
 
+The delegate only receives the status code. To decide by response headers, read `c.Response` inside a **per-request** closure (status / headers / `Content-Type` of this response are already in place there); a delegate set on the instance-wide `Defaults.ValidateStatus` cannot see it — the response context lives on this request's config copy, not on the shared defaults.
+
 ## Configuration
 
 `AxiosConfig` top level is the request itself (13 configurable leaves); everything else is grouped into six groups: `Limits` / `Serialization` / `Resilience` / `Transport` / `Observability` / `Caching`. That is 7 groups and 71 leaves in total (13 + 3 + 9 + 19 + 10 + 7 + 10); each leaf has exactly one storage field, one doc comment and one entry point, and instance defaults and per-request overrides use the same properties.

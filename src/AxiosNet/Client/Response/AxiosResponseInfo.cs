@@ -31,12 +31,14 @@ public sealed class AxiosResponseInfo
 
     /// <summary>HTTP 状态码（同 <see cref="AxiosResponse.Status"/>，错误状态码下也能读到）。</summary>
     public int Status { get; }
-
     /// <summary>状态码对应的标准文案（同 <see cref="AxiosResponse.StatusText"/>）。</summary>
     public string StatusText { get; }
 
     /// <summary>合并了响应头与内容头的只读字典（大小写不敏感），与 <see cref="AxiosResponse.Headers"/> 同一实例。</summary>
     public IReadOnlyDictionary<string, IEnumerable<string>> Headers { get; }
+
+    /// <summary><c>Content-Type</c> 的原始头值（未解析）：正文解码口径由它决定，同一份响应上下文只读一次头。</summary>
+    internal string? RawContentType => _rawContentType;
 
     /// <summary>响应的媒体类型主值（已去参数），如 <c>application/json</c>；无 Content-Type 时为 <c>null</c>。</summary>
     public string? MediaType

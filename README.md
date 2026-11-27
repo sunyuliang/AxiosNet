@@ -670,6 +670,8 @@ switch (ex.ErrorCode)
 await client.GetAsync("maybe-404", c => c.ValidateStatus = s => s is >= 200 and < 500);
 ```
 
+委托只收到状态码。需要按响应头判定时，在**按请求**配置的闭包里读 `c.Response`（本次响应的状态码 / 响应头 / `Content-Type` 已就绪）；写在实例 `Defaults.ValidateStatus` 上的委托读不到——响应上下文挂在本次请求的配置副本上，不在共享的默认值上。
+
 ## 配置
 
 `AxiosConfig` 顶层是请求本身（13 个可配置叶子），其余按领域收进六个分组：`Limits` / `Serialization` / `Resilience` / `Transport` / `Observability` / `Caching`。连同顶层共 7 组、71 个叶子（13 + 3 + 9 + 19 + 10 + 7 + 10）。

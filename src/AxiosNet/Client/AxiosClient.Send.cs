@@ -357,6 +357,10 @@ public sealed partial class AxiosClient
     {
         try
         {
+            // 状态码与响应头在 validateStatus 之前就绪：委托里读 config.Response 拿到的就是这一次的响应。
+            var info = ResponseReader.ReadInfo(responseMessage);
+            ctx.Config.Response = info;
+
             // 调用方的 validateStatus 委托属于请求管线：它抛的异常同样归一为 AxiosException，不漏裸异常。
             bool statusAccepted;
             try
@@ -376,7 +380,8 @@ public sealed partial class AxiosClient
                     budget.Token,
                     ctx.DataType,
                     ctx.Target,
-                    lenient: !statusAccepted)
+                    lenient: !statusAccepted,
+                    info)
                 .ConfigureAwait(false);
 
             return (response, statusAccepted);
@@ -406,7 +411,6 @@ public sealed partial class AxiosClient
         }
     }
 
-    /// <summary>默认的成功判定：2xx 才算成功（未配置 <c>ValidateStatus</c> 时用它）。</summary>
     /// <summary>状态码是否被本次请求接受：<c>validateStatus</c> 优先，未配置时接受 2xx。</summary>
     /// <param name="config">本次请求的生效配置。</param>
     /// <param name="status">待判定的 HTTP 状态码。</param>
