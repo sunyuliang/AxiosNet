@@ -284,6 +284,7 @@ await http.PostAsync("upload", multipart);          // passed through with its o
 - Parts are disposed with the request (success / error / cancellation); read into `byte[]` first if you need to reuse them.
 - One `FormFile` / `Stream` can feed one part only: a stream reads forward once, so the second part would emit 0 bytes — assembly fails with `ERR_BAD_OPTION_VALUE`.
 - Field names or filenames containing `"`, `\`, CR/LF or control characters would break `Content-Disposition` and fail before sending.
+- **Non-ASCII field names are written as RFC 2047 encoded-words** (`name="=?utf-8?B?…?="`, with no accompanying `name*=utf-8''…`): .NET servers decode that, while Java / Node / Python parsers mostly treat it as a literal. Filenames differ — they carry both forms (`filename="=?utf-8?B?…?="; filename*=utf-8''…`), and cross-language parsers understand the latter. For cross-language uploads use ASCII **field names** (`[Part("title")]`, dictionary keys, or a `FormFieldName` rule) and put the non-ASCII text in the value.
 - In ASP.NET Core `FormFile` is ambiguous, alias it: `using ClientFile = AxiosNet.FormFile;`.
 
 ### Streaming request bodies

@@ -284,6 +284,7 @@ await http.PostAsync("upload", multipart);          // 原样透传，保留自�
 - 部件随请求释放（成功 / 异常 / 取消都 `Dispose`）；要复用请先读成 `byte[]`。
 - 同一个 `FormFile` / `Stream` 只能挂一个部件：流是单向读的，第一个部件读完后游标在末尾，第二个只会发出 0 字节，装配时直接报 `ERR_BAD_OPTION_VALUE`。
 - 字段名 / 文件名含 `"`、`\`、CR/LF、控制字符会破坏 `Content-Disposition`，发出前直接报错。
+- **中文字段名按 .NET 口径写成 RFC 2047 encoded-word**（`name="=?utf-8?B?…?="`，且不附 `name*=utf-8''…`）：.NET 服务端能还原，Java / Node / Python 的解析器多数只会当成字面量。文件名不同，两种形态都带（`filename="=?utf-8?B?…?="; filename*=utf-8''…`），跨语言解析器认后一种。跨语言上传的**字段名**请用 ASCII（`[Part("title")]`、字典键或 `FormFieldName` 规则），把中文放值里。
 - ASP.NET Core 项目里 `FormFile` 有歧义：`using ClientFile = AxiosNet.FormFile;`。
 
 ### 流式请求体

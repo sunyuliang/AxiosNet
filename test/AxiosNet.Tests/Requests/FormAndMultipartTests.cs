@@ -1403,6 +1403,25 @@ public sealed class FormAndMultipartTests
         Assert.Contains("name=\"=?utf-8?B?5Lit5paH5ZCN?=\"", body);
     }
 
+    [Fact]
+    public async Task Multipart_NonAsciiFieldName_HasNoStarForm_WhileFileNameDoes()
+    {
+        await using var server = TestHttpServer.Start(EchoJson);
+        using var client = new AxiosClient();
+
+        await client.PostAsync(
+            server.Url + "upload",
+            new Dictionary<string, object?> { ["f"] = new FormFile("中文.txt", Encoding.UTF8.GetBytes("x")) },
+            c => c.ContentType = "multipart/form-data");
+
+        var body = Body_RequestBody(server.Received[0]);
+
+        // 字段名只有 RFC 2047 encoded-word，没有 RFC 5987 的 name*=；文件名则两种形态都带。
+        Assert.Contains("name=\"=?utf-8?B?", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("; name*=", body, StringComparison.Ordinal);
+        Assert.Contains("filename*=utf-8''", body, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData("a\"b.txt")]
     [InlineData("a\\b.txt")]
