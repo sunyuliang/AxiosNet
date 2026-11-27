@@ -81,6 +81,7 @@ internal static class JsonSerializerJit
     private const string ReflectionSwitchName = "System.Text.Json.JsonSerializer.IsReflectionEnabledByDefault";
 
     /// <summary>没有 resolver 时，反射是唯一路径：开关未设置视为开启（JIT 默认），关掉时按缺元数据拒绝。</summary>
+    /// <remarks>修复建议由 <see cref="AxiosAotMetadataException.MissingJsonPropertyInfo"/> 按资产给出（该目标没有 TypeInfoResolver）。</remarks>
     public static void EnsureReflectionMetadata(Type type)
     {
         if (!AppContext.TryGetSwitch(ReflectionSwitchName, out var enabled) || enabled)
@@ -88,10 +89,7 @@ internal static class JsonSerializerJit
             return;
         }
 
-        // net6.0 没有 TypeInfoResolver API，补一句该目标上可做的选择。
-        throw new NotSupportedException(
-            AxiosAotMetadataException.MissingJsonPropertyInfo(type).Message
-            + "net6.0 目标没有 TypeInfoResolver API：请改用自定义 IContentSerializer，或把目标框架提升到 net8.0。");
+        throw new NotSupportedException(AxiosAotMetadataException.MissingJsonPropertyInfo(type).Message);
     }
 #endif
 }

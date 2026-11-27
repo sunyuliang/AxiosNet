@@ -43,6 +43,10 @@ public sealed class JsonSerializerTargetFrameworkParityTests
             // 必须指向「补元数据」这个方向，而不是漏出 STJ 的内部消息。
             Assert.Contains("没有可用的 System.Text.Json 元数据", error.Message);
             Assert.Contains("net6.0", error.Message);
+
+            // 不能建议一个该资产上写不出来的动作：TypeInfoResolver 是 .NET 7 才有的属性。
+            // （文案里可以提到它不存在，但不能让人「去设置它」。）
+            Assert.DoesNotContain("设置 TypeInfoResolver", error.Message);
         }
         finally
         {

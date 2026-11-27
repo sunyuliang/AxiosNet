@@ -45,14 +45,29 @@ public sealed class AxiosAotMetadataException : InvalidOperationException
             + "或在启动期调用 AxiosMetadata.RegisterMap 手工注册。");
 
     /// <summary>System.Text.Json 缺少该类型的源生成元数据。</summary>
+    /// <remarks>
+    /// 修复建议按资产分派：<c>TypeInfoResolver</c> 是 .NET 7 才有的属性，net6.0 的
+    /// <c>JsonSerializerOptions</c> 上没有它，在那里建议「设置 TypeInfoResolver」是写不出来的动作。
+    /// </remarks>
     internal static AxiosAotMetadataException MissingJsonPropertyInfo(Type type)
         => new($"类型 {Describe(type)} 没有可用的 System.Text.Json 元数据："
             + "Native AOT 下反射回退默认关闭。"
             + (IsAnonymousType(type)
                 ? "该类型是匿名类型：匿名类型无法写进 JsonSerializerContext 的 [JsonSerializable]，请改用命名类型，"
                     + "或改用 params / 表单发送该对象的扁平字段。"
-                : "请把该类型加入 JsonSerializerContext 的 [JsonSerializable]，"
-                    + "并在 AxiosJson.Options（或实例 / 单次请求的 Serialization.JsonOptions）上设置 TypeInfoResolver。"));
+                : JsonMetadataHint));
+
+#if NET8_0_OR_GREATER
+    /// <summary>net8.0：<c>TypeInfoResolver</c> 可用，按源生成上下文接入。</summary>
+    private const string JsonMetadataHint =
+        "请把该类型加入 JsonSerializerContext 的 [JsonSerializable]，"
+        + "并在 AxiosJson.Options（或实例 / 单次请求的 Serialization.JsonOptions）上设置 TypeInfoResolver。";
+#else
+    /// <summary>net6.0：该目标的 <c>JsonSerializerOptions</c> 没有 <c>TypeInfoResolver</c>，只能换序列化器或升目标框架。</summary>
+    private const string JsonMetadataHint =
+        "net6.0 目标的 System.Text.Json 没有 TypeInfoResolver 属性，无法接入源生成元数据："
+        + "请改用自定义 IContentSerializer，或把目标框架提升到 net8.0。";
+#endif
 
     /// <summary>匿名类型的编译器生成名形如 <c>&lt;&gt;f__AnonymousType0`1</c>（C#）/ <c>VB$AnonymousType_0</c>（VB）；只做前缀判断。</summary>
     private static bool IsAnonymousType(Type type)
