@@ -627,6 +627,8 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 
 When a status is rejected (4xx / 5xx) or the body fails to parse, `Message` appends a response-body snippet (at most 512 characters, newlines folded to spaces), so logging `ex.Message` alone still shows the server's reason. Use `ex.ResponseBody` (same as `ex.Response.RawText`) for the full text; `ToJson()` exposes it as `responseBody`.
 
+`Data` on an error response is a **lenient** parse: once the status is rejected, a body that looks like JSON is deserialized into the target type as far as it goes, missing members simply take their defaults — 4xx + `{"error":"bad thing"}` for `GetAsync<User>` yields a default `User` instance (`Id=0`, `Name=null`), not `null`. Do not treat it as data the server confirmed; `ResponseBody` / `RawText` is the trustworthy text. `Data` is only `null` when the body failed to parse or the response was streaming.
+
 When every backup endpoint failed, the exception describes the **first** failing endpoint: `Message` / `Request` / `Status` / `ResponseBody` all belong to that one attempt, and `Response` is a snapshot of that moment — later endpoints cannot rewrite it.
 
 The URL inside `Message` keeps only `scheme` + host + port + path: query / fragment / userinfo are always stripped, while **path segments themselves are not redacted** — an endpoint that carries a credential in the path (for example `/api/token/{secret}`) shows up verbatim, so logs for those endpoints need their own redaction.

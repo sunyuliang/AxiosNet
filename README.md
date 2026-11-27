@@ -629,6 +629,8 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 
 状态码被拒绝（4xx / 5xx）或正文解析失败时，`Message` 会附上响应正文片段（最多 512 字符，换行折成空格）：只打 `ex.Message` 也能看到服务端给出的原因。完整原文用 `ex.ResponseBody`（等价于 `ex.Response.RawText`）；`ToJson()` 里对应 `responseBody`。
 
+错误响应的 `Data` 是**宽松解析**的产物：状态码被拒绝时，只要正文像 JSON 就按目标类型尽力解析，缺字段即默认值——4xx + `{"error":"bad thing"}` 对 `GetAsync<User>` 得到的是 `User` 的默认实例（`Id=0`、`Name=null`），不是 `null`。别把它当成「服务端确认过」的数据，可信的是 `ResponseBody` / `RawText`；正文解析失败与流式失败时 `Data` 才是 `null`。
+
 备用端点（[切换与对冲](#备用端点)）全部失败时抛出的是**首端点**那条失败：`Message` / `Request` / `Status` / `ResponseBody` 同属一次尝试，`Response` 是那一刻的快照，不会被后续端点改写。
 
 `Message` 里的 URL 只保留 `scheme` + host + port + path：query / fragment / userinfo 一律剥掉，**路径段本身不脱敏**——把凭据写进 path 的接口（如 `/api/token/{secret}`）会原样出现在消息里，这类接口的日志需要自己再脱敏。

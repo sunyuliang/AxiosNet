@@ -172,6 +172,26 @@ public sealed class ErrorModelTests
     }
 
     [Fact]
+    public async Task ErrorBody_ForTypedCall_IsLenientlyParsedIntoDefaultInstance()
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            400,
+            Body: Encoding.UTF8.GetBytes("{\"error\":\"bad thing\"}"),
+            ContentType: "application/json; charset=utf-8"));
+        using var client = new AxiosClient();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<Person>(server.Url));
+
+        // 状态码被拒绝时按宽松口径解析：体里没有 Name / Age，得到的是默认实例而不是 null。
+        var data = Assert.IsType<Person>(ex.Response!.Data);
+        Assert.Null(data.Name);
+        Assert.Equal(0, data.Age);
+
+        // 可信的是原文。
+        Assert.Contains("bad thing", ex.ResponseBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ValidateStatus_SeesThisResponseContext()
     {
         await using var server = TestHttpServer.Start(_ => new TestResponse(
