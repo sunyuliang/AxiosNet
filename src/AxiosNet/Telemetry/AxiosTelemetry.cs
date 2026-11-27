@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Metrics;
 using System.Globalization;
@@ -404,7 +404,7 @@ public static class AxiosTelemetry
 
             if (Listener.IsEnabled(RequestStartEventName))
             {
-                Emit(RequestStartEventName, new AxiosRequestStartEvent(config.Method, uri, config));
+                Emit(RequestStartEventName, new AxiosRequestStartEvent(config.Method, EventUri(config, uri), config));
             }
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
@@ -476,7 +476,7 @@ public static class AxiosTelemetry
 
         if (Listener.IsEnabled(RequestStopEventName))
         {
-            Emit(RequestStopEventName, new AxiosRequestStopEvent(config.Method, uri, response, TimeSpan.FromSeconds(elapsed)));
+            Emit(RequestStopEventName, new AxiosRequestStopEvent(config.Method, EventUri(config, uri), response, TimeSpan.FromSeconds(elapsed)));
         }
     }
 
@@ -544,7 +544,7 @@ public static class AxiosTelemetry
 
         if (Listener.IsEnabled(RequestFailedEventName))
         {
-            Emit(RequestFailedEventName, new AxiosRequestFailedEvent(config.Method, uri, exception, axiosException?.Code, statusCode, TimeSpan.FromSeconds(elapsed)));
+            Emit(RequestFailedEventName, new AxiosRequestFailedEvent(config.Method, EventUri(config, uri), exception, axiosException?.Code, statusCode, TimeSpan.FromSeconds(elapsed)));
         }
     }
 
@@ -689,7 +689,7 @@ public static class AxiosTelemetry
             context.AttemptNumber,
             context.EndpointIndex,
             context.Config.Method,
-            context.Uri,
+            EventUri(context.Config, context.Uri),
             TimeSpan.FromSeconds(ElapsedSeconds(startTimestamp)),
             status,
             errorCode: null,
@@ -709,7 +709,7 @@ public static class AxiosTelemetry
             context.AttemptNumber,
             context.EndpointIndex,
             context.Config.Method,
-            context.Uri,
+            EventUri(context.Config, context.Uri),
             TimeSpan.FromSeconds(ElapsedSeconds(startTimestamp)),
             axiosException?.Status,
             axiosException?.Code,
@@ -755,6 +755,36 @@ public static class AxiosTelemetry
         var components = includeQuery ? UriComponents.HttpRequestUrl : UriComponents.HttpRequestUrl & ~UriComponents.Query;
 
         return uri.GetComponents(components, UriFormat.UriEscaped);
+    }
+
+    /// <summary>诊断事件载荷里的地址：按 <see cref="AxiosConfig.ObservabilitySettings.Capture"/> 脱敏，口径与 span 的 <c>url.full</c> 一致。</summary>
+    /// <remarks>
+    /// <see cref="TelemetryCapture.Path"/>（默认）与 <see cref="TelemetryCapture.NoUrl"/> 都去掉查询串 ——
+    /// 把 token / api_key 放在查询串里的调用方，只要订阅了诊断事件就会把它写进日志；NoUrl 连地址都不给。
+    /// </remarks>
+    /// <param name="config">本次请求的生效配置。</param>
+    /// <param name="uri">最终请求地址。</param>
+    /// <returns>脱敏后的地址；<see cref="TelemetryCapture.NoUrl"/> 时为 <c>null</c>。</returns>
+    private static Uri? EventUri(AxiosConfig config, Uri uri)
+    {
+        var capture = config.ObservabilityOrNull?.Capture ?? TelemetryCapture.Path;
+
+        if (capture is TelemetryCapture.NoUrl)
+        {
+            return null;
+        }
+
+        // userinfo 一律去掉；只有显式声明 Query 才保留查询串。
+        if (capture is TelemetryCapture.Query && uri.UserInfo.Length == 0)
+        {
+            return uri;
+        }
+
+        var components = capture is TelemetryCapture.Query
+            ? UriComponents.HttpRequestUrl
+            : UriComponents.HttpRequestUrl & ~UriComponents.Query;
+
+        return new Uri(uri.GetComponents(components, UriFormat.UriEscaped), UriKind.Absolute);
     }
 
     /// <summary>耗时直方图：标签为方法 / 主机 / 端口 + 状态码 + 错误类型（全是低基数维度）。</summary>

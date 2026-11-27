@@ -1275,6 +1275,8 @@ builder.Services.AddOpenTelemetry()
 
 **Events** (`DiagnosticListener` named `AxiosNet.DiagnosticListener`): `AxiosNet.RequestStart` / `RequestStop` / `RequestFailed` / `Retry`, with public payload types (`AxiosRequestStartEvent` / `StopEvent` / `FailedEvent` / `AxiosRetryContext`).
 
+- The `Uri` in a payload follows the **same policy as `url.full`**: the default (`Capture = Path`) drops the query string and userinfo, `Query` keeps the query, and `NoUrl` makes it `null` (the event is still emitted, just without an address). When tokens or `api_key` live in the query string and you subscribe to diagnostic events for logging, this is what decides whether they end up in the log.
+
 **Attempt auditing** (`AxiosNet.AttemptStop` / `AxiosNet.AttemptFailed`, payload `AxiosAttemptEvent`) is **on by default** (`Attempt.Audit` is the sixth link of the default chain, after the gate and before the terminal) — just subscribe:
 
 ```csharp

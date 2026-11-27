@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using AxiosNet.Retry;
@@ -233,12 +233,13 @@ internal sealed class TelemetryProbe : IDisposable
     private bool Matches(string? urlOrPath)
         => urlOrPath is not null && urlOrPath.Contains(_marker, StringComparison.Ordinal);
 
+    // Uri 按 Observability.Capture 脱敏：NoUrl 下为 null，此时按「没有地址」处理。
     private bool MatchesPayload(object? payload) => payload switch
     {
-        AxiosRequestStartEvent start => Matches(start.Uri.AbsolutePath),
-        AxiosRequestStopEvent stop => Matches(stop.Uri.AbsolutePath),
-        AxiosRequestFailedEvent failed => Matches(failed.Uri.AbsolutePath),
-        AxiosAttemptEvent attempt => Matches(attempt.Uri.AbsolutePath),
+        AxiosRequestStartEvent start => Matches(start.Uri?.AbsolutePath),
+        AxiosRequestStopEvent stop => Matches(stop.Uri?.AbsolutePath),
+        AxiosRequestFailedEvent failed => Matches(failed.Uri?.AbsolutePath),
+        AxiosAttemptEvent attempt => Matches(attempt.Uri?.AbsolutePath),
         // 重试事件没有 Uri：按配置里的请求地址匹配（测试都用 server.Url + path 的绝对地址）
         AxiosRetryContext retry => Matches(retry.Config?.Url),
         _ => false

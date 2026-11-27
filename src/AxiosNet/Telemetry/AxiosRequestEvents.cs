@@ -1,10 +1,10 @@
-namespace AxiosNet.Telemetry;
+﻿namespace AxiosNet.Telemetry;
 
 /// <summary><c>AxiosNet.RequestStart</c> 事件的载荷：请求已成型（拦截器与 transformRequest 跑完、URL 已拼好），即将发送。</summary>
 /// <remarks><see cref="Config"/> 是本次请求独占的生效配置，事件结束后仍可安全读取。</remarks>
 public sealed class AxiosRequestStartEvent
 {
-    internal AxiosRequestStartEvent(HttpMethod method, Uri uri, AxiosConfig config)
+    internal AxiosRequestStartEvent(HttpMethod method, Uri? uri, AxiosConfig config)
     {
         Method = method;
         Uri = uri;
@@ -15,7 +15,8 @@ public sealed class AxiosRequestStartEvent
     public HttpMethod Method { get; }
 
     /// <summary>最终请求地址（已含 baseURL 合并与 params 序列化）。</summary>
-    public Uri Uri { get; }
+    /// <remarks>按 <c>Observability.Capture</c> 脱敏：默认（<c>Path</c>）不带查询串与 userinfo，<c>NoUrl</c> 时为 <c>null</c>。</remarks>
+    public Uri? Uri { get; }
 
     /// <summary>本次请求的生效配置。</summary>
     public AxiosConfig Config { get; }
@@ -24,7 +25,7 @@ public sealed class AxiosRequestStartEvent
 /// <summary><c>AxiosNet.RequestStop</c> 事件的载荷：请求成功结束（含 <see cref="AxiosConfig.ValidateStatus"/> 接受的非 2xx）。</summary>
 public sealed class AxiosRequestStopEvent
 {
-    internal AxiosRequestStopEvent(HttpMethod method, Uri uri, AxiosResponse response, TimeSpan elapsed)
+    internal AxiosRequestStopEvent(HttpMethod method, Uri? uri, AxiosResponse response, TimeSpan elapsed)
     {
         Method = method;
         Uri = uri;
@@ -36,7 +37,8 @@ public sealed class AxiosRequestStopEvent
     public HttpMethod Method { get; }
 
     /// <summary>请求地址。</summary>
-    public Uri Uri { get; }
+    /// <remarks>按 <c>Observability.Capture</c> 脱敏：默认（<c>Path</c>）不带查询串与 userinfo，<c>NoUrl</c> 时为 <c>null</c>。</remarks>
+    public Uri? Uri { get; }
 
     /// <summary>响应（含状态码、响应头、已转换的 <see cref="AxiosResponse.Data"/>）。</summary>
     public AxiosResponse Response { get; }
@@ -50,7 +52,7 @@ public sealed class AxiosRequestFailedEvent
 {
     internal AxiosRequestFailedEvent(
         HttpMethod method,
-        Uri uri,
+        Uri? uri,
         Exception exception,
         string? errorCode,
         int? status,
@@ -68,7 +70,8 @@ public sealed class AxiosRequestFailedEvent
     public HttpMethod Method { get; }
 
     /// <summary>请求地址。</summary>
-    public Uri Uri { get; }
+    /// <remarks>按 <c>Observability.Capture</c> 脱敏：默认（<c>Path</c>）不带查询串与 userinfo，<c>NoUrl</c> 时为 <c>null</c>。</remarks>
+    public Uri? Uri { get; }
 
     /// <summary>抛出的异常（库内统一是 <see cref="AxiosException"/>）。</summary>
     public Exception Exception { get; }
@@ -94,7 +97,7 @@ public sealed class AxiosAttemptEvent
         int attemptNumber,
         int endpointIndex,
         HttpMethod method,
-        Uri uri,
+        Uri? uri,
         TimeSpan elapsed,
         int? status,
         string? errorCode,
@@ -120,7 +123,8 @@ public sealed class AxiosAttemptEvent
     public HttpMethod Method { get; }
 
     /// <summary>本次尝试的请求地址。</summary>
-    public Uri Uri { get; }
+    /// <remarks>按 <c>Observability.Capture</c> 脱敏：默认（<c>Path</c>）不带查询串与 userinfo，<c>NoUrl</c> 时为 <c>null</c>。</remarks>
+    public Uri? Uri { get; }
 
     /// <summary>本次尝试的耗时：审计装在闸门之后时不含排队与退避等待，含取租约与缓冲响应读完正文的时间。</summary>
     public TimeSpan Elapsed { get; }

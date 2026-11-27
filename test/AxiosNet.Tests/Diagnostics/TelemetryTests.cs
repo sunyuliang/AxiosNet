@@ -1,4 +1,4 @@
-
+﻿
 using AxiosNet.Cache;
 using AxiosNet.Circuit;
 using AxiosNet.Pooling;
@@ -1405,6 +1405,74 @@ public sealed class TelemetryTests
     }
 
     [Fact]
+    public async Task RequestStartEvent_HidesQueryByDefault()
+    {
+        // 事件载荷与 span 的 url.full 同口径：默认去掉查询串。
+        // 否则「把 token 放查询串 + 订阅诊断事件写日志」的组合仍会把 ?access_token=secret 落盘。
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var collector = new EventPayloadCollector();
+
+        using var client = new AxiosClient();
+        var path = UniquePath("event-capture-default");
+        await client.GetAsync(server.Url + path + "?access_token=secret");
+
+        var start = collector.Payload<AxiosRequestStartEvent>(AxiosTelemetry.RequestStartEventName);
+        var uri = Assert.IsType<Uri>(start.Uri);
+
+        Assert.Equal("/" + path, uri.AbsolutePath);
+        Assert.DoesNotContain("access_token", uri.AbsoluteUri);
+        Assert.DoesNotContain("secret", uri.AbsoluteUri);
+    }
+
+    [Fact]
+    public async Task RequestStartEvent_KeepsQueryWhenCaptureIsQuery()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var collector = new EventPayloadCollector();
+
+        using var client = new AxiosClient(new AxiosConfig {
+            Observability = { Capture = TelemetryCapture.Query }
+        });
+        var path = UniquePath("event-capture-query");
+        await client.GetAsync(server.Url + path + "?access_token=secret");
+
+        var start = collector.Payload<AxiosRequestStartEvent>(AxiosTelemetry.RequestStartEventName);
+        var uri = Assert.IsType<Uri>(start.Uri);
+
+        Assert.Contains("access_token=secret", uri.AbsoluteUri);
+    }
+
+    [Fact]
+    public async Task RequestStartEvent_HasNoUriWhenCaptureIsNoUrl()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var collector = new EventPayloadCollector();
+
+        using var client = new AxiosClient(new AxiosConfig {
+            Observability = { Capture = TelemetryCapture.NoUrl }
+        });
+        await client.GetAsync(server.Url + UniquePath("event-capture-none") + "?access_token=secret");
+
+        // NoUrl 的语义就是「不写 URL」：载荷保留事件本身（订阅方还要状态码 / 耗时），地址为 null。
+        var start = collector.Payload<AxiosRequestStartEvent>(AxiosTelemetry.RequestStartEventName);
+        Assert.Null(start.Uri);
+    }
+
+    [Fact]
+    public async Task RequestFailedEvent_HidesQueryByDefault()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "boom" }, statusCode: 500));
+        using var collector = new EventPayloadCollector();
+
+        using var client = new AxiosClient();
+        var path = UniquePath("event-capture-failed");
+        await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + path + "?access_token=secret"));
+
+        var failed = collector.Payload<AxiosRequestFailedEvent>(AxiosTelemetry.RequestFailedEventName);
+        Assert.DoesNotContain("access_token", Assert.IsType<Uri>(failed.Uri).AbsoluteUri);
+    }
+
+    [Fact]
     public async Task CaptureUrl_StripsCredentialsFromFullUrl()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
@@ -1678,6 +1746,69 @@ public sealed class TelemetryTests
 
             public void OnNext(KeyValuePair<string, object?> value)
                 => throw new InvalidOperationException("observer boom");
+        }
+    }
+
+    /// <summary>收集本库的诊断事件载荷（不做路径过滤，由用例自己断言）。</summary>
+    /// <remarks>只在本集合（禁并行）里用：不判归属，进程内别的请求也会被收进来。</remarks>
+    private sealed class EventPayloadCollector : IObserver<DiagnosticListener>, IObserver<KeyValuePair<string, object?>>, IDisposable
+    {
+        private readonly List<TelemetryEvent> _events = new();
+        private readonly List<IDisposable> _subscriptions = new();
+        private readonly IDisposable _allListeners;
+
+        public EventPayloadCollector()
+            => _allListeners = DiagnosticListener.AllListeners.Subscribe(this);
+
+        public IReadOnlyList<TelemetryEvent> Events
+        {
+            get
+            {
+                lock (_events)
+                {
+                    return _events.ToArray();
+                }
+            }
+        }
+
+        /// <summary>取某个事件名唯一的载荷。</summary>
+        public T Payload<T>(string eventName)
+            where T : class
+            => Assert.IsType<T>(Assert.Single(Events, e => e.Name == eventName).Payload);
+
+        public void OnNext(DiagnosticListener value)
+        {
+            if (value.Name == AxiosTelemetry.DiagnosticListenerName)
+            {
+                _subscriptions.Add(value.Subscribe(this));
+            }
+        }
+
+        public void OnNext(KeyValuePair<string, object?> value)
+        {
+            lock (_events)
+            {
+                _events.Add(new TelemetryEvent(value.Key, value.Value!));
+            }
+        }
+
+        public void OnCompleted()
+        {
+        }
+
+        public void OnError(Exception error)
+        {
+        }
+
+        public void Dispose()
+        {
+            _allListeners.Dispose();
+            foreach (var subscription in _subscriptions)
+            {
+                subscription.Dispose();
+            }
+
+            _subscriptions.Clear();
         }
     }
 }

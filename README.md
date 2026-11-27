@@ -1,4 +1,4 @@
-# AxiosNet
+﻿# AxiosNet
 
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
@@ -1278,6 +1278,8 @@ builder.Services.AddOpenTelemetry()
 - `pool.active_pools` 是存活池数（建 +1 / `Dispose` -1），`pool.shared_pools` 是命名池表的条目数：前者持续上涨 = 有代码在反复建池（典型是「按请求 new 客户端」）。
 
 **Events**（`DiagnosticListener` 名 `AxiosNet.DiagnosticListener`）：`AxiosNet.RequestStart` / `RequestStop` / `RequestFailed` / `Retry`，载荷是公开类型（`AxiosRequestStartEvent` / `StopEvent` / `FailedEvent` / `AxiosRetryContext`）。
+
+- 载荷里的 `Uri` 与 span 的 `url.full` **同口径**：默认（`Capture = Path`）不带查询串与 userinfo，`Query` 保留查询串，`NoUrl` 时为 `null`（事件照发，只是没有地址）。把 token / `api_key` 放在查询串里、又订阅诊断事件写日志时，这一条直接决定它会不会落盘。
 
 **尝试审计**（`AxiosNet.AttemptStop` / `AxiosNet.AttemptFailed`，载荷 `AxiosAttemptEvent`）**默认就在链上**（`Attempt.Audit` 是默认链第 6 项，闸门之后、终端之前），订阅即可：
 
