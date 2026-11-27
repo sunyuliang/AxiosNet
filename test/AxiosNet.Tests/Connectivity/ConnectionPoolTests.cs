@@ -2069,7 +2069,8 @@ public sealed class ConnectionPoolTests
             => Task.FromException<HttpResponseMessage>(_error);
     }
 
-    // key 为 null：ArgumentNullException（与库里其余入口的入参校验同一口径）。    [Fact]
+    // key 为 null：ArgumentNullException（与库里其余入口的入参校验同一口径）。
+    [Fact]
     public void NamedPool_NullKey_IsRejected()
     {
         Assert.Throws<ArgumentNullException>(() => HttpConnectionPool.GetOrCreate(null!));

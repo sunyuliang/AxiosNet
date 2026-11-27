@@ -243,10 +243,13 @@ c.Params = new[] { 1, 2 };            // 根集合：[0]=1&[1]=2
 | `DateTime` / `DateTimeOffset` | UTC 毫秒 ISO（`Unspecified` 按 UTC） |
 | 同上，但作为裸标量正文 | 往返格式 `"O"` |
 | `DateOnly` | `yyyy-MM-dd` |
+| `TimeOnly` | `HH:mm:ss`，有小数秒时 `HH:mm:ss.fff` / 往返格式 |
 | `byte[]` | base64 |
 | 其它 | `IFormattable` + `InvariantCulture` |
 
 按成员改写形态用 `[Format]`，按实例改写的钩子是 `AxiosConfig.Serialization.ValueText`（回调的第二个参数拿到值所在通道，见[值格式化](#值格式化)）。
+
+`DateOnly` / `TimeOnly` 在三张资产上写出同一份字节：net8.0 由 System.Text.Json 自带，net6.0 的框架 STJ 6.x 没有这两个转换器，由库在默认选项里补上（`AxiosJson.Options` 可整体替换，替换后这两项由调用方自己负责）。
 
 ### 表单与文件上传
 

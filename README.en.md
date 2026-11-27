@@ -243,10 +243,13 @@ c.Params = new[] { 1, 2 };            // root collection: [0]=1&[1]=2
 | `DateTime` / `DateTimeOffset` | UTC ISO with milliseconds (`Unspecified` treated as UTC) |
 | the same, as the raw scalar body | round-trip `"O"` form |
 | `DateOnly` | `yyyy-MM-dd` |
+| `TimeOnly` | `HH:mm:ss`, or `HH:mm:ss.fff` / round-trip form when there are sub-second digits |
 | `byte[]` | base64 |
 | anything else | `IFormattable` + `InvariantCulture` |
 
 Override per member with `[Format]`, or per instance with `AxiosConfig.Serialization.ValueText` (its second argument is the channel the value is written through — see [Value formatting](#value-formatting)).
+
+`DateOnly` / `TimeOnly` produce identical bytes on all three assets: net8.0 gets them from System.Text.Json itself, while net6.0 ships STJ 6.x without those converters, so the library registers them in the default options (`AxiosJson.Options` can be replaced wholesale — after that, these two are the caller's responsibility).
 
 ### Forms and uploads
 
