@@ -122,12 +122,6 @@ public static partial class Attempt
                     throw;
                 }
 
-                // 剩余预算已用尽：下一次尝试发不出去。
-                if (ex is AxiosException { TimedOutOnTotalBudget: true })
-                {
-                    throw AxiosException.TotalTimeoutExceeded(ctx.Config, request, attempt + 1, ctx.Config.TotalTimeoutValue, ex);
-                }
-
                 // 询问策略是否重试；返回 false 时原样抛给调用方。
                 if (!policy.ShouldRetry(failed))
                 {
@@ -370,25 +364,6 @@ public static partial class Attempt
     internal static bool IsCleanupCancellation(Exception exception, in AxiosAttemptContext ctx)
         => !ctx.ExternalToken.IsCancellationRequested
            && FailureClassifier.IsCancellation(exception);
-
-    /// <summary>
-    /// 这次失败是否「整条请求的总预算已花完」：<c>IsTotalTimeoutExceeded</c> 表示下一次开始前即耗尽，
-    /// <c>TimedOutOnTotalBudget</c> 表示本次尝试的上限被剩余预算压小后到点。
-    /// </summary>
-    internal static bool IsBudgetExhausted(Exception exception)
-        => exception is AxiosException axios
-           && (axios.IsTotalTimeoutExceeded || axios.TimedOutOnTotalBudget);
-
-    /// <summary>把「预算已花完」的失败改报成对外统一口径。</summary>
-    private static Exception AsBudgetExhausted(Exception failure, AxiosAttemptContext ctx, HttpRequestMessage request)
-        => failure is AxiosException { TimedOutOnTotalBudget: true }
-            ? AxiosException.TotalTimeoutExceededDuringAttempt(
-                ctx.Config,
-                request,
-                ctx.AttemptNumber,
-                ctx.Config.TotalTimeoutValue,
-                failure)
-            : failure;
 
     /// <summary>库级别的「不该重试」：次数到顶、调用方已取消、错误即取消、被熔断 / 闸门拦下、配置错误。</summary>
     /// <remarks>只做库内判定，<b>不调用</b> <see cref="IAxiosRetryPolicy.ShouldRetry"/>（策略可能带副作用）。</remarks>

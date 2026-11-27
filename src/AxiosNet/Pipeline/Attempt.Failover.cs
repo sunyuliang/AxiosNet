@@ -111,13 +111,8 @@ public static partial class Attempt
             }
             catch (AxiosException ex) when (ex.IsTotalTimeoutExceeded)
             {
-                // 预算已耗尽：按预算耗尽收尾。
+                // 预算已耗尽：换端点也注定超时。
                 throw;
-            }
-            catch (Exception ex) when (IsBudgetExhausted(ex))
-            {
-                // 剩余预算已到点，换端点也注定超时。
-                throw AsBudgetExhausted(ex, ctx, template);
             }
             catch (Exception ex) when (CanFailover(ex, ctx.ExternalToken))
             {
@@ -223,7 +218,7 @@ public static partial class Attempt
             AxiosException.ErrNetwork or AxiosException.ErrPoolExhausted => true,
 
             // 发出之后的超时；预算已耗尽的超时不再换。
-            AxiosException.ErrConnAborted when !axios.IsTotalTimeoutExceeded && !axios.TimedOutOnTotalBudget => true,
+            AxiosException.ErrConnAborted when !axios.IsTotalTimeoutExceeded => true,
 
             // 熔断按端点独立成账。
             AxiosException.ErrCircuitOpen => true,

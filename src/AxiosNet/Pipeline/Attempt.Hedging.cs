@@ -112,15 +112,10 @@ public static partial class Attempt
                 {
                     // 败者被链接令牌取消：清理，不算失败。
                 }
-                catch (Exception ex) when (IsBudgetExhausted(ex))
+                catch (AxiosException ex) when (ex.IsTotalTimeoutExceeded)
                 {
                     // 分支共享同一总预算：任一分支到点即全部到点。
-                    if (ex is AxiosException { IsTotalTimeoutExceeded: true })
-                    {
-                        throw;
-                    }
-
-                    throw AsBudgetExhausted(ex, ctx, template);
+                    throw;
                 }
                 catch (Exception ex)
                 {

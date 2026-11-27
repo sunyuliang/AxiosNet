@@ -82,14 +82,22 @@ public class AxiosException : Exception
     public Exception? Cause => InnerException;
 
     /// <summary>
-    /// 是否属于「总预算在请求发出之前就已耗尽」——<c>ECONNABORTED</c> 的一个子集，与「发出之后超时」区分开。
+    /// 是否为「整条请求的总预算已花完」：<b>发出前</b>就发现预算耗尽，或本次尝试的上限被剩余预算压小后到点。
     /// </summary>
-    public bool IsTotalTimeoutExceeded { get; private init; }
+    /// <remarks>
+    /// <c>true</c> 时换端点 / 重试都不会有预算可用，调用方应直接放弃；<c>false</c> 是普通超时（上限就是 <see cref="AxiosConfig.Timeout"/>），
+    /// 下游不响应时换端点仍可能有意义。两者错误码都是 <c>ECONNABORTED</c>。
+    /// </remarks>
+    public bool IsTotalTimeoutExceeded => TotalTimeoutExceededBeforeSend || TimedOutOnTotalBudget;
+
+    /// <summary>本次失败是否「预算在请求发出之前就已耗尽」（排队 / 入口处判定）。</summary>
+    /// <remarks>熔断计数据此区分「一次都没发出」与「发出后在途超时」：后者仍是下游故障。</remarks>
+    internal bool TotalTimeoutExceededBeforeSend { get; private init; }
 
     /// <summary>本次超时的上限取自剩余总预算（被 <see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/> 压小）。</summary>
     /// <remarks>
-    /// 与 <see cref="IsTotalTimeoutExceeded"/> 互斥：后者是<b>尚未发出</b>就发现预算耗尽，本项是请求<b>已发出</b>、
-    /// 上限被剩余预算压小后到点。因此本项仍算一次失败（计熔断、可重试），后者不算。
+    /// 请求<b>已发出</b>、上限被剩余预算压小后到点，因此仍算一次下游故障（计熔断）；对外与「发出前耗尽」同报
+    /// <see cref="IsTotalTimeoutExceeded"/>，区别只在文案与是否换了端点。
     /// </remarks>
     internal bool TimedOutOnTotalBudget { get; private init; }
 
@@ -157,7 +165,8 @@ public class AxiosException : Exception
                     : "unset";
 
                 message = $"timeout of {effective.TotalMilliseconds:0}ms exceeded "
-                          + $"(remaining TotalTimeout budget; Timeout = {configured})";
+                          + $"(remaining TotalTimeout budget; Timeout = {configured}): "
+                          + "the total budget is spent, no further attempt is sent";
             }
             else
             {
@@ -185,34 +194,6 @@ public class AxiosException : Exception
         int attempt,
         TimeSpan? budget,
         Exception? inner = null)
-        => TotalTimeout(config, request, attempt, budget, duringAttempt: false, inner);
-
-    /// <summary>
-    /// 总预算在某次尝试<b>发出之后</b>到点：错误码与超时一致（<c>ECONNABORTED</c>），对外同样以 <see cref="IsTotalTimeoutExceeded"/> 表示预算已花完。
-    /// </summary>
-    /// <remarks>与 <see cref="TotalTimeoutExceeded"/> 的区别只在文案：这里说的是「第几次尝试在途时到点」。</remarks>
-    internal static AxiosException TotalTimeoutExceededDuringAttempt(
-        AxiosConfig config,
-        HttpRequestMessage? request,
-        int attempt,
-        TimeSpan? budget,
-        Exception? inner = null)
-        => TotalTimeout(config, request, attempt, budget, duringAttempt: true, inner);
-
-    /// <summary>两个总预算超时入口的共同实现：只差「未发出」与「在途」这一句文案。</summary>
-    /// <param name="config">本次请求的生效配置。</param>
-    /// <param name="request">触发本次失败的请求。</param>
-    /// <param name="attempt">第几次尝试。</param>
-    /// <param name="budget">总预算的配置值，只用于消息。</param>
-    /// <param name="duringAttempt">为 <c>true</c> 表示到点时该次尝试已在途。</param>
-    /// <param name="inner">归因到的那次失败，保留 <c>Cause</c> 链。</param>
-    private static AxiosException TotalTimeout(
-        AxiosConfig config,
-        HttpRequestMessage? request,
-        int attempt,
-        TimeSpan? budget,
-        bool duringAttempt,
-        Exception? inner)
     {
         var message = CustomTimeoutMessage(config);
 
@@ -222,18 +203,14 @@ public class AxiosException : Exception
                 ? $"TotalTimeout of {known.TotalMilliseconds:0}ms exceeded"
                 : "TotalTimeout exceeded";
 
-            message = duringAttempt
-                ? $"{headline} while attempt #{attempt} was in flight: "
-                  + "no further attempt is sent (the total budget covers all retries, failover endpoints and hedges) — "
-                  + "raise TotalTimeout, cut MaxRetries / MaxHedges, or shorten Timeout"
-                : $"{headline} before attempt #{attempt} could be sent: "
-                  + "the total budget covers all retries, failover endpoints and hedges — "
-                  + "raise TotalTimeout, cut MaxRetries / MaxHedges, or shorten Timeout";
+            message = $"{headline} before attempt #{attempt} could be sent: "
+                      + "the total budget covers all retries, failover endpoints and hedges — "
+                      + "raise TotalTimeout, cut MaxRetries / MaxHedges, or shorten Timeout";
         }
 
         return new AxiosException(message, ErrConnAborted, config, request, null, inner)
         {
-            IsTotalTimeoutExceeded = true
+            TotalTimeoutExceededBeforeSend = true
         };
     }
 

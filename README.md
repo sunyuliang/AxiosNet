@@ -441,7 +441,7 @@ await client.GetAsync("orders/scan", c =>
 
 - 总预算用尽时下一次尝试**根本不发出**：抛 `ECONNABORTED`，消息指明是第几次（`... before attempt #7 could be sent`）。这一类「根本没发出」不参与熔断失败计数、不重试、也不换端点（见[熔断](#熔断)的失败口径）。
 - 被总预算压小的那次超时，消息会写 `(remaining Resilience.TotalTimeout budget; Timeout = 10000ms)`，避免误判成 `Timeout` 没生效。
-- 两种耗尽的错误码相同，要区分就用 `AxiosException.IsTotalTimeoutExceeded`：`true` = 发出前就耗尽（别重试，预算已经空了），`false` = 发出后超时（下游不响应，换端点有意义）。
+- 两种耗尽的错误码相同，要区分就用 `AxiosException.IsTotalTimeoutExceeded`：`true` = 预算已经花完（发出前就耗尽，或本次尝试的上限被剩余预算压小后到点 —— 两种情况都别重试、换端点也不会有预算），`false` = 普通超时（上限就是 `Timeout`，下游不响应，换端点有意义）。
 - **被预算压小的那次超时到点即收手**：上限本来就取自剩余总预算，到点时剩下的零头（不足一个计时器 tick）已经发不出任何有意义的尝试，因此直接报「预算耗尽」而不是拿这点余额再发一次；同理，退避睡不完剩余预算时也不白等，立刻退回令牌并报耗尽。
 - 排队时间**计入** `Resilience.TotalTimeout`（`Timeout` 则不计排队）——总预算量的是调用方感知的时长。
 - 剩余预算比 `Resilience.Concurrency.QueueTimeout` 更紧时，**排队等待会被剩余预算截断**，失败码是 `ECONNABORTED` 而不是 `ERR_QUEUE_TIMEOUT`（报错要指向真正的约束）；`QueueTimeout` 为空（一直等）时同样受这条约束。

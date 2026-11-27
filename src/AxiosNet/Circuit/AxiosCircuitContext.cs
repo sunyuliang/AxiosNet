@@ -58,9 +58,9 @@ public readonly struct AxiosCircuitContext
     /// <summary>本次尝试是否成功：没有异常，且状态码小于 400（3xx 视为成功）；没有状态码时按成功处理（准入上下文本来就没有响应）。</summary>
     public bool IsSuccess => Exception is null && (StatusCode is null || StatusCode < 400);
 
-    /// <summary>本次尝试是否「一次都没发出」：<see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/> 在排队或入口处耗尽（<c>ECONNABORTED</c>，<see cref="AxiosException.IsTotalTimeoutExceeded"/>）。</summary>
-    /// <remarks>自定义策略记账时应排除它；发送中途被截断走普通超时，不带此标记、照常算故障。</remarks>
-    public bool TotalTimeoutExpiredBeforeSend => Exception is AxiosException { IsTotalTimeoutExceeded: true };
+    /// <summary>本次尝试是否「一次都没发出」：<see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/> 在排队或入口处耗尽（<c>ECONNABORTED</c>）。</summary>
+    /// <remarks>自定义策略记账时应排除它；发出之后被剩余预算截断仍是下游故障，照常计数。</remarks>
+    public bool TotalTimeoutExpiredBeforeSend => Exception is AxiosException { TotalTimeoutExceededBeforeSend: true };
 
     /// <summary>本次尝试是否算下游故障（熔断计数的唯一口径）：网络错误 / 超时 / <see cref="HttpRequestException"/> / <see cref="IOException"/> / 5xx 计入；取消、全部 4xx（含 408 / 429）与请求从未发出不计入。</summary>
     public bool IsFailure

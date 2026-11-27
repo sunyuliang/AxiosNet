@@ -39,6 +39,9 @@ public sealed class TotalTimeoutTests
 
         // 真实上限是 150ms 而不是 30s：消息必须说清是总预算压小的，否则调用方会以为 Timeout 没生效。
         Assert.Contains("remaining TotalTimeout budget", ex.Message, StringComparison.Ordinal);
+
+        // 预算已经花完：即使这次尝试发出去了，对外也必须是「总预算耗尽」，不能引导调用方重试 / 换端点。
+        Assert.True(ex.IsTotalTimeoutExceeded);
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(1.5), $"实际耗时 {watch.Elapsed}：总预算没有生效");
     }
 
@@ -70,11 +73,10 @@ public sealed class TotalTimeoutTests
         }));
         watch.Stop();
 
-        // 总预算用尽后由「下一次尝试开始」报出：错误码与超时一致，消息指明第几次没发出。
+        // 预算耗尽有两种落点，都算「预算已花完」：下一次尝试开始前就发现不够，或本次尝试的上限被剩余预算压小后到点。
         Assert.Equal(AxiosException.ErrConnAborted, ex.Code);
         Assert.True(ex.IsTotalTimeoutExceeded);   // 公开口径：与「发出后超时」共用 ECONNABORTED，靠这一位区分
-        Assert.Contains("TotalTimeout of", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("could be sent", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("TotalTimeout", ex.Message, StringComparison.Ordinal);
 
         // 20 次重试一次都不该发出：实际发送次数必须远小于 MaxRetries + 1。
         Assert.InRange(calls, 1, 6);

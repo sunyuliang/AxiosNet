@@ -100,6 +100,36 @@ public sealed class CircuitBreakerTests
     }
 
     [Fact]
+    public async Task TimeoutClampedByTotalBudget_StillCountsAsDownstreamFailure()
+    {
+        // 与「发出前预算耗尽」相反：这次尝试真的发出去了，下游只是没在剩余预算内响应，
+        // 对外同样报 IsTotalTimeoutExceeded（不重试），但熔断要按故障计数。
+        await using var server = TestHttpServer.Start(async _ =>
+        {
+            await Task.Delay(2000);
+            return TestJson.Response(new { ok = true });
+        });
+
+        var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = TimeSpan.FromSeconds(30) };
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = breaker }
+            }
+            });
+
+        var timedOut = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x", c =>
+        {
+            c.Timeout = TimeSpan.FromSeconds(30);
+            c.Resilience.TotalTimeout = TimeSpan.FromMilliseconds(100);
+        }));
+
+        Assert.Equal(AxiosException.ErrConnAborted, timedOut.Code);
+        Assert.True(timedOut.IsTotalTimeoutExceeded);
+        Assert.Equal(AxiosCircuitState.Open, breaker.GetState(HostOf(server)));
+    }
+
+    [Fact]
     public async Task TotalTimeoutExpiredBeforeSend_DoesNotTripCircuit()
     {
         // 「一次都没发出」与「发出后超时」是两件事：前者是本地约束（排队 / 预算）先到期，
