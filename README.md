@@ -417,6 +417,7 @@ await client.PostAsync(url, data, c => c.Compression = AxiosCompression.None);  
 - 算法：`Gzip` / `Deflate` / `Brotli`（`br`），压缩级别固定 `Fastest`——HTTP 的瓶颈通常在网络，省 CPU 比压到最小更划算。`Deflate` 发的是 RFC 1950 的 zlib 包装（RFC 7230 里的 `deflate` 指的就是它），不是裸 DEFLATE：Java / Tomcat 与多数网关只认 zlib。
 - 只作用于**库按字节缓冲出来的正文**：对象 / 标量 / `string` / `byte[]` / `Memory<byte>` / 表单编码。压缩后 `Content-Length` 是压缩后长度，`Limits.MaxRequestBytes` 也按压缩后字节数校验。空正文（0 字节）不压、也不写 `Content-Encoding`：压出来只剩几十字节帧头，比原文还大。
 - 拒绝（`ERR_BAD_OPTION_VALUE`）：`Stream` 与流式正文（没有完整长度可压，要压缩请先压好再传）、调用方自带的 `HttpContent`（压缩与编码归内容自己）、multipart（部件里可能含流式文件）、以及同时手写 `Content-Encoding` 头（与 `Compression` 二选一）。
+- 库**不检测** `byte[]` 是否已经是压缩过的：传已压好的字节就不要再开 `Compression`，否则是二次压缩却只有一个 `Content-Encoding`，服务端解一次拿到的仍是被压过的字节。要么让库压（传原始字节 + `Compression`），要么自己压好且不设 `Compression`。
 - 服务端必须自己按 `Content-Encoding` 解压请求体（ASP.NET Core 等框架默认不解压请求体）；对端不支持时不要开启。
 
 ### 超时与取消
