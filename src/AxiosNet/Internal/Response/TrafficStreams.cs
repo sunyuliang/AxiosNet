@@ -27,6 +27,9 @@ internal sealed class TrafficMeter
 
     // 上次回调时刻；负初值保证首块一定上报。
     private long _lastReportMs = -ReportIntervalMs;
+
+    // 上次回调时的累计值：-1 保证首帧（0 字节也算）一定能发出去。
+    private long _lastReportedLoaded = -1;
     // 完成回调只发一次。
     private bool _completed;
 
@@ -94,6 +97,7 @@ internal sealed class TrafficMeter
     }
 
     /// <summary>节流上报进度；force 或本轮已传满声明长度时立即上报并置「已完成」。</summary>
+    /// <remarks>累计值没推进时不再重复上报：EOF / 收尾的强制上报只为「最后一帧一定发出去」，不该造出同值的第二条事件。</remarks>
     public void Report(bool force, bool upload)
     {
         if (_callback is null || _completed)
@@ -105,6 +109,12 @@ internal sealed class TrafficMeter
         if (_total is long declared && declared > 0 && Volatile.Read(ref _loaded) - _roundStart >= declared)
         {
             force = true;
+        }
+
+        var loaded = Volatile.Read(ref _loaded);
+        if (force && loaded == _lastReportedLoaded)
+        {
+            return;
         }
 
         var elapsedMs = (long)_clock.Elapsed.TotalMilliseconds;
@@ -119,10 +129,11 @@ internal sealed class TrafficMeter
         }
 
         _lastReportMs = elapsedMs;
+        _lastReportedLoaded = loaded;
         _callback(BuildEvent(upload));
 
         // 已传满：后续不再重复报 100%。
-        if (_total is long total && total > 0 && Volatile.Read(ref _loaded) - _roundStart >= total)
+        if (_total is long total && total > 0 && loaded - _roundStart >= total)
         {
             _completed = true;
         }
@@ -132,9 +143,11 @@ internal sealed class TrafficMeter
     public void Complete(bool upload) => Report(force: true, upload);
 
     /// <summary>开始新一次实际传输（重发正文时调用）：解除「已完成」并把本轮起点推进到此刻。</summary>
+    /// <remarks>本轮至少要多发一条事件（哪怕是 0 字节的空正文重发），所以同时清掉「上次上报值」。</remarks>
     public void Restart()
     {
         _completed = false;
+        _lastReportedLoaded = -1;
         BeginRound();
     }
 

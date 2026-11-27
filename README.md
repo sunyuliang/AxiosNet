@@ -471,6 +471,7 @@ await http.PostAsync("upload", payload, c =>
 `AxiosProgressEvent`：`Loaded` / `Total`（未知 `null`）/ `Progress`（0–1，封顶 100%，`Total` 未知为 `null`）/ `Rate`（平均字节每秒）/ `Estimated`（预估剩余）/ `Upload`。
 
 - 回调**同步**执行，耗时逻辑自行转后台；报告节流 50 ms 一次。
+- 只在 `Loaded` 推进时上报：读到结尾不会补一条 `Loaded` 与上一条相同的「完成事件」（`Total` 已知且已传满时本就是最后一条），按事件数当块数、或拿相邻 `Loaded` 差算块大小的实现不会多算一次。
 - 回调抛异常会中断请求：上传阶段 `ERR_BAD_REQUEST`、下载阶段 `ERR_BAD_RESPONSE`，原异常在 `Cause`。
 - `Limits.MaxResponseBytes`：普通响应边读边累计越界即中止；`ResponseType.Stream` 先按声明长度预检，再读取时累计。
 - `Limits.MaxResponseBytes` 默认 `null`（不限，与 axios 的 `maxContentLength = -1` 同口径），库不会为此发告警或日志：缓冲型响应（非 `ResponseType.Stream`）会把整个正文读进内存，对不可信或体量未知的下游，生产环境请显式设上限。

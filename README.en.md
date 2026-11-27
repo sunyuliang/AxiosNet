@@ -469,6 +469,7 @@ await http.PostAsync("upload", payload, c =>
 `AxiosProgressEvent`: `Loaded` / `Total` (`null` when unknown) / `Progress` (0–1, capped at 100%, `null` when `Total` is unknown) / `Rate` (average bytes per second) / `Estimated` (remaining time) / `Upload`.
 
 - Callbacks run **synchronously**; offload expensive work yourself. Reports are throttled to one per 50 ms.
+- Reports fire only when `Loaded` advances: reaching the end never appends a "completion" event whose `Loaded` equals the previous one (when `Total` is known and already reached, that earlier report is the last one), so counting events as chunks or diffing consecutive `Loaded` values does not over-count.
 - A throwing callback aborts the request: upload phase → `ERR_BAD_REQUEST`, download phase → `ERR_BAD_RESPONSE`, original exception in `Cause`.
 - `Limits.MaxResponseBytes`: plain responses are counted while reading and aborted on overflow; `ResponseType.Stream` pre-checks the declared length and keeps counting while reading.
 - `Limits.MaxResponseBytes` defaults to `null` (unlimited, matching axios's `maxContentLength = -1`) and the library emits no warning or log about it: a buffered response (anything other than `ResponseType.Stream`) holds the whole body in memory, so set an explicit cap in production for untrusted or unknown-size downstreams.

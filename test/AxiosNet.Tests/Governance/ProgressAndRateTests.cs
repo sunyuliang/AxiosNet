@@ -307,6 +307,29 @@ public sealed class ProgressAndRateTests
         Assert.Equal((long)threads * perThread, meter.Loaded);
     }
 
+    /// <summary>EOF / 收尾的强制上报只保证「最后一帧发出去」，累计值没推进时不能再造一条同值事件。</summary>
+    [Fact]
+    public async Task TrafficMeter_ForcedReportWithoutNewBytes_DoesNotEmitDuplicate()
+    {
+        var events = new List<long>();
+        var meter = new TrafficMeter(total: null, callback: e => events.Add(e.Loaded), maxRate: null);
+
+        meter.Add(18);
+        meter.Report(force: false, upload: false);
+
+        // 让「最后一帧」的事件与收尾的强制上报都躲开 50ms 节流窗口。
+        await Task.Delay(120);
+
+        meter.Add(90);
+        meter.Report(force: false, upload: false);
+
+        // 读到 EOF：累计值没变，不该再来一条 108。
+        meter.Complete(upload: false);
+        meter.Complete(upload: false);
+
+        Assert.Equal(new long[] { 18, 108 }, events);
+    }
+
     // ===============================================================
     // 真限流：限速必须让「服务端收包」也变慢，而不是只把调用方拖住
     // ===============================================================
