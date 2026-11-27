@@ -83,4 +83,36 @@ public sealed class StreamLifecycleTests
         await Assert.ThrowsAsync<ObjectDisposedException>(() => stream.WriteAsync(new byte[4]).AsTask());
         Assert.Throws<ObjectDisposedException>(() => stream.Flush());
     }
+
+    /// <summary>
+    /// 调用方拿到流式正文后既不读也不释放、直接把引用丢掉：对象会被回收，但连接租约与并发槽位
+    /// 只在流的 <c>Dispose</c> 里归还，计数不会自己归零——终结器必须兜底归还，否则该端点永久不可驱逐。
+    /// </summary>
+    [Fact]
+    public async Task AbandonedResponseStream_ReleasesLeaseOnFinalize()
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            200, "OK", Encoding.UTF8.GetBytes("ok"), "text/plain"));
+        using var client = new AxiosClient();
+
+        var weak = AcquireAndAbandon(client, server.Url + "x");
+
+        // 终结器不在 GC.Collect() 内同步跑完：先收集、再等终结队列清空，循环几次确保排到。
+        for (var i = 0; i < 5 && weak.IsAlive; i++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
+
+        Assert.False(weak.IsAlive, "流对象应已被回收（这条用例观察的是回收后的租约归还，不是强引用）。");
+        Assert.All(client.Pool!.GetStatistics().Endpoints, endpoint => Assert.Equal(0, endpoint.ActiveLeases));
+    }
+
+    /// <summary>在独立方法里取得流并立刻丢弃引用，避免调用方栈帧把局部变量当根保活。</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static WeakReference AcquireAndAbandon(AxiosClient client, string url)
+    {
+        var response = client.GetAsync<Stream>(url).GetAwaiter().GetResult();
+        return new WeakReference(response.Data);
+    }
 }

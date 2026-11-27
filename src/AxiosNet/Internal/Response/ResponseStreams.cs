@@ -257,6 +257,10 @@ internal sealed class TimeoutStream : DelegatingStream
 }
 
 /// <summary>流式响应的所有权包装：连接池租约、<see cref="HttpResponseMessage"/> 与跨终端租约随响应流 Dispose 一并释放。</summary>
+/// <remarks>
+/// 持有资源不可替代：租约与并发槽位只在 <see cref="OnReleased"/> 归还。调用方忘记释放时对象可被回收，
+/// 但计数不会自己归零（端点因此永久不可驱逐），所以终结器只做一次兜底归还。
+/// </remarks>
 internal sealed class ResponseStreamOwner : DelegatingStream
 {
     private readonly HttpResponseMessage? _message;
@@ -271,23 +275,46 @@ internal sealed class ResponseStreamOwner : DelegatingStream
         _leases = leases;
     }
 
+
+    /// <summary>兜底：调用方没释放就被回收时归还租约与并发槽位（两者都幂等，与正常释放竞争只生效一次）。</summary>
+    ~ResponseStreamOwner() => ReleaseOwnership();
+
     /// <summary>释放响应消息、连接租约与跨终端租约；前一个抛异常也继续释放其余。内层流由基类释放。</summary>
     protected override void OnReleased()
+    {
+        // 已走正常释放路径，终结器不必再跑。
+        GC.SuppressFinalize(this);
+        ReleaseOwnership();
+    }
+
+    /// <summary>归还三项所有权；每项独立兜住异常，任一项失败不影响其余。</summary>
+    private void ReleaseOwnership()
     {
         try
         {
             _message?.Dispose();
         }
-        finally
+        catch
         {
-            try
-            {
-                _lease?.Dispose();
-            }
-            finally
-            {
-                _leases?.Dispose();
-            }
+            // 兜底路径不把释放异常抛给终结器线程。
+        }
+
+        try
+        {
+            _lease?.Dispose();
+        }
+        catch
+        {
+            // 租约归还是幂等计数，失败也不该阻断并发槽位。
+        }
+
+        try
+        {
+            _leases?.Dispose();
+        }
+        catch
+        {
+            // 同上。
         }
     }
 }

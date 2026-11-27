@@ -362,6 +362,7 @@ await File.WriteAllBytesAsync(@"D:\downloads\icon.png", bytes);
 ```
 
 - 流**必须释放**：读完或释放后连接才回池；只读一半就释放，这条 TCP 连接会被丢弃。
+- 释放是归还连接租约的**唯一**途径：租约与并发槽位只挂在流上，不 Dispose 就丢掉引用，对象会被回收但 `ActiveLeases` 不会自己归零，该端点从此不可被空闲驱逐，`MaxConnectionsPerServer` 的额度也一直少一格。库在终结器里做了一次兜底归还，但那只保证计数最终归零、不保证及时——不要依赖它，`using` / `await using` 是硬要求。
 - 下载期间该 origin 的租约保持占用，空闲驱逐不会打断长下载。
 - 流式请求遇非 2xx 会立即丢弃响应体并归还连接（`ex.Response.Data` 为 `null`，`Status` / `Headers` 仍可用）。
 - **错误里的响应上下文**：只要状态码与响应头已到手——5xx、反序列化失败、`Limits.MaxResponseBytes` 声明预检 / 段式超限、`ResponseTooLarge`、`OnRawResponse` / `OnDownloadProgress` 回调失败、短路正文超限——`AxiosException.Response` 都非 `null`。例外是流式消费期（`ReadAsync` 返回后调用方自己读流时触发的上限错误），这时没有上下文可补，`Response` 保持 `null`。

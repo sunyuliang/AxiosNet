@@ -362,6 +362,7 @@ await File.WriteAllBytesAsync(@"D:\downloads\icon.png", bytes);
 ```
 
 - The stream **must be disposed**: the connection returns to the pool only after it is fully read or disposed. Disposing half-read drops that TCP connection.
+- Disposing is the **only** way the connection lease goes back: the lease and the concurrency slot hang off the stream. Drop the reference without disposing and the object is collected but `ActiveLeases` never drops to zero — that endpoint can no longer be evicted when idle, and `MaxConnectionsPerServer` stays one slot short. A finalizer returns the lease as a last resort, but that only guarantees the count eventually reaches zero, not that it happens promptly. Do not rely on it: `using` / `await using` is mandatory.
 - While downloading, the lease on that origin stays held; idle eviction will not kill a long download.
 - A streaming request that gets a non-2xx status discards the body immediately and returns the connection (`ex.Response.Data` is `null`, `Status` / `Headers` still available).
 
