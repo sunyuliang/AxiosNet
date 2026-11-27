@@ -908,6 +908,38 @@ public sealed class RequestBodyTests
         Assert.Equal("stream-body", Body_RequestBody(server.Received[0]));
     }
 
+    /// <summary>
+    /// 裸流正文的所有权归库：请求结束（成功 / 失败 / 取消）时随请求模板一起释放，
+    /// 调用方不能假设流还活着。这条行为由 <see cref="System.Net.Http.StreamContent"/> 的契约决定，
+    /// 用用例钉住是为了防止有人改成「不释放调用方的流」——那样连接池里的连接会漏。
+    /// </summary>
+    [Fact]
+    public async Task StreamBody_IsDisposedWithTheRequest()
+    {
+        await using var server = TestHttpServer.Start(EchoJson);
+        using var client = new AxiosClient();
+
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes("stream-body"));
+        await client.GetAsync(server.Url + "x", c => c.Body = stream);
+
+        Assert.False(stream.CanRead, "请求结束后调用方传入的流应已被释放（所有权在库）。");
+    }
+
+    /// <summary>请求失败时同样释放：不能因为没发出去就把流留在调用方手里。</summary>
+    [Fact]
+    public async Task StreamBody_IsDisposedWhenTheRequestFails()
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse(500, "Internal Server Error"));
+        using var client = new AxiosClient();
+
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes("stream-body"));
+
+        await Assert.ThrowsAsync<AxiosException>(
+            () => client.GetAsync(server.Url + "x", c => c.Body = stream));
+
+        Assert.False(stream.CanRead, "失败路径同样要释放调用方传入的流。");
+    }
+
     [Fact]
     public async Task GetAsync_StreamInQueryPosition_IsRejected()
     {
