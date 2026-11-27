@@ -1744,6 +1744,7 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });                     /
 | 排除 | `[ApiIgnore]` | 完全不绑定 |
 
 - 默认通道只看 HTTP 方法，不看类型：POST / PUT / PATCH 上的全部未标注成员按键名聚合成**一个对象**作为请求体（1 个成员也加壳，`{ "page": 2 }`）；GET / HEAD / OPTIONS / DELETE 及其它方法上的未标注成员绑 Query。
+- `[JsonPropertyName]` 只管**正文**（聚合 Body 的键名、form 字段名、multipart 默认部件名），不管查询串 / 路径段 / 请求头：同一个成员在 POST 上发 `{"wire_name":"v"}`，在 GET 上仍发 `?MemberName=v`。要在查询串里用 wire 名，显式写 `[Query("wire_name")]`。
 - 路径模板里 `{name}` 是占位符（字母 / 下划线开头，字母 / 数字 / 下划线组成）；要发**字面花括号**就连写两个（`{{` 与 `}}`）。这套文法由编译期诊断（`AXA016`）、运行期绑定与 `axiosnet-gen` 的 OpenAPI 导入共用同一份实现，不会出现「编译期放过、运行期才报」；`{id:int}` 这类约束式写法三处都不识别，会直接报「含无法识别的花括号」。
 - 聚合 Body 的键名：`[Body("名")]` 优先，其次 `[JsonPropertyName]`，否则属性名（接口式为参数名）；只有最后一种才套 `PropertyNamingPolicy`（默认 Web 的 camelCase），显式名字原样使用。多个成员键名重复在构建期报错。
 - 正文形态只看**值自身**，不看正文来源的个数：无参 `[Body]` 是整份正文（原样发送、不加键壳），必须独占——出现任何第二个正文来源就在构建期报错；其余来源（`[Body("名")]` 与 POST / PUT / PATCH 上的未标注成员）一律按键写进**同一层**聚合正文，键顺序＝声明顺序，重复键报错。聚合正文装不下文件部件（`Stream` / `FormFile` / `HttpContent` 成员）：这种写法同样在构建期报错，请改用 `[Multipart]`，或让该对象作为唯一的无参 `[Body]` 原样发送。

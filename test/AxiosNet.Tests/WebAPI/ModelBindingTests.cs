@@ -36,6 +36,18 @@ public sealed class ModelBindingTests
     }
 
     [Fact]
+    public void GetModel_JsonPropertyName_DoesNotRenameQueryParameter()
+    {
+        using var client = new ApiClient("http://127.0.0.1:1/");
+
+        var uri = client.GetUri(new JsonNamedQueryRequest { MemberName = "v" });
+
+        // 查询名只认 [Query("名")] 与成员名：[JsonPropertyName] 是 JSON 正文的键名，不参与查询串。
+        Assert.Contains("MemberName=v", uri, StringComparison.Ordinal);
+        Assert.DoesNotContain("wire_name", uri, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void NoQueryBindings_DoesNotClearInstanceDefaultParams()
     {
         using var client = new ApiClient("http://127.0.0.1:1/", c =>

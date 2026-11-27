@@ -1,6 +1,7 @@
 ﻿using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
 using AxiosNet.WebAPI.Attributes;
+using System.Text.Json.Serialization;
 
 namespace AxiosNet.Tests.WebAPI;
 
@@ -392,6 +393,14 @@ public sealed class NoQueryBindingRequest : IApiRequest<Person>
 {
     [ApiIgnore]
     public string? Hidden { get; set; }
+}
+
+/// <summary>GET 上的未标注成员：查询名只认成员名与 <c>[Query("名")]</c>，<c>[JsonPropertyName]</c> 只影响正文键名。</summary>
+[Get("items")]
+public sealed class JsonNamedQueryRequest : IApiRequest<Person>
+{
+    [JsonPropertyName("wire_name")]
+    public string? MemberName { get; set; }
 }
 
 [Post("report")]
