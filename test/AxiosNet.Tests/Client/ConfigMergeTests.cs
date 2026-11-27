@@ -649,6 +649,41 @@ public sealed class ConfigMergeTests
 
     // IReadOnlyDictionary 按键值对展平。
 
+// 调用方容器的隔离与显式 null 的摘除语义
+
+    [Fact]
+    public async Task PerRequestParamsDictionary_IsSnapshotted()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient();
+
+        var query = new Dictionary<string, object?> { ["p"] = "one" };
+
+        // 拦截器在 URL 拼装之前跑：这里改写调用方的字典不能影响本次请求。
+        client.Interceptors.Request.Use(c =>
+        {
+            query["p"] = "TWO-MUTATED";
+            return Task.FromResult(c);
+        });
+
+        var response = await client.GetAsync(server.Url + "x", new AxiosConfig { Params = query });
+
+        Assert.Equal(200, response.Status);
+        Assert.Single(server.Received);
+        Assert.Equal("p=one", server.Received[0].Query);
+    }
+
+    [Fact]
+    public async Task PerRequestBaseAddressNull_ClearsInstanceDefault()
+    {
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = "http://127.0.0.1:1/default/" });
+
+        // 显式写 null 与 Params / Body 同口径：摘掉实例默认值，相对地址因此无法成行。
+        var ex = await Assert.ThrowsAsync<AxiosException>(
+            () => client.RequestAsync(new AxiosConfig { Url = "rel", BaseAddress = null }));
+
+        Assert.Equal(AxiosException.ErrInvalidUrl, ex.Code);
+    }
 
 // 测试辅助
 

@@ -193,7 +193,7 @@ await http.DeleteAsync("users", new { reason = "duplicated" });         // -> ?r
 
 > **第二个参数是什么，只看动词**：`PostAsync` / `PutAsync` / `PatchAsync` / `PostFormAsync` / `PutFormAsync` 收**正文**；`GetAsync` / `DeleteAsync` / `HeadAsync` / `OptionsAsync` 收**查询参数**（展平与转义规则同 `Params`）。读动词要发正文，写 `c => c.Body = ...`。
 > - 写动词的 `data` 是**有默认值的可选参数**：`PostAsync("orders")` 与 `PostAsync("orders", data: null)` 完全等价，都会**摘掉**实例上的 `Defaults.Body` 并发出空正文。想连默认正文一起发，请用 `PostAsync("orders", new AxiosConfig { ... })`（那份配置没碰 `Body`，合并时才继承默认值），或直接用通用入口 `RequestAsync`。
-> - 读动词的第二个参数不是「本次正文」，所以 `DeleteAsync("orders/1")` 照样继承 `Defaults.Body`；要发空正文写 `DeleteAsync("orders/1", c => c.Body = null)`。
+> - 读动词的第二个参数不是「本次正文」，所以 `DeleteAsync("orders/1")` 照样继承 `Defaults.Body`；要发空正文写 `DeleteAsync("orders/1", c => c.Body = null)`。`HeadAsync` / `OptionsAsync` 例外：这两个方法不带正文，实例默认的 `Body` 不继承（真要发就在 `configure` 里显式写 `c.Body = ...`）。
 >
 > 混用实例默认值与单次请求时的差异，详见[实例默认值 vs 单次请求](#客户端)。
 
@@ -780,6 +780,8 @@ await client.GetAsync("maybe-404", c => c.ValidateStatus = s => s is >= 200 and 
 | 声明式 | `client.Create<T>()` 或 `new ApiClient(baseAddress)` | 接口多，用模型或接口描述请求（见[模型式 API](#模型式-api)） |
 
 `Axios.Create("https://api.example.com")` 是 `Axios.Create(c => c.BaseAddress = ...)` 的简写，可再传第二个参数 `Action<AxiosConfig>` 配置默认项。
+
+创建时取的是**配置快照**：`Axios.Create(config)` / `new AxiosClient(config)` 把那份对象复制一份作为 `Defaults`，之后改原对象不会追认到已建实例（与 axios `axios.create(config)` 合并出新 defaults 的直觉一致）。要改运行中的实例默认值，直接改 `client.Defaults`。
 
 **实例级选项 `AxiosClientOptions`**：代理 / 凭据 / Cookie / 重定向次数 / 连接池 / 并发容量这七项决定**连接层与闸门**的形态，构造实例时定型，所以不在 `AxiosConfig` 上——想写进单次请求没有入口，**编译期就拒绝**：
 

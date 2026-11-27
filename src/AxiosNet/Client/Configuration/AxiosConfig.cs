@@ -77,8 +77,22 @@ public sealed partial class AxiosConfig
         set => _limits = value;
     }
 
+    private string? _baseAddress;
+
     /// <summary>对应 axios baseURL。</summary>
-    public string? BaseAddress { get; set; }
+    /// <remarks>按请求配置里显式写 <c>null</c> 表示摘掉实例默认值；省略则继承。</remarks>
+    public string? BaseAddress
+    {
+        get => _baseAddress;
+        set
+        {
+            _baseAddress = value;
+            BaseAddressSet = true;
+        }
+    }
+
+    /// <summary>是否被显式赋值过（包括赋 <c>null</c>）：合并时区分「没写」与「写了 null」，后者摘掉实例默认值。</summary>
+    internal bool BaseAddressSet { get; private set; }
 
     /// <summary>对应 axios url（相对或绝对地址）。</summary>
     public string? Url { get; set; }
@@ -577,7 +591,7 @@ public sealed partial class AxiosConfig
 
     /// <summary>把 <see cref="Params"/> / <see cref="Body"/> 里调用方持有的可变字典复制一份，其余类型（匿名对象 / 集合 / 流 / 字符串）原样共享。</summary>
     /// <remarks>字符串键字典按原类型 + 原 comparer 复制；其余 <see cref="IDictionary{TKey,TValue}"/> 退化成 <see cref="Dictionary{TKey,TValue}"/>。</remarks>
-    private static object? IsolateMutableContainer(object? value)
+    internal static object? IsolateMutableContainer(object? value)
     {
         // 必须在 switch 之前挡掉：null 落到 `_ => value` 分支会被当容器共享。
         if (value is null)

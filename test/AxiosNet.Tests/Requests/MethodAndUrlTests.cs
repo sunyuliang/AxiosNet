@@ -32,6 +32,44 @@ public sealed class MethodAndUrlTests
         Assert.Equal(first.Message, second.Message);
     }
 
+// 0) HEAD / OPTIONS 不继承实例默认正文
+
+    [Fact]
+    public async Task HeadAndOptions_DoNotInheritInstanceDefaultBody()
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse());
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = server.Url,
+            Body = "INHERITED-BODY"
+        });
+
+        await client.HeadAsync("head");
+        await client.OptionsAsync("options");
+
+        // HEAD 的正文在 HTTP 里没有意义；OPTIONS 同理 —— 实例默认的 Body 不该被无正文方法继承。
+        Assert.Equal(2, server.Received.Count);
+        Assert.All(server.Received, request => Assert.Empty(request.Body));
+        Assert.All(server.Received, request => Assert.DoesNotContain("Content-Length", request.Headers.Keys, StringComparer.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task Head_StillHonoursExplicitBodyInConfigure()
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse());
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = server.Url,
+            Body = "INHERITED-BODY"
+        });
+
+        // 抑制只针对「继承」，configure 里显式写的正文仍然照发。
+        await client.HeadAsync("head", c => c.Body = "EXPLICIT");
+
+        var received = Assert.Single(server.Received);
+        Assert.Equal("EXPLICIT", Encoding.UTF8.GetString(received.Body));
+    }
+
 // 1) 快捷方法 url 的 fail-fast
 
     [Fact]

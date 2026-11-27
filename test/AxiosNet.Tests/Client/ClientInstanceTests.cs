@@ -190,6 +190,23 @@ public sealed class ClientInstanceTests
         Assert.Contains("ConnectTimeout", ex.Message);
     }
 
+// 构造期取默认值快照：之后改调用方那份对象不追认
+
+    [Fact]
+    public void Constructor_TakesSnapshotOfDefaults()
+    {
+        var config = new AxiosConfig { BaseAddress = "http://127.0.0.1:1/first" };
+        using var client = new AxiosClient(config);
+
+        config.BaseAddress = "http://127.0.0.1:1/second";
+        config.Headers.Set("X-Mood", "changed");
+
+        // 快照语义：实例的默认值只由构造那一刻的配置决定（对应 axios.create 合并出新 defaults 的直觉）。
+        Assert.NotSame(config, client.Defaults);
+        Assert.Equal("http://127.0.0.1:1/first", client.Defaults.BaseAddress);
+        Assert.False(client.Defaults.Headers.Has("X-Mood"));
+    }
+
 // 构造后 Options 冻结：改就报错，而不是「改了没效果」
 
     [Fact]

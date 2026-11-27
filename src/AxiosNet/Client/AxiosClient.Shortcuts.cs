@@ -56,19 +56,19 @@ public sealed partial class AxiosClient
 
     /// <summary>对应 axios.head，返回非泛型响应。</summary>
     public Task<AxiosResponse> HeadAsync(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(Shortcut(url, HttpMethod.Head, configure, cancellationToken), null);
+        => SendAsync(Shortcut(url, HttpMethod.Head, configure, cancellationToken, suppressBody: true), null);
 
     /// <summary>对应 axios.head，Data 反序列化为 <typeparamref name="T"/>。</summary>
     public Task<AxiosResponse<T>> HeadAsync<T>(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Head, configure, cancellationToken));
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Head, configure, cancellationToken, suppressBody: true));
 
     /// <summary>HEAD 携带查询参数：query 收匿名对象 / 字典 / 查询串，展平与转义规则同 <see cref="AxiosConfig.Params"/>。</summary>
     public Task<AxiosResponse> HeadAsync(string url, object? query, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(Shortcut(url, HttpMethod.Head, configure, cancellationToken, query: query, queryProvided: true), null);
+        => SendAsync(Shortcut(url, HttpMethod.Head, configure, cancellationToken, query: query, queryProvided: true, suppressBody: true), null);
 
     /// <summary>HEAD 携带查询参数：query 收匿名对象 / 字典 / 查询串，展平与转义规则同 <see cref="AxiosConfig.Params"/>。</summary>
     public Task<AxiosResponse<T>> HeadAsync<T>(string url, object? query, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Head, configure, cancellationToken, query: query, queryProvided: true));
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Head, configure, cancellationToken, query: query, queryProvided: true, suppressBody: true));
 
     /// <summary>对应 axios.head，用调用方传入的配置发送（url / method 以参数为准），返回非泛型响应。</summary>
     public Task<AxiosResponse> HeadAsync(string url, AxiosConfig config)
@@ -80,19 +80,19 @@ public sealed partial class AxiosClient
 
     /// <summary>对应 axios.options，返回非泛型响应。</summary>
     public Task<AxiosResponse> OptionsAsync(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(Shortcut(url, HttpMethod.Options, configure, cancellationToken), null);
+        => SendAsync(Shortcut(url, HttpMethod.Options, configure, cancellationToken, suppressBody: true), null);
 
     /// <summary>对应 axios.options，Data 反序列化为 <typeparamref name="T"/>。</summary>
     public Task<AxiosResponse<T>> OptionsAsync<T>(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Options, configure, cancellationToken));
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Options, configure, cancellationToken, suppressBody: true));
 
     /// <summary>OPTIONS 携带查询参数：query 收匿名对象 / 字典 / 查询串，展平与转义规则同 <see cref="AxiosConfig.Params"/>。</summary>
     public Task<AxiosResponse> OptionsAsync(string url, object? query, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(Shortcut(url, HttpMethod.Options, configure, cancellationToken, query: query, queryProvided: true), null);
+        => SendAsync(Shortcut(url, HttpMethod.Options, configure, cancellationToken, query: query, queryProvided: true, suppressBody: true), null);
 
     /// <summary>OPTIONS 携带查询参数：query 收匿名对象 / 字典 / 查询串，展平与转义规则同 <see cref="AxiosConfig.Params"/>。</summary>
     public Task<AxiosResponse<T>> OptionsAsync<T>(string url, object? query, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Options, configure, cancellationToken, query: query, queryProvided: true));
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Options, configure, cancellationToken, query: query, queryProvided: true, suppressBody: true));
 
     /// <summary>对应 axios.options，用调用方传入的配置发送（url / method 以参数为准），返回非泛型响应。</summary>
     public Task<AxiosResponse> OptionsAsync(string url, AxiosConfig config)
@@ -196,19 +196,19 @@ public sealed partial class AxiosClient
 
     /// <summary>对应 axios.head 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public Task<AxiosResponse> HeadAsync(string url, CancellationToken cancellationToken)
-        => SendAsync(Shortcut(url, HttpMethod.Head, null, cancellationToken, tokenProvided: true), null);
+        => SendAsync(Shortcut(url, HttpMethod.Head, null, cancellationToken, tokenProvided: true, suppressBody: true), null);
 
     /// <summary>对应 axios.head 的显式取消令牌重载（令牌不作请求体），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public Task<AxiosResponse<T>> HeadAsync<T>(string url, CancellationToken cancellationToken)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Head, null, cancellationToken, tokenProvided: true));
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Head, null, cancellationToken, tokenProvided: true, suppressBody: true));
 
     /// <summary>对应 axios.options 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public Task<AxiosResponse> OptionsAsync(string url, CancellationToken cancellationToken)
-        => SendAsync(Shortcut(url, HttpMethod.Options, null, cancellationToken, tokenProvided: true), null);
+        => SendAsync(Shortcut(url, HttpMethod.Options, null, cancellationToken, tokenProvided: true, suppressBody: true), null);
 
     /// <summary>对应 axios.options 的显式取消令牌重载（令牌不作请求体），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public Task<AxiosResponse<T>> OptionsAsync<T>(string url, CancellationToken cancellationToken)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Options, null, cancellationToken, tokenProvided: true));
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Options, null, cancellationToken, tokenProvided: true, suppressBody: true));
 
     /// <summary>对应 axios.post 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public Task<AxiosResponse> PostAsync(string url, CancellationToken cancellationToken)
@@ -348,7 +348,8 @@ public sealed partial class AxiosClient
         bool bodyProvided = false,
         bool? tokenProvided = null,
         object? query = null,
-        bool queryProvided = false)
+        bool queryProvided = false,
+        bool suppressBody = false)
     {
         var config = NewEffectiveConfig();
 
@@ -391,6 +392,12 @@ public sealed partial class AxiosClient
 
             // 显式 data（含 null）一律写回：null 表示「本次没有正文」，与通用入口写 Body = null 同义。
             config.Body = data;
+        }
+
+        // 不携带正文的方法（HEAD / OPTIONS）：不继承实例默认的 Body；configure 里显式写 Body 仍然生效。
+        if (suppressBody)
+        {
+            config.Body = null;
         }
 
         if (queryProvided)

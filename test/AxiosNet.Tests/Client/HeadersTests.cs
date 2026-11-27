@@ -291,6 +291,21 @@ public sealed class HeadersTests
         Assert.Contains("X-Only", received.Headers.Keys, StringComparer.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task EmptyContentTypeHeader_ClearsSerializerDeclaredMediaType()
+    {
+        await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
+        using var client = new AxiosClient();
+
+        // 显式写空值 = 摘掉正文的 Content-Type（序列化器自报的 application/json 也要去掉），
+        // 否则「想去掉媒体类型发裸字节」的调用方会以为已经清掉，实际线上仍带着 application/json。
+        await client.PostAsync(server.Url + "x", new byte[] { 1, 2, 3 }, c => c.Headers.Set("Content-Type", ""));
+
+        var received = Assert.Single(server.Received);
+        Assert.DoesNotContain("Content-Type", received.Headers.Keys, StringComparer.OrdinalIgnoreCase);
+        Assert.Equal(new byte[] { 1, 2, 3 }, received.Body);
+    }
+
     // 丢更新。
 
     [Fact]

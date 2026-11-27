@@ -61,7 +61,8 @@ public sealed partial class AxiosClient
         // Params / Body 按「是否显式赋值」合并，写 null 表示摘掉实例默认值。
         if (perCall.ParamsSet)
         {
-            merged.Params = perCall.Params;
+            // 调用方的可变字典要隔离一份：请求在途时改它不能改写本次查询串。
+            merged.Params = AxiosConfig.IsolateMutableContainer(perCall.Params);
         }
 
         if (perCall.BodySet)
@@ -88,10 +89,10 @@ public sealed partial class AxiosClient
             merged.Caching = perCall.Caching;
         }
 
-        // BaseAddress 属「实例来源」，不搬来源实例的值。
-        if (!instanceSourced)
+        // BaseAddress 属「实例来源」，不搬来源实例的值；调用方显式写 null 表示摘掉实例默认值。
+        if (!instanceSourced && perCall.BaseAddressSet)
         {
-            merged.BaseAddress = perCall.BaseAddress ?? merged.BaseAddress;
+            merged.BaseAddress = perCall.BaseAddress;
         }
 
         merged.Method = perCall.MethodSet ? perCall.Method : merged.Method;
@@ -342,9 +343,15 @@ public sealed partial class AxiosClient
                     continue;
                 }
 
-                // 空值会清掉 Content-Length / Content-Type，跳过。
+                // Content-Type 的空值表示「摘掉正文的媒体类型」：序列化器自报的那份也要去掉。
                 if (string.IsNullOrEmpty(header.Value))
                 {
+                    if (string.Equals(header.Name, "Content-Type", StringComparison.OrdinalIgnoreCase))
+                    {
+                        content?.Headers.Remove(header.Name);
+                    }
+
+                    // 其余 Content-* 的空值会清掉 Content-Length / Content-Encoding，直接跳过。
                     continue;
                 }
 

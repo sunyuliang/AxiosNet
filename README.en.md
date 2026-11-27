@@ -193,7 +193,7 @@ Constants: `AxiosContentType.Json` / `FormUrlEncoded` / `MultipartFormData` / `O
 
 > **The second argument depends on the verb alone**: `PostAsync` / `PutAsync` / `PatchAsync` / `PostFormAsync` / `PutFormAsync` take a **body**; `GetAsync` / `DeleteAsync` / `HeadAsync` / `OptionsAsync` take **query parameters** (same flattening / escaping rules as `Params`). To send a body on a read verb, write `c => c.Body = ...`.
 > - On write verbs `data` is an **optional parameter with a default**: `PostAsync("orders")` is exactly `PostAsync("orders", data: null)`, so it **drops** `Defaults.Body` and sends an empty body. To send the default body along, use `PostAsync("orders", new AxiosConfig { ... })` (that config never touches `Body`, so the merge inherits it) or go through `RequestAsync`.
-> - On read verbs the second argument is not "this request's body", so `DeleteAsync("orders/1")` still inherits `Defaults.Body`; write `DeleteAsync("orders/1", c => c.Body = null)` to send an empty one.
+> - On read verbs the second argument is not "this request's body", so `DeleteAsync("orders/1")` still inherits `Defaults.Body`; write `DeleteAsync("orders/1", c => c.Body = null)` to send an empty one. `HeadAsync` / `OptionsAsync` are the exception: they carry no body, so an inherited `Defaults.Body` is dropped (write `c.Body = ...` in `configure` if you really want one).
 >
 > Mixing instance defaults with per-request overrides: see [instance defaults vs. per-request](#clients).
 
@@ -776,6 +776,8 @@ Three client shapes, identical capabilities underneath:
 | Declarative | `client.Create<T>()` or `new ApiClient(baseAddress)` | Many endpoints, describe requests with models or interfaces ([details](#model-based-api)) |
 
 `Axios.Create("https://api.example.com")` is shorthand for `Axios.Create(c => c.BaseAddress = ...)`, with an optional second `Action<AxiosConfig>` argument for defaults.
+
+Creation takes a **snapshot**: `Axios.Create(config)` / `new AxiosClient(config)` copies the object into `Defaults`, so mutating the original afterwards does not leak into an existing instance (matching the `axios.create(config)` intuition of merging into fresh defaults). To change a live instance's defaults, mutate `client.Defaults`.
 
 **Instance-level options (`AxiosClientOptions`)**: proxy / credentials / cookies / redirect count / pool / concurrency capacity decide the shape of the **connection layer and the gate**, and are fixed when the instance is built. They are therefore not on `AxiosConfig` — there is no way to write them into a single request, and the **compiler rejects it**:
 

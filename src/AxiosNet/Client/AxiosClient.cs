@@ -91,7 +91,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         bool disposeHandler = true,
         AxiosAttemptPipeline? pipeline = null)
     {
-        Defaults = defaults ?? new AxiosConfig();
+        // 持自己的一份快照：调用方之后改那份对象不能再改写本实例的默认值（与 axios.create 合并出新默认值的直觉一致）。
+        Defaults = (defaults ?? new AxiosConfig()).Clone();
 
         // 持自己的一份快照。
         Options = (options ?? new AxiosClientOptions()).Clone();

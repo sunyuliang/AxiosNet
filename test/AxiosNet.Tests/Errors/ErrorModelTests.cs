@@ -687,8 +687,10 @@ public sealed class ErrorModelTests
 
         var ex = Assert.Throws<AxiosException>(() => new AxiosClient(defaults, options));
 
+        // 构造期错误带的是实例自己那份默认值快照（构造时复制），内容与调用方传入的一致。
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
-        Assert.Same(defaults, ex.Config);
+        Assert.NotNull(ex.Config);
+        Assert.Equal(defaults.BaseAddress, ex.Config!.BaseAddress);
     }
 
 // 测试辅助
