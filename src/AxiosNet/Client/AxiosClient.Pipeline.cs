@@ -294,10 +294,20 @@ public sealed partial class AxiosClient
     }
 
     /// <summary>
-    /// 阶段 4a —— 规范化：泛型 <c>&lt;dynamic&gt;</c> / <c>&lt;object&gt;</c> 与 <c>&lt;Stream&gt;</c> 自动切换响应形态；判据是 <see cref="AxiosConfig.ResponseTypeSet"/>。
+    /// 阶段 4a —— 规范化：先拒掉 <see cref="HttpContent"/> 这一类的请求侧形态，再把泛型 <c>&lt;dynamic&gt;</c> / <c>&lt;object&gt;</c> 与 <c>&lt;Stream&gt;</c> 自动切换响应形态（判据是 <see cref="AxiosConfig.ResponseTypeSet"/>）。
     /// </summary>
     private static void ApplyAutoResponseType(AxiosConfig config, Type? dataType)
     {
+        // HttpContent 是请求侧「原始内容」形态，响应方向没有对应物：在发出之前就按选项错误拒掉，免得白白发一次请求再报反序列化失败。
+        if (dataType is not null && typeof(HttpContent).IsAssignableFrom(dataType))
+        {
+            throw AxiosException.InvalidOption(
+                $"泛型参数 {dataType.Name} 不能当响应形态：HttpContent 是请求侧「原始内容」的写法。"
+                + "要响应字节用 GetAsync<byte[]>（或 ResponseType.ArrayBuffer），要网络流用 GetAsync<Stream>（或 ResponseType.Stream），"
+                + "要原文用 GetAsync<string>（或 ResponseType.Text）。",
+                config);
+        }
+
         if (config.ResponseTypeSet)
         {
             return;

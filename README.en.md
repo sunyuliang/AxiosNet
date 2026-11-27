@@ -333,6 +333,8 @@ var dyn    = await http.GetAsync<dynamic>("users/1");                     // no 
 
 `<Stream>` / `<byte[]>` / `<dynamic>` switch `ResponseType` automatically — you rarely set it by hand.
 
+`HttpContent` is a **request-side** "raw content" shape only; the response side has no counterpart. `GetAsync<HttpContent>` (and its subclasses) throws `ERR_BAD_OPTION_VALUE` **before sending** and points at the right spelling (bytes / stream / text), instead of firing a request that then fails to deserialize.
+
 **When the body must be there, use `DataOrThrow()`**: `Data` is nullable, so code that is sure of a body often writes `Data!` to silence the compiler — and an actually empty body (204, or a server that forgot to write one) then surfaces as a `NullReferenceException` deep inside business logic with no request context. `DataOrThrow()` turns that into one explicit assertion: an empty body throws `ERR_BAD_RESPONSE` (with a `string` target, a server that sent zero bytes yields an empty string rather than `null`, and that counts as empty too), the message names the expected type, and the exception carries `Config` / `Response`:
 
 ```csharp

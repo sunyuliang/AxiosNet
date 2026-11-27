@@ -333,6 +333,8 @@ var dyn    = await http.GetAsync<dynamic>("users/1");                     // 无
 
 `<Stream>` / `<byte[]>` / `<dynamic>` 会自动切到对应响应类型，不必手写 `ResponseType`。
 
+`HttpContent` 只是**请求侧**的「原始内容」形态，响应方向没有对应物：`GetAsync<HttpContent>`（及其派生类型）在发出之前就抛 `ERR_BAD_OPTION_VALUE` 并指路（字节 / 流 / 原文各用哪种写法），不会先发一次请求再报反序列化失败。
+
 **正文一定有值时用 `DataOrThrow()`**：`Data` 是可空的，怕空正文的地方常写 `Data!` 压掉可空性——真遇到空正文（204、服务端漏写）就变成业务代码深处一个不带请求上下文的 `NullReferenceException`。`DataOrThrow()` 把这件事变成一次显式断言：空正文抛 `ERR_BAD_RESPONSE`（`string` 目标类型下服务端没给任何字节时 `Data` 是空串而不是 `null`，同样按空正文处理），消息里带期望的类型名，异常上带 `Config` / `Response`：
 
 ```csharp

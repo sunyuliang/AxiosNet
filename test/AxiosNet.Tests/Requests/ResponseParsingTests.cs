@@ -398,6 +398,24 @@ public sealed class ResponseParsingTests
     }
 
     [Fact]
+    public async Task GetAsync_HttpContentTarget_FailsBadOptionValueBeforeSending()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient();
+
+        var content = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<HttpContent>(server.Url));
+        Assert.Equal(AxiosException.ErrBadOptionValue, content.Code);
+        Assert.Contains("HttpContent", content.Message, StringComparison.Ordinal);
+
+        // 派生形态同样拒：HttpContent 是请求侧「原始内容」的写法，响应方向没有对应物。
+        var derived = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<StringContent>(server.Url));
+        Assert.Equal(AxiosException.ErrBadOptionValue, derived.Code);
+
+        // 在发出之前就拒掉：服务端一条都没收到。
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
     public async Task GetAsync_TransformResponseThrows_ExposesResponseContext()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { name = "ada" }));
