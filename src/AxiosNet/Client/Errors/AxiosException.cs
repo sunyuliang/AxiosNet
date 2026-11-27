@@ -577,10 +577,14 @@ public class AxiosException : Exception
     /// 请求构造阶段失败（默认查询串展平时的取值 / 格式化）。错误码仍是 <c>ERR_BAD_OPTION_VALUE</c>，
     /// 原始异常留在 <see cref="Cause"/>；<see cref="IsRequestConstructionFailure"/> 供外层改判。
     /// </summary>
+    /// <remarks>
+    /// 文案不能写成「paramsSerializer 抛出了异常」：走到这里的都是**库自己的**默认展平路径，
+    /// 调用方根本没传序列化器。真正的 paramsSerializer 异常由调用点另给文案。
+    /// </remarks>
     internal static AxiosException RequestConstructionFailed(AxiosConfig? config, Exception inner)
     {
         return new AxiosException(
-            $"paramsSerializer 抛出了异常，查询串无法生成：{inner.Message}",
+            $"查询串无法生成：{Describe(inner)}",
             ErrBadOptionValue,
             config,
             request: null,
@@ -588,6 +592,24 @@ public class AxiosException : Exception
             innerException: inner)
         {
             IsRequestConstructionFailure = true
+        };
+    }
+
+    /// <summary>把构造失败的原因说得能直接指向责任人：类型形态不支持 / 格式化抛错 / 其它。</summary>
+    /// <remarks>反射调用（兼容资产上的取值路径）会把真实原因包进 <see cref="System.Reflection.TargetInvocationException"/>，先剥掉再判。</remarks>
+    private static string Describe(Exception inner)
+    {
+        var cause = inner is System.Reflection.TargetInvocationException { InnerException: { } unwrapped }
+            ? unwrapped
+            : inner;
+
+        return cause switch
+        {
+            // 默认展平遇到不能当标量处理的类型（如兼容资产上的 DateOnly）：这是库的能力边界，不是调用方的序列化器出错。
+            ArgumentException => $"查询参数里有无法展平为标量的值（{cause.Message}）："
+                + "参数值需是基元类型 / 枚举 / string / 日期时间 / TimeSpan / Guid / Uri 或其可空形态，"
+                + "其它类型请先转成 string，或传自定义 paramsSerializer。",
+            _ => $"展开查询参数时失败（{cause.GetType().Name}）：{cause.Message}"
         };
     }
 

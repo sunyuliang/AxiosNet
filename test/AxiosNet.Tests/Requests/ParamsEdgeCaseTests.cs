@@ -254,6 +254,26 @@ public sealed class ParamsEdgeCaseTests
         Assert.DoesNotContain("?", uri);
     }
 
+    /// <summary>
+    /// 默认展平路径失败时不能把责任推给 `paramsSerializer`：调用方根本没传序列化器，
+    /// 那句话会把库自己的能力边界伪装成用户的序列化器出错。
+    /// </summary>
+    [Fact]
+    public void Params_FlattenFailure_DoesNotBlameParamsSerializer()
+    {
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = "https://example.com/" });
+
+        // 值格式化抛错（[Format] / ValueText 之外的库内路径）：委托没有可用的文本形态。
+        var ex = Assert.Throws<AxiosException>(() => client.GetUri(c =>
+        {
+            c.Url = "search";
+            c.Params = new Dictionary<string, object?> { ["bad"] = new Func<int>(() => 1) };
+        }));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.DoesNotContain("paramsSerializer", ex.Message, StringComparison.Ordinal);
+    }
+
     private static string BuildUri(object? parameters, Action<AxiosConfig>? configure = null)
     {
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = "https://example.com/" });
