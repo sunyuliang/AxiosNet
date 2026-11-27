@@ -309,6 +309,29 @@ public sealed class TelemetrySinkTests
         Assert.Equal(1, sink.Stops);
     }
 
+    /// <summary>
+    /// 护栏只吞「违约」异常，<see cref="OutOfMemoryException"/> 放行：内存已经见底时继续往下跑只会把问题放大，
+    /// 因此它原样冒到调用方，让这条请求失败。
+    /// </summary>
+    [Fact]
+    public async Task SinkThrowingOutOfMemory_IsNotSwallowed()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+
+        var original = AxiosTelemetry.Sink;
+        using var client = new AxiosClient();
+        try
+        {
+            AxiosTelemetry.Sink = new OutOfMemorySink();
+
+            await Assert.ThrowsAsync<OutOfMemoryException>(() => client.GetAsync(server.Url + "x"));
+        }
+        finally
+        {
+            AxiosTelemetry.Sink = original;
+        }
+    }
+
     /// <summary>读实例私有 <see cref="int"/> 字段（护栏用例钉的是「库自己怎么记数」，只能这么看）。</summary>
     private static int PrivateInt(AxiosClient target, string name)
         => (int)typeof(AxiosClient)
@@ -412,6 +435,13 @@ public sealed class TelemetrySinkTests
     }
 
     /// <summary>违约实现：在「请求离开」那一步抛异常，并记录 span 有没有被收（应当照收）。</summary>
+    /// <summary>开关判定就抛 OOM：护栏不吞，异常原样冒到调用方。</summary>
+    private sealed class OutOfMemorySink : AxiosTelemetrySink
+    {
+        /// <inheritdoc />
+        public override bool IsEnabled(AxiosConfig? config) => throw new OutOfMemoryException("sink oom");
+    }
+
     private sealed class ThrowingSink : AxiosTelemetrySink
     {
         private int _exits;
