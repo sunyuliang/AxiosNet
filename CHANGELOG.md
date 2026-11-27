@@ -10,7 +10,7 @@
 
 ### Added
 
-- `AxiosClient.Pooled` / `AxiosClient.WithHandler` / `AxiosClient.WithSharedPool` 三个具名工厂：分别对应「自建池」「直接注入 Handler」「共享已有池」三种连接层来源，与 `new AxiosClient(poolOptions: …)` / `new AxiosClient(handler: …)` / `new AxiosClient(pool: …)` 等价，只是不必记构造参数的位置。
+- `AxiosClient.Pooled` / `AxiosClient.WithHandler` / `AxiosClient.WithSharedPool` 三个具名工厂，等价于对应的构造函数重载。
 
 ### Changed (Breaking)
 
@@ -18,8 +18,7 @@
 
 ### Fixed
 
-- `axiosnet.client.circuit.state` 只统计存活 `CircuitBreaker` 实例的维度：此前它由三个进程级计数器汇总，实例被回收后那些计数不会归还，长进程里该仪表会一直虚高（新建实例只增不减）。现在每次采样按存活实例重算，实例被回收后它的维度随之消失，口径与文档写的「熔断器实例 × key」一致。
-- 自定义观测实现在观测句柄的 `Stop()` / `SetRequestBodySize()` 上抛异常不再外溢到请求路径：这两条回调此前直连实现、绕过派发层的护栏，实现违约时会盖掉本来要交付的响应（请求体大小那一步在发送前，异常直接变成这条请求的失败）。现在句柄由派发层改绑到护栏再交出，实现内部的异常一律在那里结束。
+- 修复优化相关问题。
 
 ## [1.8.0] - 2026-11-23
 

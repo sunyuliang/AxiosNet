@@ -1,8 +1,8 @@
 # AxiosNet 1.8 breaking changes
 
-This is the **1.7 → 1.8** migration reference for callers upgrading from `AxiosNet` 1.7.x to 1.8.x; it matches the public surface shipped since 1.8.0, with the entries added in 1.8.1 marked as such.
+This is the **1.7 → 1.8** migration reference for callers upgrading from `AxiosNet` 1.7.x to 1.8.x; it matches the public surface shipped since 1.8.0.
 
-All four changes remove a layer rather than add one: declarative calls deliver the body by default, a shortcut's second argument is decided by the verb alone, a member's place in the body is spelled by the shape of `[Body]`, and the raw body keeps a single copy of its bytes.
+All three changes remove a layer rather than add one: declarative calls deliver the body by default, a shortcut's second argument is decided by the verb alone, and a member's place in the body is spelled by the shape of `[Body]`.
 
 ## 1. Declarative calls return the body
 
@@ -57,16 +57,3 @@ A member's place in the body is no longer spelled by two attributes, nor inferre
 - Combining a bare `[Body]` with `[Body("name")]`, with undecorated members on a body method, with another bare `[Body]` or with `[Multipart]` is a build-time error: for request models the source generator reports `AXA017` at compile time; interface declarations are rejected by the binding builder at `Create<T>()` as `ERR_BAD_OPTION_VALUE`, and models without the generator on their first request. Both use the same wording and offer the same two ways out — move the other member to another channel, or turn the whole body into `[Body("name")]`.
 - When the whole body is an array / scalar / stream, no subclass is needed any more: put `[Body]` on that member.
 - The interface-style sample's composite parameter follows along from `[RootBody]` to `[Body]`, so the body is no longer wrapped in the parameter name (`{ "payload": { … } }` → `{ … }`), matching the model style.
-
-## 4. The raw body keeps a single copy of its bytes (1.8.1)
-
-`RawBody` is now the single source of the raw body, and `RawText` is derived from it by `charset` (decoded on first read). Previously `RawText` served only error bodies while `RawBody` was gated by `Observability.CaptureRawResponseBody`, so the two could never both hold a value; now error responses, short-circuit / cache hits and `byte[]`-shaped `Data` carry `RawBody` without the switch, and a successful response with the switch on also exposes `RawText`.
-
-| 1.8.0 | 1.8.1 |
-| --- | --- |
-| `RawBody is null` meant "the switch is off" | That check no longer holds: error / short-circuit / cache / `byte[]`-shaped `Data` all have a value. To ask about the switch, read `Config.Observability.CaptureRawResponseBody` |
-| An error response had only `RawText`; `RawBody` was `null` | An error response has both (over 64 KB the bytes are dropped and only `RawText` is kept, which is always complete) |
-| `RawText` was readable only on error bodies | A successful response with `CaptureRawResponseBody` on is readable too |
-
-- With `CaptureRawResponseBody` explicitly on, the 64 KB cap does not apply: the point of the switch is to keep the bytes, so an oversized error body stays whole in `RawBody`. For long-term archiving, copy it yourself in `OnRawResponse`.
-- A streaming response (`ResponseType.Stream`) has no complete bytes, so there is no `RawBody` even with the switch on; a streaming **failure** rescues up to 64 KB of the error body, with both bytes and text readable.
