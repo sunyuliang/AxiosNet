@@ -647,7 +647,7 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 | Code | 触发场景 |
 | --- | --- |
 | `ERR_BAD_REQUEST` | 4xx；请求体超 `Limits.MaxRequestBytes`；请求体序列化失败；上传进度回调抛异常；声明式请求装配失败（路径 / 查询 / 请求头 / 正文取值或格式化） |
-| `ERR_BAD_RESPONSE` | 5xx；响应无法反序列化为目标类型；响应体超 `Limits.MaxResponseBytes`；泛型与 `ResponseType` 不匹配；下载进度回调 / 原始字节回调抛异常；`transformResponse` 抛非 `AxiosException` 异常 |
+| `ERR_BAD_RESPONSE` | 5xx；响应无法反序列化为目标类型；响应体超 `Limits.MaxResponseBytes`；泛型与 `ResponseType` 不匹配；下载进度回调 / 原始字节回调抛异常；`transformResponse` 抛非 `AxiosException` 异常；正文按声明的 `Content-Encoding` 解压失败 |
 | `ECONNABORTED` | 超过 `Timeout`（含流式正文阶段），或 `Resilience.TotalTimeout` 总预算已耗尽 |
 | `ERR_NETWORK` | 连接被拒 / DNS 失败 / 连接中断 / 正文截断 |
 | `ERR_CANCELED` | `CancellationToken` 取消，或客户端已释放 |
@@ -1054,7 +1054,7 @@ HttpConnectionPool.Release("orders");   // 摘除并优雅释放；此后同名�
 | `EvictionInterval` | 30 秒 | 后台清扫间隔；`<= 0` 不启动定时器 |
 | `AllowAutoRedirect` / `MaxAutomaticRedirections` | `true` / 5 | 自动重定向；`AxiosClientOptions.MaxRedirects = 0` 关闭 |
 | `AutomaticDecompression` | `true` | 自动解压总开关；关掉等价于 `DecompressionMethods.None` |
-| `Decompression` | `All` | 解压算法：`GZip` / `Deflate` / `Brotli` 任意组合或 `All`（全开，默认）；`None` 一个都不解，其余位建池时抛 `ERR_BAD_OPTION_VALUE` |
+| `Decompression` | `All` | 解压算法：`GZip` / `Deflate` / `Brotli` 任意组合或 `All`（全开，默认）；`None` 一个都不解，其余位建池时抛 `ERR_BAD_OPTION_VALUE`。服务端声明的编码与实际正文不符时解压失败，报 `ERR_BAD_RESPONSE`（原始 `InvalidDataException` 在 `Cause`） |
 | `EnableMultipleHttp2Connections` | `true` | h2 下允许按 `MaxConnectionsPerServer` 继续加连接 |
 | `KeepAlivePingDelay` / `KeepAlivePingTimeout` | `InfiniteTimeSpan`（不发）/ 20 秒 | h2 keep-alive ping 的间隔与等 ACK 的上限；默认与 `SocketsHttpHandler` 一致（关闭），设正值即打开。h1 无影响 |
 | `KeepAlivePingPolicy` | `WithActiveRequests` | 何时 ping：`WithActiveRequests`（有在途请求时）/ `Always`（空闲也维持）|

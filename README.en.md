@@ -645,7 +645,7 @@ The URL inside `Message` keeps only `scheme` + host + port + path: query / fragm
 | Code | Triggered by |
 | --- | --- |
 | `ERR_BAD_REQUEST` | 4xx; request body larger than `Limits.MaxRequestBytes`; request body serialization failure; upload progress callback threw; declarative request assembly failure (path / query / header / body read or formatting) |
-| `ERR_BAD_RESPONSE` | 5xx; response cannot be deserialized into the target type; body larger than `Limits.MaxResponseBytes`; generic argument vs `ResponseType` mismatch; download progress callback or raw response callback threw; `transformResponse` threw a non-`AxiosException` |
+| `ERR_BAD_RESPONSE` | 5xx; response cannot be deserialized into the target type; body larger than `Limits.MaxResponseBytes`; generic argument vs `ResponseType` mismatch; download progress callback or raw response callback threw; `transformResponse` threw a non-`AxiosException`; body could not be decompressed as declared by `Content-Encoding` |
 | `ECONNABORTED` | `Timeout` exceeded (including the streaming body phase), or the `Resilience.TotalTimeout` budget is exhausted |
 | `ERR_NETWORK` | Connection refused / DNS failure / connection dropped / truncated body |
 | `ERR_CANCELED` | `CancellationToken` cancelled, or the client was disposed |
@@ -1051,7 +1051,7 @@ Two named factories spell out the transport source, equivalent to the two forms 
 | `EvictionInterval` | 30 s | Background sweep interval; `<= 0` disables the timer |
 | `AllowAutoRedirect` / `MaxAutomaticRedirections` | `true` / 5 | Auto-redirect; `AxiosClientOptions.MaxRedirects = 0` disables |
 | `AutomaticDecompression` | `true` | Master switch for response decompression; off is equivalent to `DecompressionMethods.None` |
-| `Decompression` | `All` | Algorithms: any combination of `GZip` / `Deflate` / `Brotli`, or `All` (everything, the default); `None` disables, unknown bits throw `ERR_BAD_OPTION_VALUE` at pool construction |
+| `Decompression` | `All` | Algorithms: any combination of `GZip` / `Deflate` / `Brotli`, or `All` (everything, the default); `None` disables, unknown bits throw `ERR_BAD_OPTION_VALUE` at pool construction. When the declared encoding does not match the actual body, decompression fails with `ERR_BAD_RESPONSE` (the original `InvalidDataException` is in `Cause`) |
 | `EnableMultipleHttp2Connections` | `true` | Under h2, allow more connections up to `MaxConnectionsPerServer` |
 | `KeepAlivePingDelay` / `KeepAlivePingTimeout` | `InfiniteTimeSpan` (off) / 20 s | h2 keep-alive ping interval and ACK timeout; off by default to match `SocketsHttpHandler`, set a positive value to enable. No effect on h1 |
 | `KeepAlivePingPolicy` | `WithActiveRequests` | When to ping: `WithActiveRequests` / `Always` (keeps idle connections alive) |

@@ -103,7 +103,7 @@ internal sealed class TimeoutStream : DelegatingStream
                 return pending;
             }
         }
-        catch (Exception ex) when (ex is OperationCanceledException or IOException or HttpRequestException)
+        catch (Exception ex) when (ex is OperationCanceledException or IOException or HttpRequestException or InvalidDataException)
         {
             throw Translate(ex, callerToken);
         }
@@ -118,7 +118,7 @@ internal sealed class TimeoutStream : DelegatingStream
         {
             return await pending.ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is OperationCanceledException or IOException or HttpRequestException)
+        catch (Exception ex) when (ex is OperationCanceledException or IOException or HttpRequestException or InvalidDataException)
         {
             // 读取中断归一到同一错误模型。
             throw Translate(ex, callerToken);
@@ -136,7 +136,7 @@ internal sealed class TimeoutStream : DelegatingStream
         {
             await Inner.WriteAsync(buffer, token).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is OperationCanceledException or IOException or HttpRequestException)
+        catch (Exception ex) when (ex is OperationCanceledException or IOException or HttpRequestException or InvalidDataException)
         {
             throw Translate(ex, callerToken);
         }
@@ -153,7 +153,7 @@ internal sealed class TimeoutStream : DelegatingStream
         {
             await Inner.FlushAsync(token).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is OperationCanceledException or IOException or HttpRequestException)
+        catch (Exception ex) when (ex is OperationCanceledException or IOException or HttpRequestException or InvalidDataException)
         {
             throw Translate(ex, callerToken);
         }
@@ -228,9 +228,15 @@ internal sealed class TimeoutStream : DelegatingStream
         }
     }
 
-    /// <summary>把内层流的失败翻译成库的错误码：超时 → <c>ECONNABORTED</c>，取消 → <c>ERR_CANCELED</c>，IO / 传输失败 → <c>ERR_NETWORK</c>。</summary>
+    /// <summary>把内层流的失败翻译成库的错误码：超时 → <c>ECONNABORTED</c>，取消 → <c>ERR_CANCELED</c>，解压失败 → <c>ERR_BAD_RESPONSE</c>，IO / 传输失败 → <c>ERR_NETWORK</c>。</summary>
     private Exception Translate(Exception failure, CancellationToken callerToken)
     {
+        if (failure is InvalidDataException decompression)
+        {
+            // 声明的 Content-Encoding 与正文不符：不是传输失败，重发也还是这份坏正文。
+            return AxiosException.DecompressionFailed(_config, _request, decompression);
+        }
+
         if (failure is not OperationCanceledException canceled)
         {
             return AxiosException.Network(_config, _request, failure);

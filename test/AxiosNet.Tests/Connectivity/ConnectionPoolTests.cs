@@ -266,6 +266,59 @@ public sealed class ConnectionPoolTests
         Assert.Null(seenEncoding["off"]);
     }
 
+    /// <summary>
+    /// 服务端声明 <c>Content-Encoding: gzip</c> 但正文是明文：解压失败必须归一到 <c>ERR_BAD_RESPONSE</c>，
+    /// 不能把 <see cref="InvalidDataException"/> 裸抛给调用方（<c>catch (AxiosException)</c> 会接不住）。
+    /// 状态码与响应头已到手，<see cref="AxiosException.Response"/> 也要有值。
+    /// </summary>
+    [Fact]
+    public async Task Decompression_DeclaredEncodingMismatch_IsWrappedAsBadResponse()
+    {
+        var plain = Encoding.UTF8.GetBytes("HELLOWORLD!");
+        await using var server = TestHttpServer.Start(_ => new TestResponse
+        {
+            Body = plain,
+            ContentType = "text/plain",
+            Headers = new Dictionary<string, string> { ["Content-Encoding"] = "gzip" }
+        });
+
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<string>("bad-gzip"));
+
+        Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
+        Assert.IsType<InvalidDataException>(ex.Cause);
+
+        // 状态码 / 响应头在解压之前就到位了，错误里必须带得出来。
+        // （Content-Encoding 被 Handler 解压时消费掉了，所以拿 Content-Type 断言。）
+        Assert.Equal(200, ex.Status);
+        Assert.NotNull(ex.Response);
+        Assert.Equal("text/plain", ex.Response!.GetHeader("Content-Type"));
+    }
+
+    /// <summary>同一条失败在流式路径上（读正文时才解压）也要归一，不能等到调用方 <c>CopyToAsync</c> 时冒出 BCL 异常。</summary>
+    [Fact]
+    public async Task Decompression_DeclaredEncodingMismatch_StreamPath_IsWrappedAsBadResponse()
+    {
+        var plain = Encoding.UTF8.GetBytes("HELLOWORLD!");
+        await using var server = TestHttpServer.Start(_ => new TestResponse
+        {
+            Body = plain,
+            ContentType = "text/plain",
+            Headers = new Dictionary<string, string> { ["Content-Encoding"] = "gzip" }
+        });
+
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
+
+        var response = await client.GetAsync<Stream>("bad-gzip-stream", c => c.ResponseType = ResponseType.Stream);
+        await using var stream = response.Data!;
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => stream.CopyToAsync(new MemoryStream()));
+
+        Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
+        Assert.IsType<InvalidDataException>(ex.Cause);
+    }
+
     [Fact]
     public void Decompression_UnknownAlgorithm_FailsAtConstruction()
     {

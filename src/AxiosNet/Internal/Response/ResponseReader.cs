@@ -304,6 +304,12 @@ internal static class ResponseReader
                 {
                     bytes = await ReadAllBytesAsync(downloadStream, config, request, cancellationToken, declared).ConfigureAwait(false);
                 }
+                catch (InvalidDataException ex)
+                {
+                    // 自动解压失败（声明的 Content-Encoding 与正文不符）：先归一成库错误码，
+                    // 再由外层补上状态码与响应头（README 承诺「头已到手就有 Response」）。
+                    throw AxiosException.DecompressionFailed(config, request, ex);
+                }
                 finally
                 {
                     // 这一层负责释放，读失败同样要还连接。

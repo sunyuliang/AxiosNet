@@ -606,6 +606,24 @@ public class AxiosException : Exception
             innerException: inner);
     }
 
+    /// <summary>响应正文无法按声明的 <c>Content-Encoding</c> 解压（<c>ERR_BAD_RESPONSE</c>）：声明的编码与实际字节不符。</summary>
+    /// <remarks>
+    /// 底层是 <see cref="InvalidDataException"/>，既不是 <see cref="IOException"/> 也不是反序列化异常，
+    /// 不归一就会以裸 BCL 类型漏给调用方，<c>catch (AxiosException)</c> 接不住。
+    /// </remarks>
+    internal static AxiosException DecompressionFailed(AxiosConfig? config, HttpRequestMessage? request, Exception inner)
+    {
+        return new AxiosException(
+            $"Response body could not be decompressed as declared by Content-Encoding: {inner.Message}"
+            + "（服务端声明的编码与实际正文不符：确认 Content-Encoding 头与正文一致，"
+            + "或关掉 ConnectionPoolOptions.AutomaticDecompression 自己处理）",
+            ErrBadResponse,
+            config,
+            request,
+            null,
+            inner);
+    }
+
     /// <summary>响应侧 <c>transformResponse</c> 抛错，原始异常在 <see cref="Cause"/> 里。</summary>
     internal static AxiosException ResponseTransformFailed(AxiosConfig? config, HttpRequestMessage? request, Exception inner)    {
         return new AxiosException(
