@@ -198,6 +198,10 @@ public sealed class SendingRequestHookTests
 
         // 钩子在取连接之前执行，失败时请求没有发出。
         Assert.Empty(server.Received);
+
+        // 文案与上传进度回调区分开：这里一个字节都没出去，可以放心重放。
+        Assert.Contains("请求未发出", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("服务端可能已经收到", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]

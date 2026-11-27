@@ -101,6 +101,10 @@ public sealed class ProgressAndRateTests
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
         Assert.IsType<InvalidOperationException>(ex.Cause);
         Assert.Contains("OnUploadProgress", ex.Message);
+
+        // 上传进度回调是在正文写出一块之后才触发：文案不能说成「请求未发出」，否则调用方会以为可以安全重放。
+        Assert.DoesNotContain("请求未发出", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("服务端可能已经收到", ex.Message, StringComparison.Ordinal);
     }
 
     /// <summary>

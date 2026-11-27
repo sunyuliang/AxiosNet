@@ -161,7 +161,7 @@ public sealed partial class AxiosClient
                 catch (Exception ex) when (ex is not AxiosException)
                 {
                     throw AxiosException.CallbackFailed(
-                        config, request, nameof(AxiosConfig.ObservabilitySettings.OnSendingRequest), ex, upload: true);
+                        config, request, nameof(AxiosConfig.ObservabilitySettings.OnSendingRequest), ex, CallbackStage.BeforeSend);
                 }
 
                 // 钩子换掉了正文：外壳已无人引用，单独释放。
@@ -370,7 +370,7 @@ public sealed partial class AxiosClient
             catch (Exception ex) when (ex is not OperationCanceledException and not AxiosException)
             {
                 throw AxiosException.CallbackFailed(
-                    ctx.Config, request, nameof(AxiosConfig.ValidateStatus), ex, upload: false);
+                    ctx.Config, request, nameof(AxiosConfig.ValidateStatus), ex, CallbackStage.Response);
             }
 
             var response = await ResponseReader.ReadAsync(

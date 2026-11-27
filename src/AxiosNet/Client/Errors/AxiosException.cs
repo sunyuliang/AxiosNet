@@ -605,13 +605,21 @@ public class AxiosException : Exception
 
     /// <summary>
     /// 回调抛出异常（回调属于请求管线，不以裸类型漏给调用方）；上传阶段取 <c>ERR_BAD_REQUEST</c>，
-    /// 下载 / 原始字节阶段取 <c>ERR_BAD_RESPONSE</c>，原始异常在 <see cref="Cause"/> 里。
+    /// 响应阶段取 <c>ERR_BAD_RESPONSE</c>，原始异常在 <see cref="Cause"/> 里。
     /// </summary>
-    internal static AxiosException CallbackFailed(AxiosConfig config, HttpRequestMessage? request, string callbackName, Exception inner, bool upload)
+    /// <remarks>文案按阶段区分：上传进度回调是在正文写出一块之后才触发，已写出的字节收不回来，不能写成「请求未发出」。</remarks>
+    internal static AxiosException CallbackFailed(AxiosConfig config, HttpRequestMessage? request, string callbackName, Exception inner, CallbackStage stage)
     {
+        var message = stage switch
+        {
+            CallbackStage.BeforeSend => $"{callbackName} 回调抛出异常，请求未发出：{inner.Message}",
+            CallbackStage.Uploading => $"{callbackName} 回调抛出异常，发送到此中止（已写出的字节不会撤回，服务端可能已经收到该请求）：{inner.Message}",
+            _ => $"{callbackName} 回调抛出异常，响应处理中止（正文不再交付）：{inner.Message}"
+        };
+
         return new AxiosException(
-            $"{callbackName} 回调抛出异常，请求已中断：{inner.Message}",
-            upload ? ErrBadRequest : ErrBadResponse,
+            message,
+            stage == CallbackStage.Response ? ErrBadResponse : ErrBadRequest,
             config,
             request,
             null,
@@ -655,4 +663,17 @@ public class AxiosException : Exception
             null,
             null);
     }
+}
+
+/// <summary>回调失败发生在哪个阶段：决定 <see cref="AxiosException"/> 的错误码与文案。</summary>
+internal enum CallbackStage
+{
+    /// <summary>发出之前（<c>OnSendingRequest</c>）：请求一个字节都没出去。</summary>
+    BeforeSend,
+
+    /// <summary>上传正文期间（<c>OnUploadProgress</c>）：字节已经写在连接上，收不回来。</summary>
+    Uploading,
+
+    /// <summary>响应方向（下载进度 / 原始字节 / <c>ValidateStatus</c>）：响应正文放弃。</summary>
+    Response
 }

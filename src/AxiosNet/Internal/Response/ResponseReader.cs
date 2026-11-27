@@ -322,7 +322,7 @@ internal static class ResponseReader
                     }
                     catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
                     {
-                        throw AxiosException.CallbackFailed(config, request, nameof(AxiosConfig.ObservabilitySettings.OnRawResponse), ex, upload: false);
+                        throw AxiosException.CallbackFailed(config, request, nameof(AxiosConfig.ObservabilitySettings.OnRawResponse), ex, CallbackStage.Response);
                     }
                 }
 

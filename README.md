@@ -472,7 +472,7 @@ await http.PostAsync("upload", payload, c =>
 
 - 回调**同步**执行，耗时逻辑自行转后台；报告节流 50 ms 一次。
 - 只在 `Loaded` 推进时上报：读到结尾不会补一条 `Loaded` 与上一条相同的「完成事件」（`Total` 已知且已传满时本就是最后一条），按事件数当块数、或拿相邻 `Loaded` 差算块大小的实现不会多算一次。
-- 回调抛异常会中断请求：上传阶段 `ERR_BAD_REQUEST`、下载阶段 `ERR_BAD_RESPONSE`，原异常在 `Cause`。
+- 回调抛异常会中断请求：上传阶段 `ERR_BAD_REQUEST`、下载阶段 `ERR_BAD_RESPONSE`，原异常在 `Cause`。上传进度回调是在正文写出一块之后才触发，**已写出的字节收不回来**（服务端可能已经收到该请求，别无条件重放）；只有 `OnSendingRequest` 失败才是「一个字节都没发出」。
 - `Limits.MaxResponseBytes`：普通响应边读边累计越界即中止；`ResponseType.Stream` 先按声明长度预检，再读取时累计。
 - `Limits.MaxResponseBytes` 默认 `null`（不限，与 axios 的 `maxContentLength = -1` 同口径），库不会为此发告警或日志：缓冲型响应（非 `ResponseType.Stream`）会把整个正文读进内存，对不可信或体量未知的下游，生产环境请显式设上限。
 - `Content-Length` 只是提示，不是截断依据：声明值比实际正文短时（代理改头、自定义 `HttpContent`、注入的 Handler 不按声明截断）照样读到流结束，既不丢尾部也不算漏 `Limits.MaxResponseBytes`。

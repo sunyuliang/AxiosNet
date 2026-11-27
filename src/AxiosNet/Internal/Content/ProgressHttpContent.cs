@@ -51,7 +51,7 @@ internal sealed class ProgressHttpContent : HttpContent
 
     /// <summary>把进度回调异常翻译成 <c>ERR_BAD_REQUEST</c>（原始异常进 Cause）。</summary>
     private Exception MapCallbackError(Exception ex)
-        => AxiosException.CallbackFailed(_config, null, nameof(AxiosConfig.ObservabilitySettings.OnUploadProgress), ex, upload: true);
+        => AxiosException.CallbackFailed(_config, null, nameof(AxiosConfig.ObservabilitySettings.OnUploadProgress), ex, CallbackStage.Uploading);
 
     /// <summary>收尾补发进度回调。</summary>
     private void Complete()
