@@ -783,6 +783,32 @@ public sealed class GenerationTests
         Assert.DoesNotContain("SpacedAsync", api);
     }
 
+    /// <summary>{{ 与 }} 是字面花括号：读取阶段与运行期 / 源生成器共用同一份扫描，不该记 INVALID_PATH_TEMPLATE。</summary>
+    [Fact]
+    public void LiteralBracesInPathTemplate_AreAccepted()
+    {
+        const string spec = """
+            {
+              "openapi": "3.0.3",
+              "info": { "title": "T", "version": "1" },
+              "paths": {
+                "/escaped/{{tag}}": {
+                  "get": {
+                    "operationId": "escaped",
+                    "responses": { "200": { "description": "ok" } }
+                  }
+                }
+              }
+            }
+            """;
+
+        using var run = CliHarness.RunText(spec, ".json", "--style", "interface");
+
+        Assert.Equal(0, run.ExitCode);
+        Assert.Equal(1, run.Operations);
+        Assert.DoesNotContain("INVALID_PATH_TEMPLATE", run.Codes);
+    }
+
     /// <summary>JSON 对象里的重复键必须报生成错误，而不是把原始 ArgumentException 漏给用户。</summary>
     [Fact]
     public void DuplicateJsonKeys_FailAsGenerationException()

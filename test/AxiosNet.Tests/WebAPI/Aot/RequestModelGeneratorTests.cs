@@ -273,6 +273,13 @@ public sealed class RequestModelGeneratorTests
                 [Query] public string? Name { get; set; }
             }
 
+            // {{ 与 }} 是字面花括号：编译期与运行期共用同一份扫描，两边都必须放过（运行期不能报错、这里不能报缺绑定）。
+            [Get("probe4/{{literal}}")]
+            public sealed class LiteralBraceModel : IApiRequest<Person>
+            {
+                [Query] public string? Name { get; set; }
+            }
+
             // 正例：三种合法写法都必须放过，否则最普通的声明会被误判成「没绑定」。
             //   · 无参 [Path]（构造参数是空串而非 null，按属性名 Id 绑定）
             //   · [Path("slug")] 显式改名
@@ -300,10 +307,15 @@ public sealed class RequestModelGeneratorTests
         Assert.Contains("MissingPathModel", missingPath.GetMessage());
         Assert.Contains("{id}", missingPath.GetMessage());
 
-        // 文法与运行期 PathTokenRegex 一致：{id:int} 不产生诊断（多产生一条的话上面的 Single 会先炸）。
+        // 文法与运行期共用同一份扫描（PathGrammar.Scan）：{id:int} 与 {{literal}} 都不产生诊断
+        // （多产生一条的话上面的 Single 会先炸）。
         Assert.DoesNotContain(
             diagnostics,
             static d => d.Id == "AXA016" && d.GetMessage().Contains("{id:int}", StringComparison.Ordinal));
+
+        Assert.DoesNotContain(
+            diagnostics,
+            static d => d.Id == "AXA016" && d.GetMessage().Contains("LiteralBraceModel", StringComparison.Ordinal));
 
         // 正例点名：三种合法 [Path] 写法都不该报。上面的 Single 已经保证「全局只有一条 AXA016」，
         // 这条是防将来把 Single 改成 First / Where 时静默丢掉正例保护。

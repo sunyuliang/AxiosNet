@@ -86,6 +86,18 @@ public sealed class ModelValidationTests
             () => CreateClient_ApiClientModelValidation().GetUri(new MalformedTemplateRequest()));
 
         Assert.Contains("无法识别的花括号", ex.Message);
+        Assert.Contains("第 7 个字符", ex.Message);
+    }
+
+    [Fact]
+    public void EscapedBracesInTemplate_AreLiteral()
+    {
+        // {{ 与 }} 是字面花括号（源生成器按同一份文法判定）：运行期不能把它当成占位符，
+        // 也不能因为「残留花括号」报错 —— 否则编译期放过的模板跑到运行期才炸，且报错文案反过来推荐了被拒的写法。
+        var uri = CreateClient_ApiClientModelValidation().GetUri(new LiteralBraceRequest());
+
+        // 花括号在 URL 里按 RFC 3986 转义成 %7B / %7D，模板文本原样保留（不解回成单个花括号）。
+        Assert.EndsWith("/deep/%7B%7Bliteral%7D%7D", uri, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -247,6 +259,11 @@ public sealed class ModelValidationTests
     {
         [Path]
         public int Id { get; set; }
+    }
+
+    [Get("deep/{{literal}}")]
+    public sealed class LiteralBraceRequest : IApiRequest<object>
+    {
     }
 
     [Get("items/{id}/{id}")]

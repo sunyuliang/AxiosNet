@@ -326,9 +326,9 @@ namespace AxiosNet.SourceGen
         {
             foreach (var token in RoutePlaceholders(routePath))
             {
-                if (!HasPathBinding(members, token))
+                if (!HasPathBinding(members, token.Name))
                 {
-                    Report(diagnostics, Diagnostics.MissingPathBinding, location, "请求模型 " + symbol.Name, routePath, token);
+                    Report(diagnostics, Diagnostics.MissingPathBinding, location, "请求模型 " + symbol.Name, routePath, token.Name);
                 }
             }
 
@@ -377,60 +377,12 @@ namespace AxiosNet.SourceGen
             }
         }
 
-        /// <summary>取出路由模板里的占位符名（<c>{id}</c> → <c>id</c>），跳过 <c>{{</c> 转义、空名与非标识符内容；不匹配的花括号交给运行期诊断。</summary>
-        private static IEnumerable<string> RoutePlaceholders(string template)
+        /// <summary>取出路由模板里的占位符名（<c>{id}</c> → <c>id</c>），与运行期共用同一份扫描（<see cref="PathGrammar"/>）：跳过 <c>{{</c> 转义、空名与非标识符内容。</summary>
+        private static List<PathGrammar.Token> RoutePlaceholders(string template)
         {
-            var index = 0;
-            while (index < template.Length)
-            {
-                var open = template.IndexOf('{', index);
-                if (open < 0)
-                {
-                    yield break;
-                }
-
-                if (open + 1 < template.Length && template[open + 1] == '{')
-                {
-                    index = open + 2;
-                    continue;
-                }
-
-                var close = template.IndexOf('}', open + 1);
-                if (close < 0)
-                {
-                    yield break;
-                }
-
-                if (IsPlaceholderName(template, open + 1, close - open - 1))
-                {
-                    yield return template.Substring(open + 1, close - open - 1);
-                }
-
-                index = close + 1;
-            }
-        }
-
-        /// <summary>模板里这两朵花括号之间是否是一个运行期认得的占位符名（<see cref="PathGrammar"/>）。</summary>
-        /// <param name="template">路由模板。</param>
-        /// <param name="start">名字起点。</param>
-        /// <param name="length">名字长度。</param>
-        /// <returns>合法返回 <c>true</c>；空名 / 约束表达式等非法形态返回 <c>false</c>。</returns>
-        private static bool IsPlaceholderName(string template, int start, int length)
-        {
-            if (length == 0 || !PathGrammar.IsNameStart(template[start]))
-            {
-                return false;
-            }
-
-            for (var i = start + 1; i < start + length; i++)
-            {
-                if (!PathGrammar.IsNameChar(template[i]))
-                {
-                    return false;
-                }
-            }
-
-            return true;
+            var tokens = new List<PathGrammar.Token>();
+            PathGrammar.Scan(template, tokens);
+            return tokens;
         }
 
         /// <summary>是否有成员用 <c>[Path]</c> 绑定了这个占位符。</summary>

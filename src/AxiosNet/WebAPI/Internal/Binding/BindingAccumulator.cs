@@ -357,32 +357,28 @@ internal sealed class BindingAccumulator
     /// <summary>路径模板与 [Path] 绑定一一核对：模板占位符必须有绑定、绑定也必须出现在模板里；返回模板顺序的替换表。</summary>
     private (string Token, IValueSource Source)[] ValidatePathTemplate(string template)
     {
-        var matches = PathTokenRegex.Matches(template);
+        // 与源生成器 / CLI 共用同一份扫描：{{ 与 }} 是字面花括号，不会被当成占位符。
+        var tokens = new List<PathGrammar.Token>(_paths.Count);
+        var stray = PathGrammar.Scan(template, tokens);
+
+        if (stray >= 0)
+        {
+            throw new InvalidOperationException(
+                $"{_owner} 的路径模板 \"{template}\" 第 {stray + 1} 个字符处含无法识别的花括号："
+                + $"占位符写成 {{name}} 的形式（字母 / 下划线开头，字母 / 数字 / 下划线组成），"
+                + "要发字面花括号请写成连续两个（左花括号与右花括号各写两遍）。");
+        }
+
         var tokenSpellings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var bindingsByName = new Dictionary<string, IValueSource>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var match in matches.Cast<Match>())
+        foreach (var token in tokens)
         {
-            var name = match.Groups[1].Value;
-            if (!tokenSpellings.TryAdd(name, name))
+            if (!tokenSpellings.TryAdd(token.Name, token.Name))
             {
                 throw new InvalidOperationException(
-                    $"{_owner} 的路径模板重复使用占位符 {{{name}}}：一个占位符只能出现一次。");
+                    $"{_owner} 的路径模板重复使用占位符 {{{token.Name}}}：一个占位符只能出现一次。");
             }
-        }
-
-        // 模板里识别不了的花括号先于绑定核对单独指出。
-        var leftover = template;
-        foreach (var match in matches.Cast<Match>())
-        {
-            leftover = leftover.Replace(match.Value, string.Empty);
-        }
-
-        if (leftover.Contains('{') || leftover.Contains('}'))
-        {
-            throw new InvalidOperationException(
-                $"{_owner} 的路径模板 \"{template}\" 含无法识别的花括号："
-                + "占位符只支持 {{name}} 形式的标识符（字母/下划线开头，字母/数字/下划线组成）。");
         }
 
         foreach (var binding in _paths)
@@ -414,7 +410,7 @@ internal sealed class BindingAccumulator
             }
         }
 
-        return [.. matches.Cast<Match>().Select(m => (m.Groups[1].Value, bindingsByName[m.Groups[1].Value]))];
+        return [.. tokens.Select(token => (token.Name, bindingsByName[token.Name]))];
     }
 
     /// <summary>路径占位符与请求头的值必须是标量；查询参数与请求体不受限。</summary>
@@ -540,7 +536,4 @@ internal sealed class BindingAccumulator
     /// <summary>特性上没写名字就用成员名；显式给了空白串同样回退（与「省略参数」语义一致）。</summary>
     private static string ResolveName(string explicitName, string fallback)
         => string.IsNullOrWhiteSpace(explicitName) ? fallback : explicitName.Trim();
-
-    /// <summary>路径占位符：字母/下划线开头，字母/数字/下划线组成。</summary>
-    private static readonly Regex PathTokenRegex = new(PathGrammar.Placeholder, RegexOptions.CultureInvariant);
 }

@@ -12,9 +12,6 @@ namespace AxiosNet.Cli.Reading;
 /// <summary>把（已归一化的）OpenAPI 3 文档读成生成器使用的 IR：按 tag 分组、参数/正文/响应/授权全部落成声明式语义。</summary>
 internal sealed class ApiReader
 {
-    /// <summary>路径模板占位符：文法取自与运行期共用的 <see cref="PathGrammar"/>。</summary>
-    private static readonly Regex PathPlaceholderPattern = new(PathGrammar.Placeholder, RegexOptions.CultureInvariant);
-
     /// <summary>由客户端 / 框架托管的请求头：声明成参数会破坏请求构造，读取时直接跳过。</summary>
     private static readonly HashSet<string> ManagedHeaders = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -1413,8 +1410,8 @@ internal sealed class ApiReader
     }
 
     /// <summary>
-    /// 提取并校验路径模板占位符：识别规则与运行时一致，且同一占位符只能出现一次、模板里不能残留花括号。
-    /// 不合规时返回 <c>false</c> 并给出原因（调用方记警告后跳过整个操作）。
+    /// 提取并校验路径模板占位符：识别规则与运行期、源生成器共用同一份扫描（<see cref="PathGrammar"/>），
+    /// 同一占位符只能出现一次、模板里不能残留裸花括号。不合规时返回 <c>false</c> 并给出原因（调用方记警告后跳过整个操作）。
     /// </summary>
     private static bool TryExtractPlaceholders(string path, out List<string> placeholders, out string? problem)
     {
@@ -1422,26 +1419,25 @@ internal sealed class ApiReader
         problem = null;
 
         // 已出现的占位符名，重复使用会让运行时的替换表无法建立（一个占位符只能出现一次）。
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (Match match in PathPlaceholderPattern.Matches(path))
+        var tokens = new List<PathGrammar.Token>();
+        var stray = PathGrammar.Scan(path, tokens);
+        if (stray >= 0)
         {
-            var name = match.Groups[1].Value;
-            if (!seen.Add(name))
+            problem = $"路径模板 \"{path}\" 第 {stray + 1} 个字符处含无法识别的花括号：占位符写成 {{name}} 的形式"
+                      + "（字母 / 下划线开头，字母 / 数字 / 下划线组成）；要发字面花括号请写成连续两个。";
+            return false;
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var token in tokens)
+        {
+            if (!seen.Add(token.Name))
             {
-                problem = $"路径模板 \"{path}\" 重复使用占位符 {{{name}}}：一个占位符只能出现一次。";
+                problem = $"路径模板 \"{path}\" 重复使用占位符 {{{token.Name}}}：一个占位符只能出现一次。";
                 return false;
             }
 
-            placeholders.Add(name);
-        }
-
-        // 去掉全部合法占位符后仍有花括号：说明存在 { id }、{a,b} 这类运行时无法识别的写法。
-        var leftover = PathPlaceholderPattern.Replace(path, string.Empty);
-        if (leftover.Contains('{') || leftover.Contains('}'))
-        {
-            problem = $"路径模板 \"{path}\" 含无法识别的花括号：占位符只支持 {{name}} 形式的标识符"
-                      + "（字母 / 下划线开头，字母 / 数字 / 下划线组成）。";
-            return false;
+            placeholders.Add(token.Name);
         }
 
         return true;
