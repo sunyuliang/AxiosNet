@@ -11,11 +11,21 @@ public static class AxiosClientDeclarativeExtensions
     // 按 AxiosClient 缓存门面：凭据提供方 / 错误工厂等状态挂在门面上；弱键表不延长客户端寿命。
     private static readonly ConditionalWeakTable<AxiosClient, ApiClient> Wrappers = new();
 
-    /// <summary>登记调用方自建的门面：同一个客户端只保留第一个登记的门面。</summary>
+    /// <summary>登记调用方自建的门面：同一个客户端以最后一次登记为准，扩展入口随之复用它的凭据 / 错误工厂。</summary>
+    /// <remarks>
+    /// 不能「保留第一个」：扩展入口可能先跑一步、顺手建出一个匿名门面，之后再 <c>new ApiClient(client)</c> 配凭据时，
+    /// 若沿用先到的那个，配好的凭据对扩展入口永久失效（请求按匿名发出，还查不出原因）。
+    /// </remarks>
     internal static void Register(AxiosClient client, ApiClient wrapper)
     {
-        // 已有登记时保留原门面（GetValue 的工厂返回值会被忽略），不覆盖调用方已设置的状态。
+        // 已有登记就换成新门面（前者可能是扩展入口自动创建的匿名门面）。
+#if NETSTANDARD2_0
+        // 兼容资产没有原子 AddOrUpdate：先摘再取，取用 GetValue 保证并发下不会因键已存在而抛。
+        Wrappers.Remove(client);
         Wrappers.GetValue(client, _ => wrapper);
+#else
+        Wrappers.AddOrUpdate(client, wrapper);
+#endif
     }
 
     /// <summary>为接口创建代理实现，底层复用当前客户端（默认值、拦截器、连接池全部生效）。</summary>

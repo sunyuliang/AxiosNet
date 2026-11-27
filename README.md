@@ -134,7 +134,7 @@ var user = await api.GetAsync(5);                                             //
 
 两条路默认都只交付正文：模型式用 `RequestAsync`、接口式声明 `Task<T>`。要状态码 / 响应头 / 请求消息，模型式换 `RequestFullAsync`、接口式把返回类型写成 `Task<AxiosResponse<T>>`。
 
-扩展入口与 `ApiClient` 共用同一个门面（按 `AxiosClient` 缓存）：先 `new ApiClient(client)` 配好 `CredentialProvider` / `ErrorFactory`，再走 `client.Create<T>()` / `RequestAsync` / `RequestStreamAsync`，这些状态照常生效，不会静默变成另一个匿名门面。
+扩展入口与 `ApiClient` 共用同一个门面（按 `AxiosClient` 缓存）：`new ApiClient(client)` 配好 `CredentialProvider` / `ErrorFactory` 后，`client.Create<T>()` / `RequestAsync` / `RequestStreamAsync` 这些状态照常生效，不会静默变成另一个匿名门面。先后顺序无关：扩展入口先用过（它会自动建一个匿名门面）也照样适用，同一个 `AxiosClient` 上**最后一次** `new ApiClient(client)` 登记的门面就是扩展入口用的那个。
 
 五个概念：
 

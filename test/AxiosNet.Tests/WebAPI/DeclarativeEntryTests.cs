@@ -191,6 +191,28 @@ public sealed class DeclarativeEntryTests
     }
 
     [Fact]
+    public async Task DeclarativeEntry_FacadeCreatedAfterAnExtensionCall_StillApplies()
+    {
+        await using var server = TestHttpServer.Start(request =>
+            request.Headers.TryGetValue("authorization", out var authorization) && authorization == "Bearer late"
+                ? TestJson.Response(new Person("alice", 18))
+                : TestJson.Response(new { error = "unauthorized" }, statusCode: 401));
+        using var client = Axios.Create(server.Url);
+
+        // 先走一次扩展入口：它会顺手建出一个匿名门面并缓存。之后再 new ApiClient 配凭据，
+        // 若沿用先到的那个门面，凭据就永久失效了（请求按匿名发出，且没有任何提示）。
+        await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new EntryGetUserRequest { Id = 1 }));
+
+        using var facade = new ApiClient(client);
+        facade.CredentialProvider = new StaticTokenProvider("late");
+
+        var response = await client.RequestFullAsync(new EntryGetUserRequest { Id = 1 });
+
+        Assert.Equal("alice", response.Data!.Name);
+        Assert.Equal("Bearer late", server.Received[1].Headers["Authorization"]);
+    }
+
+    [Fact]
     public async Task DeclarativeEntry_TwoExtensionCallsShareFacade()
     {
         await using var server = TestHttpServer.Start(request =>

@@ -134,7 +134,7 @@ var user = await api.GetAsync(5);                                             //
 
 Both paths deliver only the body by default: `RequestAsync` for request models, `Task<T>` for interfaces. For status codes / response headers / the request message, switch to `RequestFullAsync` (models) or declare `Task<AxiosResponse<T>>` (interfaces).
 
-The extension entry points share the same facade as `ApiClient` (cached per `AxiosClient`): construct `new ApiClient(client)`, set `CredentialProvider` / `ErrorFactory`, then use `client.Create<T>()` / `RequestAsync` / `RequestStreamAsync` — that state still applies instead of silently becoming a separate anonymous facade.
+The extension entry points share the same facade as `ApiClient` (cached per `AxiosClient`): construct `new ApiClient(client)`, set `CredentialProvider` / `ErrorFactory`, then use `client.Create<T>()` / `RequestAsync` / `RequestStreamAsync` — that state still applies instead of silently becoming a separate anonymous facade. The order doesn't matter: if the extension entry point ran first (and auto-created an anonymous facade), the credentials still take effect — the **last** `new ApiClient(client)` registered for that `AxiosClient` is the one the extension entry points use.
 
 Five concepts:
 
