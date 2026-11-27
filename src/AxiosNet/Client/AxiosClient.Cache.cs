@@ -372,8 +372,8 @@ public sealed partial class AxiosClient
 
                 try
                 {
-                    // 先校验：坏头不进缓存。
-                    AxiosHeaders.ValidateHeaderValue(AxiosHeaders.ValidateName(header.Key), value);
+                    // 先校验：坏头不进缓存（响应头只挡控制字符，非 ASCII 是合法的）。
+                    AxiosHeaders.ValidateStorableHeaderValue(AxiosHeaders.ValidateName(header.Key), value);
                     values.Add(value);
                 }
                 catch (ArgumentException)

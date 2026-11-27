@@ -6,7 +6,7 @@ namespace AxiosNet;
 
 /// <summary>
 /// 类似 axios 的 AxiosHeaders：大小写不敏感、同名覆盖（单值）、支持链式调用。
-/// 头名必须是 RFC 7230 token，取值不允许 <c>CR</c> / <c>LF</c> 等控制字符；读 / 删入口对 <c>null</c> 名称抛 <see cref="ArgumentNullException"/>。
+/// 头名必须是 RFC 7230 token，取值只允许 ASCII 且不允许 <c>CR</c> / <c>LF</c> 等控制字符（写入即校验）；读 / 删入口对 <c>null</c> 名称抛 <see cref="ArgumentNullException"/>。
 /// </summary>
 public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
 {
@@ -568,7 +568,11 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         return builder.ToString();
     }
 
-    /// <summary>取值校验：拒绝 <b>C0 控制字符</b>（HTAB 除外）与 DEL，防止 CR/LF 注入（CWE-113）。</summary>
+    /// <summary>请求头取值的写入校验：拒绝 <b>C0 控制字符</b>（HTAB 除外）、DEL 与非 ASCII 字符。</summary>
+    /// <remarks>
+    /// 控制字符挡的是 CR/LF 注入（CWE-113）；非 ASCII 是 .NET 传输层的硬约束（头值只接受 ASCII），
+    /// 写入时就拒绝，才不会等到发送阶段变成一条 <c>ERR_NETWORK</c> 把本地配置错误伪装成网络故障。
+    /// </remarks>
     /// <exception cref="ArgumentException">值里含被禁字符。</exception>
     internal static void ValidateHeaderValue(string name, string value)
     {
@@ -582,6 +586,34 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
             if (c < 0x20 || c == 0x7F)
             {
                 throw new ArgumentException($"非法 HTTP 请求头取值（头 '{name}'）：不允许包含控制字符（这里是 U+{(int)c:X4}）。" + "CR / LF 会被当成头部分隔符，等于允许调用方追加任意头或请求体；" + "如果这是来自外部的数据，请先剔除控制字符——否则可能被用于注入额外的请求头或请求体。", "value");
+            }
+
+            if (c > 0x7E)
+            {
+                throw new ArgumentException(
+                    $"非法 HTTP 请求头取值（头 '{name}'）：不允许非 ASCII 字符（这里是 U+{(int)c:X4}）："
+                    + "HTTP 头值在线上只能是 ASCII，传输层会拒绝整条请求。"
+                    + "中文 / 表情等内容请按 RFC 2047（encoded-word）或 RFC 5987（filename*=）自行编码后再放入头，或改放正文。",
+                    "value");
+            }
+        }
+    }
+
+    /// <summary>把响应头落进缓存前的取值校验：只挡 C0 控制字符与 DEL。</summary>
+    /// <remarks>响应头不是请求头：非 ASCII 不在这里拦，否则缓存会静默丢掉响应里本来合法的头。</remarks>
+    /// <exception cref="ArgumentException">值里含控制字符。</exception>
+    internal static void ValidateStorableHeaderValue(string name, string value)
+    {
+        foreach (var c in value)
+        {
+            if (c == '\t')
+            {
+                continue;
+            }
+
+            if (c < 0x20 || c == 0x7F)
+            {
+                throw new ArgumentException($"非法响应头取值（头 '{name}'）：不允许包含控制字符（这里是 U+{(int)c:X4}）。", "value");
             }
         }
     }

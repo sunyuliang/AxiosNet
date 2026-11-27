@@ -2649,7 +2649,7 @@ Intentional differences from axios:
 4. Writing a **different** value for an instance-level option per request throws `ERR_BAD_OPTION_VALUE` (axios silently ignores it).
 5. `params` uses strict `Uri.EscapeDataString` (space becomes `%20`, not `+`).
 6. `transformRequest` / `transformResponse` elements are `object?` (C# cannot lose and then narrow types the way JS does).
-7. Header writes are validated immediately (RFC 7230 token, no CR/LF) and throw `ArgumentException` (the same error inside declarative binding is wrapped as `ERR_BAD_REQUEST`, with the original exception in `Cause`).
+7. Header writes are validated immediately (RFC 7230 token, no CR/LF, ASCII-only values) and throw `ArgumentException` (the same error inside declarative binding is wrapped as `ERR_BAD_REQUEST`, with the original exception in `Cause`). Encode non-ASCII header values yourself per RFC 2047 / RFC 5987: the transport only accepts ASCII, so letting them through turns a local config mistake into an `ERR_NETWORK` at send time.
 8. `MaxRate` and progress callbacks are implemented at the `HttpContent` / `Stream` layer (BCL has no native support).
 9. `Timeout` is capped at ~49.7 days, larger values clamp; a truly unbounded request uses `Timeout = Zero`.
 

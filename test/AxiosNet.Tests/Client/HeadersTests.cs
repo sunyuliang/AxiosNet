@@ -292,6 +292,36 @@ public sealed class HeadersTests
     }
 
     [Fact]
+    public void NonAsciiHeaderValue_IsRejectedAtWriteTime()
+    {
+        var headers = new AxiosHeaders();
+
+        // 写入时就拒绝：否则等到发送阶段才被传输层拒绝，还会被归成 ERR_NETWORK 误导排障。
+        var ex = Assert.Throws<ArgumentException>(() => headers.Set("X-Cn", "中文值"));
+        Assert.Contains("ASCII", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("U+4E2D", ex.Message, StringComparison.Ordinal);
+        Assert.False(headers.Has("X-Cn"));
+
+        // 回到 ASCII 就正常。
+        headers.Set("X-Cn", "cn-value");
+        Assert.Equal("cn-value", headers.Get("X-Cn"));
+    }
+
+    [Fact]
+    public async Task NonAsciiHeaderValue_FailsBeforeTheRequestIsSent()
+    {
+        await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
+
+        // configure 在请求发出之前同步执行：非法头值在这里就炸，服务端一个请求都收不到。
+        Assert.Throws<ArgumentException>(() =>
+        {
+            _ = client.GetAsync("x", c => c.Headers.Set("X-Cn", "中文值"));
+        });
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
     public async Task EmptyContentTypeHeader_ClearsSerializerDeclaredMediaType()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));

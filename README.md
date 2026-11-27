@@ -2651,7 +2651,7 @@ AOT 下不可用的能力：
 4. 实例级选项按请求写**不同的值**会立即抛 `ERR_BAD_OPTION_VALUE`（axios 是静默不生效）。
 5. `params` 用 `Uri.EscapeDataString` 严格编码（空格 `%20`，不是 `+`）。
 6. `transformRequest` / `transformResponse` 的元素类型是 `object?`（C# 无法像 JS 那样丢失类型再收窄）。
-7. 请求头写入即校验（RFC 7230 token、禁止 CR/LF），非法直接抛 `ArgumentException`（声明式绑定中的同类错误统一包装为 `ERR_BAD_REQUEST`，原异常在 `Cause`）。
+7. 请求头写入即校验（RFC 7230 token、禁止 CR/LF、取值只允许 ASCII），非法直接抛 `ArgumentException`（声明式绑定中的同类错误统一包装为 `ERR_BAD_REQUEST`，原异常在 `Cause`）。中文头值请自行按 RFC 2047 / RFC 5987 编码：传输层只接受 ASCII，写入时不拦就会在发送阶段变成一条 `ERR_NETWORK`。
 8. `MaxRate` / 进度回调实现在 `HttpContent` 与 `Stream` 层（BCL 无原生支持）。
 9. `Timeout` 上限约 49.7 天，超出收敛到上限；真正无限超时用 `Timeout = Zero`。
 
