@@ -1,8 +1,8 @@
 # AxiosNet 1.8 破坏性变更
 
-本文是 **1.7 → 1.8** 的迁移对照，适用于从 `AxiosNet` 1.7.x 升级到 1.8.x 的调用方；内容与 1.8.0 起发布的公共面一致。
+本文是 **1.7 → 1.8** 的迁移对照，适用于从 `AxiosNet` 1.7.x 升级到 1.8.x 的调用方；内容与 1.8.0 起发布的公共面一致，1.8.1 增补的条目单独标出。
 
-三处变化都朝「少写一层」的方向走：声明式默认交付正文、快捷方法的第二个参数由动词决定、正文位置改由 `[Body]` 的构造形态表达。
+前四处变化都朝「少写一层」的方向走：声明式默认交付正文、快捷方法的第二个参数由动词决定、正文位置改由 `[Body]` 的构造形态表达、原始正文只留一份字节。
 
 ## 1. 声明式默认返回正文
 
@@ -57,3 +57,16 @@
 - 无参 `[Body]` 与 `[Body("名")]`、body 方法上的未标注成员、另一个无参 `[Body]`、`[Multipart]` 同用是构建期错误：请求模型由源生成器在编译期报 `AXA017`；接口式由绑定构建器在 `Create<T>()` 时抛 `ERR_BAD_OPTION_VALUE`，未启用生成器的模型式在首次请求时抛同一个码。两边消息一致，都给出「给别的成员换通道」与「把整份正文改成 `[Body("名")]`」两条出路。
 - 整份正文是数组 / 标量 / 流时不必再为它造子类：直接把 `[Body]` 标在该成员上。
 - 接口式示例里的复合参数随之从 `[RootBody]` 改为 `[Body]`，正文不再多包一层参数名（`{ "payload": { … } }` → `{ … }`），与模型式一致。
+
+## 4. 原始正文只留一份字节（1.8.1）
+
+`RawBody` 成为原始正文的唯一来源，`RawText` 由它按 `charset` 派生（首次读取才解码）。此前 `RawText` 只服务错误体、`RawBody` 只受 `Observability.CaptureRawResponseBody` 控制，两者不可能同时有值；现在错误响应、短路 / 缓存命中与 `byte[]` 形态的 `Data` 不需要开关就有 `RawBody`，成功响应打开开关后 `RawText` 也可读。
+
+| 1.8.0 | 1.8.1 |
+| --- | --- |
+| `RawBody is null` 表示「没开 `CaptureRawResponseBody`」 | 该判断不再成立：错误 / 短路 / 缓存 / `byte[]` 形态的 `Data` 都有值。要问开关请读 `Config.Observability.CaptureRawResponseBody` |
+| 错误响应只有 `RawText`，`RawBody` 为 `null` | 错误响应两者都有（字节超过 64 KB 时只留 `RawText`，`RawText` 始终完整） |
+| `RawText` 只在错误体上可读 | 打开 `CaptureRawResponseBody` 的成功响应同样可读 |
+
+- 显式打开 `CaptureRawResponseBody` 时 64 KB 上限不生效：开关的意图就是留字节，超大的错误体也整段留在 `RawBody`。长期留档仍建议用 `OnRawResponse` 自己复制。
+- 流式响应（`ResponseType.Stream`）没有完整字节，开了也没有 `RawBody`；流式**失败**会抢救最多 64 KB 错误体，字节与文本都读得到。
