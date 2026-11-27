@@ -167,10 +167,19 @@ public sealed class AxiosResponse<TData> : AxiosResponse
     }
 
     /// <summary>取正文；正文为空时抛 <see cref="AxiosException"/>（<c>ERR_BAD_RESPONSE</c>）。</summary>
+    /// <remarks>
+    /// 「空」既包括 <c>null</c>，也包括长度 0 的字符串：<c>string</c> 目标类型交付的是正文原文，
+    /// 204 / 服务端漏写正文得到的就是空串而不是 <c>null</c>，不拦下来等于把断言静默跳过。
+    /// </remarks>
     /// <returns>非空的正文。</returns>
     /// <exception cref="AxiosException">正文为空（<c>ERR_BAD_RESPONSE</c>）。</exception>
     public TData DataOrThrow()
-        => base.Data is null
-            ? throw AxiosException.EmptyBody(Config, Request, this, typeof(TData).Name)
-            : (TData)base.Data;
+    {
+        if (base.Data is null or string { Length: 0 })
+        {
+            throw AxiosException.EmptyBody(Config, Request, this, typeof(TData).Name);
+        }
+
+        return (TData)base.Data;
+    }
 }

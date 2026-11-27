@@ -330,7 +330,7 @@ var dyn    = await http.GetAsync<dynamic>("users/1");                     // 无
 
 `<Stream>` / `<byte[]>` / `<dynamic>` 会自动切到对应响应类型，不必手写 `ResponseType`。
 
-**正文一定有值时用 `DataOrThrow()`**：`Data` 是可空的，怕空正文的地方常写 `Data!` 压掉可空性——真遇到空正文（204、服务端漏写）就变成业务代码深处一个不带请求上下文的 `NullReferenceException`。`DataOrThrow()` 把这件事变成一次显式断言：空正文抛 `ERR_BAD_RESPONSE`，消息里带期望的类型名，异常上带 `Config` / `Response`：
+**正文一定有值时用 `DataOrThrow()`**：`Data` 是可空的，怕空正文的地方常写 `Data!` 压掉可空性——真遇到空正文（204、服务端漏写）就变成业务代码深处一个不带请求上下文的 `NullReferenceException`。`DataOrThrow()` 把这件事变成一次显式断言：空正文抛 `ERR_BAD_RESPONSE`（`string` 目标类型下服务端没给任何字节时 `Data` 是空串而不是 `null`，同样按空正文处理），消息里带期望的类型名，异常上带 `Config` / `Response`：
 
 ```csharp
 var user = (await http.GetAsync<User>("users/1")).DataOrThrow();   // 空正文即 ERR_BAD_RESPONSE

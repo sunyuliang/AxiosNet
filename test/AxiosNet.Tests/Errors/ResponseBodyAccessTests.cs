@@ -80,4 +80,19 @@ public sealed class ResponseBodyAccessTests
         Assert.Equal(AxiosException.ErrBadResponse, error.Code);
         Assert.Contains("String", error.Message);
     }
+
+    [Fact]
+    public async Task DataOrThrow_ThrowsForEmptyStringBody_WhenServerSentNoBytes()
+    {
+        // string 目标类型下 204 的 Data 是长度 0 的非 null 字符串：不拦下来，断言就被静默跳过。
+        await using var server = TestHttpServer.Start(_ => new TestResponse(204, Body: Array.Empty<byte>()));
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync<string>(server.Url + "empty");
+
+        Assert.Equal(string.Empty, response.Data);
+        var error = Assert.Throws<AxiosException>(() => response.DataOrThrow());
+        Assert.Equal(AxiosException.ErrBadResponse, error.Code);
+        Assert.Same(response, error.Response);
+    }
 }

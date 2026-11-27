@@ -330,7 +330,7 @@ var dyn    = await http.GetAsync<dynamic>("users/1");                     // no 
 
 `<Stream>` / `<byte[]>` / `<dynamic>` switch `ResponseType` automatically — you rarely set it by hand.
 
-**When the body must be there, use `DataOrThrow()`**: `Data` is nullable, so code that is sure of a body often writes `Data!` to silence the compiler — and an actually empty body (204, or a server that forgot to write one) then surfaces as a `NullReferenceException` deep inside business logic with no request context. `DataOrThrow()` turns that into one explicit assertion: an empty body throws `ERR_BAD_RESPONSE`, the message names the expected type, and the exception carries `Config` / `Response`:
+**When the body must be there, use `DataOrThrow()`**: `Data` is nullable, so code that is sure of a body often writes `Data!` to silence the compiler — and an actually empty body (204, or a server that forgot to write one) then surfaces as a `NullReferenceException` deep inside business logic with no request context. `DataOrThrow()` turns that into one explicit assertion: an empty body throws `ERR_BAD_RESPONSE` (with a `string` target, a server that sent zero bytes yields an empty string rather than `null`, and that counts as empty too), the message names the expected type, and the exception carries `Config` / `Response`:
 
 ```csharp
 var user = (await http.GetAsync<User>("users/1")).DataOrThrow();   // empty body -> ERR_BAD_RESPONSE
