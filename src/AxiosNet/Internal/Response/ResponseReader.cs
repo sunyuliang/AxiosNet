@@ -774,7 +774,8 @@ internal static class ResponseReader
                             continue;
                         }
 
-                        AxiosHeaders.ValidateHeaderValue(name, value);
+                        // 这是响应头：只挡控制字符（与网络响应 / 缓存落库同一口径），非 ASCII 合法。
+                        AxiosHeaders.ValidateStorableHeaderValue(name, value);
                         values.Add(value);
                     }
 
@@ -794,16 +795,16 @@ internal static class ResponseReader
                         continue;
                     }
 
-                    // 与请求头同一套校验。
+                    // 与请求头同一道注入闸（控制字符），但响应头允许非 ASCII。
                     var name = AxiosHeaders.ValidateName(header.Key);
-                    AxiosHeaders.ValidateHeaderValue(name, header.Value);
+                    AxiosHeaders.ValidateStorableHeaderValue(name, header.Value);
                     headers[name] = new[] { header.Value };
                 }
             }
 
             if (reply.ContentType is { Length: > 0 } contentType)
             {
-                AxiosHeaders.ValidateHeaderValue("Content-Type", contentType);
+                AxiosHeaders.ValidateStorableHeaderValue("Content-Type", contentType);
                 headers["Content-Type"] = new[] { contentType };
             }
 

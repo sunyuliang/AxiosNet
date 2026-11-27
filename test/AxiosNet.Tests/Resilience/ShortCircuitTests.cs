@@ -526,7 +526,7 @@ public sealed class ShortCircuitTests
         using var client = new AxiosClient();
 
         // 头名与头值各过一道闸：值挡 C0 注入，名挡非 token。短路响应的头会被写进日志、
-        // 喂给 transformResponse，与请求头同一把尺子 —— 否则这里能塞进一条「长得像两行」的假头。
+        // 喂给 transformResponse，注入这一层与请求头同一把尺子 —— 否则这里能塞进一条「长得像两行」的假头。
         var failed = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(
             "http://127.0.0.1:9/never",
             c => c.ShortCircuit = new AxiosShortCircuit
@@ -537,6 +537,28 @@ public sealed class ShortCircuitTests
             }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, failed.Code);
+    }
+
+    [Fact]
+    public async Task NonAsciiResponseHeader_IsDeliveredAsIs()
+    {
+        using var client = new AxiosClient();
+
+        // 响应头不受请求头那条 ASCII 限制：它不上线传输，网络响应与缓存落库都允许非 ASCII，
+        // 短路（本地替身）必须同一口径 —— 否则同一个「服务端返回的中文文件名」在真响应里能过、在短路里报错。
+        var reply = new AxiosShortCircuit
+        {
+            Body = TestJson.Bytes(new Person("cached", 7)),
+            ContentType = "application/json",
+            Headers = new Dictionary<string, string> { ["Content-Disposition"] = "attachment; filename=\"报表.json\"" }
+        };
+
+        var response = await client.GetAsync<Person>(
+            "http://127.0.0.1:9/never",
+            c => c.ShortCircuit = reply);
+
+        Assert.Equal("attachment; filename=\"报表.json\"", response.GetHeader("Content-Disposition"));
+        Assert.Equal("cached", response.Data!.Name);
     }
 
     [Fact]
