@@ -237,10 +237,46 @@ public sealed class ResponseBodyTests
         Assert.Equal(text, response.Data);
     }
 
+    /// <summary>
+    /// 库自己的读取逻辑以真实字节为准：交付流里的字节比声明的多时，全部读完而不是停在声明值上。
+    /// 这一层的行为由库保证；真实网络上的截断发生在默认 Handler 的分帧层（见 README），不在本用例范围内。
+    /// </summary>
+    [Fact]
+    public async Task DeclaredLength_ShorterThanBody_ReadsTailDeliveredByHandler()
+    {
+        // 声明 5 字节、正文 10 字节，Handler 不按声明截断：库要读到流结束。
+        var payload = Encoding.UTF8.GetBytes("HELLOWORLD");
+        using var client = new AxiosClient(handler: new BodyHandler(payload, declaredLength: 5));
+
+        var response = await client.GetAsync<string>(BlobUrl);
+
+        Assert.Equal("HELLOWORLD", response.Data);
+    }
+
+    /// <summary>同一份「声明偏短、交付完整」的正文，`MaxResponseBytes` 按真实字节判——声明值不参与。</summary>
+    [Fact]
+    public async Task DeclaredLength_ShorterThanBody_MaxResponseBytesUsesRealBytes()
+    {
+        var payload = Encoding.UTF8.GetBytes("HELLOWORLD");
+        using var client = new AxiosClient(handler: new BodyHandler(payload, declaredLength: 5));
+
+        var error = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<byte[]>(
+            BlobUrl,
+            c =>
+            {
+                c.ResponseType = ResponseType.ArrayBuffer;
+                c.Limits.MaxResponseBytes = 8;
+            }));
+
+        Assert.Equal(AxiosException.ErrBadResponse, error.Code);
+
+        // 报的是真实越界字节数（10），不是声明值（5）。
+        Assert.Contains("10", error.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task DeclaredLength_SatisfiedThenStreamBreaks_StillSucceeds()
-    {
-        // 正文已按声明读满，随后连接就断了（尾部探测撞上断流）：请求本身不该失败。
+    {        // 正文已按声明读满，随后连接就断了（尾部探测撞上断流）：请求本身不该失败。
         var payload = Payload(64 * 1024, seed: 7);
         using var client = new AxiosClient(handler: new BodyHandler(payload, declaredLength: payload.Length, breakAfterBody: true));
 
