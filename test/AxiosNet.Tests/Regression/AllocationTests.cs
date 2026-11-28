@@ -481,11 +481,12 @@ public sealed class AllocationTests
         }
 #pragma warning restore xUnit1031
 
-        var baselineBytes = MinimumBytes(40, () => Fire(baseline));
-        var sharedBytes = MinimumBytes(40, () => Fire(shared));
+        var baselineBytes = MinimumTotalBytes(40, () => Fire(baseline));
+        var sharedBytes = MinimumTotalBytes(40, () => Fire(shared));
         var extra = sharedBytes - baselineBytes;
 
-        // 实测（net8 Debug）：baseline 14640 B/请求、shared 17392 B/请求、增量 2752 B（正文 1036 B）。
+        // 实测（net8 Debug，进程级计数）：baseline 20544 B/请求、shared 23296 B/请求、增量 2752 B（正文 1036 B）。
+        // 口径必须是进程级：当前线程计数碰上「请求中途续到线程池」只剩切换点之前的簿记（实测 106 ~ 331 B）。
         Assert.True(
             extra >= json.Length,
             $"共享非 2xx 的额外分配 {extra} B 小于正文长度 {json.Length} B——正文没有复制，共享对象可能与调用方可变数据共用。");
@@ -630,6 +631,35 @@ public sealed class AllocationTests
             }
 
             best = Math.Min(best, (GC.GetAllocatedBytesForCurrentThread() - before) / iterations);
+        }
+
+        return best;
+    }
+
+    /// <summary>
+    /// 跨 <c>await</c> 的测量窗口：进程级 <see cref="GC.GetTotalAllocatedBytes(bool)"/>（precise），多窗口取最小值。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="MinimumBytes"/> 的差别只在计数口径：后者数当前线程，动作一旦异步续到线程池，之后的分配就
+    /// 记在别的线程上，增量只剩切换点之前的簿记；本方法数整个进程，要靠独占集合 <c>AllocationCollection</c>
+    /// 保证进程里没有别的分配源。
+    /// </remarks>
+    /// <param name="iterations">每个窗口内重复的次数。</param>
+    /// <param name="action">被测动作。</param>
+    /// <param name="windows">窗口数，取各窗口最小值。</param>
+    private static long MinimumTotalBytes(int iterations, Action action, int windows = 3)
+    {
+        action();
+        var best = long.MaxValue;
+        for (var window = 0; window < windows; window++)
+        {
+            var before = GC.GetTotalAllocatedBytes(precise: true);
+            for (var i = 0; i < iterations; i++)
+            {
+                action();
+            }
+
+            best = Math.Min(best, (GC.GetTotalAllocatedBytes(precise: true) - before) / iterations);
         }
 
         return best;
