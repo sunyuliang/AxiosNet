@@ -7,12 +7,12 @@ using AxiosNet.WebAPI.Attributes;
 namespace AxiosNet.Tests.Serialization;
 
 /// <summary>
-/// <c>DateOnly</c> / <c>TimeOnly</c> 在聚合正文里的写出形态：两张现代资产必须给出同一份字节。
+/// <c>DateOnly</c> / <c>TimeOnly</c> 在聚合正文里的写读形态：两张现代资产必须给出同一份字节、同一套口径。
 /// </summary>
 /// <remarks>
-/// net6.0 用的是框架自带的 System.Text.Json 6.x，它没有这两个类型的转换器。库在
-/// <see cref="AxiosJson"/> 的默认选项里显式注册转换器，因此结论不取决于消费方把
-/// System.Text.Json 包升到了哪个版本——升到 7/8 也好、留在 6.x 也好，线上字节都一样。
+/// 两个类型的转换器由库注册在 <see cref="AxiosJson"/> 的默认选项里，因此结论既不取决于消费方把
+/// System.Text.Json 包升到了哪个版本，也不取决于加载资产的运行时版本——后者自带的那套会随版本放宽
+/// （<c>01:02</c>、<c>1:2:3</c> 在 .NET 10 上都认）。
 /// </remarks>
 public sealed class DateOnlyOnNet6Tests
 {
@@ -91,8 +91,8 @@ public sealed class DateOnlyOnNet6Tests
     }
 
     /// <summary>
-    /// 读入形态与 net8.0 一样严格：net8.0 只认 <c>yyyy-MM-dd</c>，区域性写法一律拒绝，
-    /// net6.0 的转换器不能因为用了宽松解析而把它读成合法日期。
+    /// 读入口径固定：只认 <c>yyyy-MM-dd</c>，区域性写法与带时间的写法一律拒绝——
+    /// 转换器不能因为用了宽松解析而把它们读成合法日期。
     /// </summary>
     /// <param name="body">服务端返回的日期文本。</param>
     [Theory]
@@ -111,7 +111,7 @@ public sealed class DateOnlyOnNet6Tests
     }
 
     /// <summary>
-    /// 读入形态与 net8.0 一样严格：net8.0 拒绝缺位数的 <c>1:02:03</c> 与超过 7 位的小数秒，
+    /// 读入口径固定：拒绝省略秒的 <c>01:02</c>、缺位数的 <c>1:02:03</c>、超过 7 位的小数秒与带 AM/PM 的写法；
     /// 接受 <c>000:02:03</c>（多余前导零）与 1-7 位小数秒。
     /// </summary>
     /// <param name="body">服务端返回的时刻文本。</param>
@@ -130,7 +130,7 @@ public sealed class DateOnlyOnNet6Tests
         await Assert.ThrowsAsync<AxiosException>(() => client.RequestFullAsync(new TimeOnlyRequest()));
     }
 
-    /// <summary>net8.0 接受的两种宽松形态（多余前导零 / 1-7 位小数秒）在 net6.0 上也必须能读回。</summary>
+    /// <summary>两种宽松形态（多余前导零 / 1-7 位小数秒）在两张资产上都必须能读回。</summary>
     /// <param name="body">服务端返回的时刻文本。</param>
     /// <param name="expected">期望解析出的时刻。</param>
     [Theory]

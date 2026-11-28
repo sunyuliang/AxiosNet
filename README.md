@@ -249,7 +249,7 @@ c.Params = new[] { 1, 2 };            // 根集合：[0]=1&[1]=2
 
 按成员改写形态用 `[Format]`，按实例改写的钩子是 `AxiosConfig.Serialization.ValueText`（回调的第二个参数拿到值所在通道，见[值格式化](#值格式化)）。
 
-`DateOnly` / `TimeOnly` 在三张资产上写出同一份字节：net8.0 由 System.Text.Json 自带，net6.0 的框架 STJ 6.x 没有这两个转换器，由库在默认选项里补上（`AxiosJson.Options` 可整体替换，替换后这两项由调用方自己负责）。读入口径同样对齐 net8.0：只认 `yyyy-MM-dd` 与 `HH:mm:ss`（可选 1-7 位小数秒），区域性写法在两张资产上都报错。
+`DateOnly` / `TimeOnly` 在三张资产上写出同一份字节，读入口径也固定：只认 `yyyy-MM-dd` 与 `HH:mm:ss`（可选 1-7 位小数秒），区域性写法与缺位形态（`01:02`、`1:2:3`）一律报错。这两个类型的转换器由库注册进默认选项——net6.0 的框架自带 System.Text.Json 没有它们，net8.0 起自带但接受集合随运行时放宽，注册后读入结论不随运行时版本变化（`AxiosJson.Options` 可整体替换，替换后这两项由调用方自己负责）。
 
 ### 表单与文件上传
 

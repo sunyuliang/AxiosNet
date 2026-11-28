@@ -195,8 +195,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
 
     /// <summary>按声明类型写入聚合正文的成员值：AOT 走 <c>JsonTypeInfo</c>，JIT 回退反射重载。</summary>
     /// <remarks>
-    /// net6.0 目标的框架自带 System.Text.Json 6.x 没有 <c>DateOnly</c> / <c>TimeOnly</c> 转换器，
-    /// 这两个类型由 <see cref="AxiosJson"/> 的默认选项补上转换器，三张资产写出同一形态。
+    /// <c>DateOnly</c> / <c>TimeOnly</c> 的转换器由 <see cref="AxiosJson"/> 的默认选项注册，三张资产写出同一形态。
     /// </remarks>
     private static void SerializeAggregateMember(Utf8JsonWriter writer, object? value, Type type, JsonSerializerOptions options)
     {

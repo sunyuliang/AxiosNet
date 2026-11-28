@@ -1,4 +1,4 @@
-#if !NETSTANDARD2_0 && !NET8_0_OR_GREATER
+#if !NETSTANDARD2_0
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -6,12 +6,12 @@ using System.Text.Json.Serialization;
 namespace AxiosNet.Serialization;
 
 /// <summary>
-/// net6.0 目标的 <c>DateOnly</c> / <c>TimeOnly</c> 转换器：该 TFM 用的是框架自带的 System.Text.Json 6.x，
-/// 它没有这两个类型的转换器，反射重载会抛 <see cref="NotSupportedException"/>。
+/// <c>DateOnly</c> / <c>TimeOnly</c> 转换器：读只认 <c>yyyy-MM-dd</c> 与 <c>HH:mm:ss</c>（可选 1-7 位小数秒），
+/// 写固定为同一形态——两张资产、各个运行时上结论一致。
 /// </summary>
 /// <remarks>
-/// 写出形态与 net8.0 逐字节一致（<c>DateOnly</c> 写 <c>yyyy-MM-dd</c>、<c>TimeOnly</c> 写 <c>HH:mm:ss</c> 或 7 位往返格式）；
-/// 读入也照 net8.0 的口径收紧（只认这两种形态），避免同一份 JSON 在两张资产上一成一败。只在本 TFM 上编译。
+/// net6.0 的框架 System.Text.Json 6.x 没有这两个类型，不注册会在运行期抛 <see cref="NotSupportedException"/>；
+/// net8.0 起框架自带，但接受集合随运行时放宽（<c>01:02</c>、<c>1:2:3</c> 也认），故两处都由库注册。
 /// </remarks>
 internal sealed class DateOnlyConverter : JsonConverter<DateOnly>
 {
@@ -32,7 +32,7 @@ internal sealed class DateOnlyConverter : JsonConverter<DateOnly>
         => writer.WriteStringValue(value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
 }
 
-/// <summary>net6.0 目标的 <c>TimeOnly</c> 转换器（形态见 <see cref="DateOnlyConverter"/>）。</summary>
+/// <summary><c>TimeOnly</c> 转换器（读入与写出形态见 <see cref="DateOnlyConverter"/>）。</summary>
 internal sealed class TimeOnlyConverter : JsonConverter<TimeOnly>
 {
     /// <summary>读 <c>HH:mm:ss</c> 或带 1-7 位小数秒的同形文本；其它形态即 <see cref="JsonException"/>。</summary>
@@ -61,7 +61,7 @@ internal sealed class TimeOnlyConverter : JsonConverter<TimeOnly>
             : "O";
 
     /// <summary>
-    /// 按 net8.0 的接受集合解析：整串至少 8 字符（<c>hh:mm:ss</c> 的最短形态），
+    /// 按读入口径解析：整串至少 8 字符（<c>hh:mm:ss</c> 的最短形态），
     /// 三段用 <c>:</c> 分隔且都是数字，可选 1-7 位小数秒。
     /// </summary>
     /// <remarks>组件位数不限（<c>000:02:03</c> 也接受），但整串长度与小数秒位数都要合规矩。</remarks>

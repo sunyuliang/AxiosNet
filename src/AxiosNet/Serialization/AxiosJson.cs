@@ -1,5 +1,5 @@
 using System.Text.Json;
-#if !NETSTANDARD2_0 && !NET8_0_OR_GREATER
+#if !NETSTANDARD2_0
 using AxiosNet.Serialization;
 #endif
 
@@ -12,12 +12,12 @@ public static class AxiosJson
     // 默认 JSON 选项（Web 默认：camelCase 命名 + 忽略大小写读取），可整体替换。
     private static JsonSerializerOptions _options = CreateDefaultOptions();
 
-    /// <summary>默认选项：Web 默认值；net6.0 目标另补 <c>DateOnly</c> / <c>TimeOnly</c> 转换器（该 TFM 的 STJ 6.x 没有）。</summary>
+    /// <summary>默认选项：Web 默认值，另补 <c>DateOnly</c> / <c>TimeOnly</c> 转换器（读入口径固定，不随运行时变化）。</summary>
     private static JsonSerializerOptions CreateDefaultOptions()
     {
         var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
-#if !NETSTANDARD2_0 && !NET8_0_OR_GREATER
-        // net8.0 的 STJ 自带这两个转换器；net6.0 必须自己补，否则聚合正文与反序列化都会失败。
+#if !NETSTANDARD2_0
+        // net6.0 的 STJ 6.x 没有这两个转换器；net8.0 起框架自带，但接受集合随运行时放宽，统一改用库的这一套。
         options.Converters.Add(new DateOnlyConverter());
         options.Converters.Add(new TimeOnlyConverter());
 #endif

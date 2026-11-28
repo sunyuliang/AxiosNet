@@ -249,7 +249,7 @@ c.Params = new[] { 1, 2 };            // root collection: [0]=1&[1]=2
 
 Override per member with `[Format]`, or per instance with `AxiosConfig.Serialization.ValueText` (its second argument is the channel the value is written through — see [Value formatting](#value-formatting)).
 
-`DateOnly` / `TimeOnly` produce identical bytes on all three assets: net8.0 gets them from System.Text.Json itself, while net6.0 ships STJ 6.x without those converters, so the library registers them in the default options (`AxiosJson.Options` can be replaced wholesale — after that, these two are the caller's responsibility). Reading follows net8.0 too: only `yyyy-MM-dd` and `HH:mm:ss` (with 1-7 optional fractional digits) are accepted, and culture-specific forms fail on both assets.
+`DateOnly` / `TimeOnly` produce identical bytes on all three assets, and reading is pinned too: only `yyyy-MM-dd` and `HH:mm:ss` (with 1-7 optional fractional digits) are accepted, while culture-specific forms and short forms such as `01:02` or `1:2:3` fail. The library registers both converters in the default options — the framework System.Text.Json on net6.0 lacks them, and on net8.0+ it ships them but widens the accepted set across runtimes, so registering keeps the read result independent of the runtime version (`AxiosJson.Options` can be replaced wholesale — after that, these two are the caller's responsibility).
 
 ### Forms and uploads
 
