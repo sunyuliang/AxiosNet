@@ -447,7 +447,9 @@ public sealed class AllocationTests
     {
         // 非 2xx 共享路径的额外分配：一版正文复制（与领导者自己的 Data 脱钩）+ 头字典 + 单飞簿记。
         // 成功路径不经过这里，所以「每请求分配不得上升」由既有成功路径护栏保证。
-        var json = Encoding.UTF8.GetBytes("{\"error\":\"" + new string('x', 1024) + "\"}");
+        // 正文必须越过 LOH 门槛（85 KB）：复制量要比「两次独立测量相减」的浮动大一个数量级，
+        // 否则下界断言会被计数噪声吃掉（1 KB 正文时 CI 上实测增量低到 -119 B）。
+        var json = Encoding.UTF8.GetBytes("{\"error\":\"" + new string('x', 128 * 1024) + "\"}");
 
         using var baseline = new AxiosClient(
             new AxiosConfig
@@ -485,15 +487,17 @@ public sealed class AllocationTests
         var sharedBytes = MinimumTotalBytes(40, () => Fire(shared));
         var extra = sharedBytes - baselineBytes;
 
-        // 实测（net8 Debug，进程级计数）：baseline 20544 B/请求、shared 23296 B/请求、增量 2752 B（正文 1036 B）。
+        // 实测（net8 Release，进程级计数）：baseline 537041 B/请求、shared 669807 B/请求、增量 132766 B（正文 131084 B）。
         // 口径必须是进程级：当前线程计数碰上「请求中途续到线程池」只剩切换点之前的簿记（实测 106 ~ 331 B）。
+        // 上下界都留四分之一正文的余量：这是两次独立测量相减，CI 上见过 KB 级的偏差；
+        // 判据本身仍分得清——没复制时增量只有 1.7 KB，复制两遍时是 262 KB。
         Assert.True(
-            extra >= json.Length,
-            $"共享非 2xx 的额外分配 {extra} B 小于正文长度 {json.Length} B——正文没有复制，共享对象可能与调用方可变数据共用。");
+            extra >= json.Length * 3 / 4,
+            $"共享非 2xx 的额外分配 {extra} B 不足正文长度 {json.Length} B 的四分之三——正文没有复制，共享对象可能与调用方可变数据共用。");
         Assert.True(
-            extra < json.Length + 12 * 1024,
-            $"共享非 2xx 的额外分配 {extra} B（正文 {json.Length} B）超出「一次正文复制 + 头字典 + 单飞簿记」"
-            + "的 12 KB 护栏——疑似每个跟随者都复制了一遍正文或重复建头字典。");
+            extra < json.Length * 5 / 4,
+            $"共享非 2xx 的额外分配 {extra} B（正文 {json.Length} B）超过「一次正文复制 + 头字典 + 单飞簿记」"
+            + "的四分之一余量——疑似每个跟随者都复制了一遍正文或重复建头字典。");
     }
 
     /// <summary>
@@ -642,7 +646,7 @@ public sealed class AllocationTests
     /// <remarks>
     /// 与 <see cref="MinimumBytes"/> 的差别只在计数口径：后者数当前线程，动作一旦异步续到线程池，之后的分配就
     /// 记在别的线程上，增量只剩切换点之前的簿记；本方法数整个进程，要靠独占集合 <c>AllocationCollection</c>
-    /// 保证进程里没有别的分配源。
+    /// 保证进程里没有别的分配源。两次调用相减仍有 KB 级浮动（CI 上见过负值），被测动作的分配量要显著大于它。
     /// </remarks>
     /// <param name="iterations">每个窗口内重复的次数。</param>
     /// <param name="action">被测动作。</param>
